@@ -9,6 +9,9 @@ cd ../..
 # Shut down anything that might still be running
 docker-compose down
 
+# Migrate the database files to a new PostgreSQL major version if needed (no-op otherwise)
+./bin/_utils/upgrade_postgres.sh
+
 # Initialize Database
 ./bin/_utils/database_install.sh
 

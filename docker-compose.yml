@@ -100,8 +100,11 @@ services:
 
     database:
         container_name: motuz_database
-        image: postgres:11-alpine
+        image: postgres:18-alpine
         network_mode: host
+        environment:
+            # postgres 18 images default to /var/lib/postgresql/<major>/docker
+            PGDATA: /var/lib/postgresql/data
         volumes:
             - ${MOTUZ_DOCKER_ROOT:-/docker}/volumes/postgres:/var/lib/postgresql/data
         ports:

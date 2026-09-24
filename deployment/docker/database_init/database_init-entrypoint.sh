@@ -36,7 +36,7 @@ init_user_and_db() {
   set +e
   psql -v ON_ERROR_STOP=1 --username "postgres" <<-EOSQL
     CREATE USER $MOTUZ_DATABASE_USER WITH PASSWORD '$MOTUZ_DATABASE_PASSWORD';
-    CREATE DATABASE $MOTUZ_DATABASE_NAME;
+    CREATE DATABASE $MOTUZ_DATABASE_NAME OWNER $MOTUZ_DATABASE_USER;
     GRANT ALL PRIVILEGES ON DATABASE $MOTUZ_DATABASE_NAME TO $MOTUZ_DATABASE_USER;
 EOSQL
   rc="$?"
@@ -75,6 +75,6 @@ init_user_and_db
 
 # Shut the door behind us, do not allow further alterations or reads to the database
 # except from motuz_user for motuz_database
-cp pg_hba.conf /var/lib/postgresql/data
+cp pg_hba.conf "$PGDATA"
 
 echo -e "\n\nSUCCESS!"

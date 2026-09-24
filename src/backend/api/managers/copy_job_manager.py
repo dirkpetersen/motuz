@@ -65,9 +65,16 @@ def create(data):
     db.session.commit()
 
     task_id = copy_job.id
-    tasks.copy_job.apply_async(task_id=str(task_id), kwargs={
-        'task_id': task_id,
-    })
+    try:
+        tasks.copy_job.apply_async(task_id=str(task_id), kwargs={
+            'task_id': task_id,
+        })
+    except Exception as e:
+        # Otherwise the job would stay in PROGRESS forever
+        copy_job.progress_state = 'FAILED'
+        copy_job.progress_error = 'Could not queue the job: {}'.format(e)
+        db.session.commit()
+        raise
 
     return copy_job
 
