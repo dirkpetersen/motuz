@@ -3,6 +3,7 @@ import datetime
 import time
 from functools import wraps
 
+from flask import current_app
 from sqlalchemy.exc import IntegrityError
 import flask_jwt_extended as flask_jwt
 
@@ -17,7 +18,7 @@ def refresh_token_required(fn):
     @wraps(fn)
     def wrapper(*args, **kwargs):
         try:
-            flask_jwt.verify_jwt_refresh_token_in_request()
+            flask_jwt.verify_jwt_in_request(refresh=True)
         except Exception as e:
             raise HTTP_401_UNAUTHORIZED(str(e))
 
@@ -39,13 +40,13 @@ def token_required(fn):
 
 
 
-@jwt.token_in_blacklist_loader
-def _check_if_token_in_blacklist(token):
+@jwt.token_in_blocklist_loader
+def _check_if_token_in_blocklist(jwt_header, jwt_payload):
     """
     This function is automatically loaded and it does not need to be called.
-    https://flask-jwt-extended.readthedocs.io/en/stable/blacklist_and_token_revoking/
+    https://flask-jwt-extended.readthedocs.io/en/stable/blocklist_and_token_revoking.html
     """
-    return token_is_revoked(token)
+    return token_is_revoked(jwt_payload)
 
 
 
@@ -103,7 +104,7 @@ def refresh_token():
 
 @refresh_token_required
 def logout_user():
-    token = flask_jwt.get_raw_jwt()
+    token = flask_jwt.get_jwt()
     message = revoke_token(token)
     clean_token_database()
     return message
@@ -115,7 +116,7 @@ def revoke_token(token):
         revoked_token = RevokedToken(
             jti=token['jti'],
             type=token['type'],
-            identity=token['identity'],
+            identity=token[current_app.config['JWT_IDENTITY_CLAIM']],
             exp=token['exp'],
         )
         db.session.add(revoked_token)

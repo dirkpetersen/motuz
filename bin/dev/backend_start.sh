@@ -7,7 +7,8 @@ cd ${THIS_DIR}
 cd ../..
 
 source venv/bin/activate
+source bin/_utils/load_env.sh
 
 cd src/backend
 
-FLASK_ENV=development python manage.py run
+python manage.py run

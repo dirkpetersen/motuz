@@ -1,4 +1,4 @@
-const merge = require('webpack-merge');
+const { merge } = require('webpack-merge');
 
 const common = require('./webpack.common.js');
 
@@ -13,15 +13,15 @@ module.exports = merge(common, {
     devServer: {
         port: 8080,
         host: host,
-        contentBase: '.',
+        static: false, // Everything is served from memory by webpack
         historyApiFallback: true, // For ReactRouter
-        disableHostCheck: true, // DO NOT LET THIS IN
-        proxy: {
-            "/api": "http://localhost:5000/",
-            "/swaggerui": "http://localhost:5000/",
-        },
+        // Only accept other Host headers when explicitly listening on another interface
+        allowedHosts: process.env.MOTUZ_HOST ? 'all' : 'auto',
+        proxy: [{
+            context: ['/api', '/swaggerui'],
+            target: 'http://localhost:5000/',
+        }],
     },
 
-
-    devtool: isQuick ? "" : 'cheap-eval-source-map',
+    devtool: isQuick ? false : 'eval-cheap-source-map',
 });

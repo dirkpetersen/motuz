@@ -3,7 +3,7 @@ import logging
 from celery import Celery
 from flask import Flask, Blueprint
 from flask_sqlalchemy import SQLAlchemy
-from flask_restplus import Api
+from flask_restx import Api
 from flask_jwt_extended import JWTManager
 
 from .config import config_by_name, Config
@@ -23,7 +23,10 @@ celery = Celery(
     backend=Config.CELERY_RESULT_BACKEND,
     broker=Config.CELERY_BROKER_URL,
 )
-celery.conf.update(app.config)
+celery.conf.update(
+    broker_connection_retry_on_startup=True,
+)
+
 class ContextTask(celery.Task):
     def __call__(self, *args, **kwargs):
         with app.app_context():

@@ -1,4 +1,5 @@
 import logging
+import os
 
 from flask import request
 
@@ -7,6 +8,8 @@ from ..application import db
 from ..exceptions import *
 from ..models import CopyJob
 from ..managers.auth_manager import token_required, get_logged_in_user
+from ..managers.cloud_connection_manager import owned_cloud_id
+from ..utils.email_utils import Email
 
 
 @token_required
@@ -21,24 +24,13 @@ def list(page_size=50, page=1):
                            error_out=False)
                  )
     except Exception as e:
-        import envelopes
-        import os
-        server, port = os.environ.get('MOTUZ_SMTP_SERVER').split(':')
-        if port:
-            port = int(port)
-        use_ssl = os.environ.get('MOTUZ_SMTP_REQUIRE_SSL', 'false').lower() == 'true'
-        recipients = os.environ.get('MOTUZ_ALERT_ADDRESS', '').split(',')
-        recipients = [x.strip() for x in recipients]
-        envelope = envelopes.Envelope(
-            from_addr=u'motuz-noreply@fredhutch.org',
-            to_addr=recipients,
-            subject=u'Motuz: Error listing copy jobs',
-            body=str(e)
-        )
-        envelope.send(server, port,
-                      login=os.getenv("MOTUZ_SMTP_USER"),
-                      password=os.getenv("MOTUZ_SMTP_PASSWORD"), tls=use_ssl)
         logging.exception(e, exc_info=True)
+        for address in os.environ.get('MOTUZ_ALERT_ADDRESS', '').split(','):
+            Email.send_notification(
+                to=address.strip() or None,
+                subject='Motuz: Error listing copy jobs',
+                body=str(e),
+            )
         raise HTTP_500_INTERNAL_SERVER_ERROR(str(e))
 
     return {
@@ -55,9 +47,9 @@ def create(data):
 
     copy_job = CopyJob(**{
         'description': data.get('description', None),
-        'src_cloud_id': data.get('src_cloud_id', None),
+        'src_cloud_id': owned_cloud_id(data.get('src_cloud_id')),
         'src_resource_path': data.get('src_resource_path', None),
-        'dst_cloud_id': data.get('dst_cloud_id', None),
+        'dst_cloud_id': owned_cloud_id(data.get('dst_cloud_id')),
         'dst_resource_path': data.get('dst_resource_path', None),
 
         'copy_links': data.get('copy_links', None),
@@ -82,7 +74,7 @@ def create(data):
 
 @token_required
 def retrieve(id):
-    copy_job = CopyJob.query.get(id)
+    copy_job = db.session.get(CopyJob, id)
 
     if copy_job is None:
         raise HTTP_404_NOT_FOUND('Copy Job with id {} not found'.format(id))
@@ -97,6 +89,7 @@ def retrieve(id):
             task = tasks.copy_job.AsyncResult(str(copy_job.id))
             copy_job.progress_text = task.info.get('text', '')
             copy_job.progress_error_text = task.info.get('error_text', '')
+            break
         except Exception:
             pass
     else:
@@ -112,7 +105,7 @@ def stop(id):
     task = tasks.copy_job.AsyncResult(str(copy_job.id))
     task.revoke(terminate=True)
 
-    copy_job = CopyJob.query.get(id)  # Avoid race conditions
+    copy_job = db.session.get(CopyJob, id)  # Avoid race conditions
     if copy_job.progress_state == 'PROGRESS':
         copy_job.progress_state = 'STOPPED'
         db.session.commit()

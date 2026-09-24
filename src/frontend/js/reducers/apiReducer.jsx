@@ -192,7 +192,7 @@ export default (state=initialState, action) => {
     case api.CREATE_CLOUD_CONNECTION_FAILURE: {
         return {
             ...state,
-            cloudErrors: action.payload.response.errors,
+            cloudErrors: responseErrors(action),
         }
     }
 
@@ -218,7 +218,7 @@ export default (state=initialState, action) => {
     case api.UPDATE_CLOUD_CONNECTION_FAILURE: {
         return {
             ...state,
-            cloudErrors: action.payload.response.errors,
+            cloudErrors: responseErrors(action),
         }
     }
 
@@ -248,7 +248,7 @@ export default (state=initialState, action) => {
                 loading: false,
                 success: false,
             },
-            cloudErrors: action.payload.response.errors,
+            cloudErrors: responseErrors(action),
         }
     }
     case dialog.HIDE_NEW_CLOUD_CONNECTION_DIALOG:
@@ -296,3 +296,12 @@ export default (state=initialState, action) => {
         return state;
     }
 };
+
+
+/**
+ * Field errors of a failed request. Network errors and non-JSON responses
+ * (e.g. an nginx 502 page) have no parsed response.
+ */
+function responseErrors(action) {
+    return ((action.payload && action.payload.response) || {}).errors || {};
+}

@@ -198,6 +198,10 @@ export default (state=initialState, action) => {
         const { side, data } = action.meta;
         const { connection_id, settings } = data;
 
+        if (isStaleListing(state, side, data)) {
+            return state;
+        }
+
         let {files, path} = action.payload;
 
         if (connection_id === 0) {
@@ -233,7 +237,11 @@ export default (state=initialState, action) => {
     }
 
     case api.LIST_FILES_FAILURE: {
-        const { side } = action.meta;
+        const { side, data } = action.meta;
+
+        if (isStaleListing(state, side, data)) {
+            return state;
+        }
 
         return {
             ...state,
@@ -315,3 +323,12 @@ export default (state=initialState, action) => {
         return state;
     }
 };
+
+
+/**
+ * A listing is stale if the pane moved to another host or path while it was in flight
+ */
+function isStaleListing(state, side, data) {
+    const currPane = getCurrentPane(state, side);
+    return currPane.host.id !== data.connection_id || currPane.path !== data.path;
+}

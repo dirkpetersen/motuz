@@ -33,10 +33,10 @@ sudo bash -c "(cd /root && rm -rf motuz.bak && mv motuz motuz.bak && mv motuz-te
 # TODO - make sure we are in the right branch?
 echo running redeploy script...
 # TODO - disable 'sleep' in redeploy script if calling from here, to minimize downtime
-sudo bash -c "(cd /root/motuz && bin/redeploy.sh)"
+sudo -E bash -c "(cd /root/motuz && bin/redeploy.sh)"
 
 # finally clean up and remove backup dir:
-sudo bash -c "(cd /root && rm -rf motuz-bak)"
+sudo bash -c "(cd /root && rm -rf motuz.bak)"
 
 echo Done.
 

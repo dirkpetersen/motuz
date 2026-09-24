@@ -68,6 +68,18 @@ export default (state=initialState, action) => {
     case api.RETRIEVE_COPY_JOB_SUCCESS:
     case api.STOP_COPY_JOB_SUCCESS:
     {
+        const isUpdate = (
+            action.type === api.RETRIEVE_COPY_JOB_SUCCESS ||
+            action.type === api.STOP_COPY_JOB_SUCCESS
+        );
+        if (isUpdate && (
+            !state.displayEditCopyJobDialog ||
+            state.editCopyJobDialogData.id !== action.payload.id
+        )) {
+            // Response for a dialog that was closed or switched to another job in the meantime
+            return state;
+        }
+
         if (
             state.editCopyJobDialogData.progress_state === 'STOPPED' &&
             action.payload.progress_state === 'PROGRESS'
@@ -117,6 +129,18 @@ export default (state=initialState, action) => {
     case api.RETRIEVE_HASHSUM_JOB_SUCCESS:
     case api.STOP_HASHSUM_JOB_SUCCESS:
     {
+        const isUpdate = (
+            action.type === api.RETRIEVE_HASHSUM_JOB_SUCCESS ||
+            action.type === api.STOP_HASHSUM_JOB_SUCCESS
+        );
+        if (isUpdate && (
+            !state.displayEditHashsumJobDialog ||
+            state.editHashsumJobDialogData.id !== action.payload.id
+        )) {
+            // Response for a dialog that was closed or switched to another job in the meantime
+            return state;
+        }
+
         return {
             ...state,
             displayEditHashsumJobDialog: true,

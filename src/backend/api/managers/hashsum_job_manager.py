@@ -8,6 +8,7 @@ from ..application import db
 from ..exceptions import *
 from ..models import HashsumJob
 from ..managers.auth_manager import token_required, get_logged_in_user
+from ..managers.cloud_connection_manager import owned_cloud_id
 
 
 @token_required
@@ -28,9 +29,9 @@ def create(data):
     owner = get_logged_in_user(request)
 
     hashsum_job = HashsumJob(**{
-        'src_cloud_id': data.get('src_cloud_id', None),
+        'src_cloud_id': owned_cloud_id(data.get('src_cloud_id')),
         'src_resource_path': data.get('src_resource_path', None),
-        'dst_cloud_id': data.get('dst_cloud_id', None),
+        'dst_cloud_id': owned_cloud_id(data.get('dst_cloud_id')),
         'dst_resource_path': data.get('dst_resource_path', None),
 
         'option_download': data.get('option_download', None),
@@ -55,7 +56,7 @@ def create(data):
 
 @token_required
 def retrieve(id):
-    hashsum_job = HashsumJob.query.get(id)
+    hashsum_job = db.session.get(HashsumJob, id)
 
     if hashsum_job is None:
         raise HTTP_404_NOT_FOUND('Hashsum Job with id {} not found'.format(id))
@@ -109,7 +110,7 @@ def stop(id):
     task = tasks.hashsum_job.AsyncResult(str(hashsum_job.id))
     task.revoke(terminate=True)
 
-    hashsum_job = HashsumJob.query.get(id) # Avoid race conditions
+    hashsum_job = db.session.get(HashsumJob, id) # Avoid race conditions
     if hashsum_job.progress_state == 'PROGRESS':
         hashsum_job.progress_state = 'STOPPED'
         db.session.commit()

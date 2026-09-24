@@ -159,6 +159,7 @@ def _ls_with_impersonation(path, user):
         '-L', # Dereference symlinks
         '-g', # Exclude owner user info (if needed, consider -n)
         '-o', # Exclude group user info (if needed consider -n)
+        '--', # Never interpret the path as an option
         path,
     ]
 
@@ -185,6 +186,7 @@ def _mkdir_with_impersonation(path, user):
         '-u', user,
         'mkdir',
         '-p',
+        '--', # Never interpret the path as an option
         path,
     ]
 

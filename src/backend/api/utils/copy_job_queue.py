@@ -7,6 +7,7 @@ import subprocess
 import threading
 import time
 import os
+import signal
 
 from .abstract_connection import AbstractConnection, RcloneException
 
@@ -20,6 +21,8 @@ class CopyJobQueue:
         self._job_exitstatus = {}
 
         self._stop_events = {} # Mapping from id to threading.Event
+        self._processes = {} # Mapping from id to subprocess.Popen
+        self._error_text_lock = threading.Lock()
         self._latest_job_id = 0
 
 
@@ -79,22 +82,48 @@ class CopyJobQueue:
         process = subprocess.Popen(
             command,
             env=full_env,
-            stdin=subprocess.PIPE,
+            stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
+            start_new_session=True, # Own process group, see terminate_all()
         )
+        self._processes[job_id] = process
+
+        # Drain stderr concurrently, otherwise rclone blocks once the pipe buffer is full
+        stderr_thread = threading.Thread(
+            target=self._read_stderr,
+            args=(process, job_id),
+            daemon=True,
+        )
+        stderr_thread.start()
+
+        try:
+            self.__read_stdout(process, job_id)
+        except Exception as e:
+            logging.exception(e)
+            self._append_error_text(job_id, str(e))
+        finally:
+            exitstatus = process.wait()
+            stderr_thread.join(timeout=10)
+            self._job_exitstatus[job_id] = exitstatus
+            self._job_percent[job_id] = 100
+            logging.info("Copy process exited with exit status {}".format(exitstatus))
+            stop_event.set()
+
+
+    def __read_stdout(self, process, job_id):
+        stop_event = self._stop_events[job_id]
 
         reset_sequence1 = '\x1b[2K\x1b[0' # + 'G'
         reset_sequence2 = '\x1b[2K\x1b[A\x1b[2K\x1b[A\x1b[2K\x1b[A\x1b[2K\x1b[A\x1b[2K\x1b[A\x1b[2K\x1b[A\x1b[2K\x1b[0' # + 'G'
 
         while not stop_event.is_set():
-            line = process.stdout.readline().decode('utf-8')
+            line = process.stdout.readline().decode('utf-8', errors='replace')
 
             if len(line) == 0:
                 if process.poll() is not None:
-                    stop_event.set()
-                else:
-                    time.sleep(0.5)
+                    break
+                time.sleep(0.5)
                 continue
 
             line = line.strip()
@@ -105,7 +134,7 @@ class CopyJobQueue:
 
             q2 = line.find(reset_sequence2)
             if q2 != -1:
-                line = line[q2 + len(reset_sequence1):]
+                line = line[q2 + len(reset_sequence2):]
 
             line = line.replace(reset_sequence1, '')
             line = line.replace(reset_sequence2, '')
@@ -114,41 +143,48 @@ class CopyJobQueue:
             if match is not None:
                 error = match.groups()[0]
                 logging.error(error)
-                self._job_error_text[job_id] += error
-                self._job_error_text[job_id] += '\n'
-                # Restrict size to 10000 characters
-                self._job_error_text[job_id] = self._job_error_text[job_id][-10000:]
+                self._append_error_text(job_id, error)
                 continue
 
             match = re.search(r'([A-Za-z ]+):\s*(.*)', line)
             if match is None:
                 logging.info("No match in {}".format(line))
-                time.sleep(0.5)
                 continue
 
             key, value = match.groups()
+            key = key.strip()
+            if key == 'Transferred' and 'B/s' in value:
+                # rclone prints two "Transferred" lines: bytes (with a rate) and file counts
+                key = 'Transferred0'
             self._job_status[job_id][key] = value
             self.__process_copy_status(job_id)
 
-        self._job_percent[job_id] = 100
         self.__process_copy_status(job_id)
 
-        exitstatus = process.poll()
-        self._job_exitstatus[job_id] = exitstatus
 
-        for _ in range(100000):
-            line = process.stderr.readline().decode('utf-8')
-            if len(line) == 0:
-                break
-            line = line.strip()
-            self._job_error_text[job_id] += line
+    def terminate_all(self):
+        """
+        Kill every rclone process group started by this queue (used when the task is revoked)
+        """
+        for process in self._processes.values():
+            if process.poll() is None:
+                try:
+                    os.killpg(process.pid, signal.SIGTERM)
+                except ProcessLookupError:
+                    pass
+
+
+    def _append_error_text(self, job_id, text):
+        with self._error_text_lock:
+            self._job_error_text[job_id] += text
             self._job_error_text[job_id] += '\n'
             # Restrict size to 10000 characters
             self._job_error_text[job_id] = self._job_error_text[job_id][-10000:]
 
 
-        logging.info("Copy process exited with exit status {}".format(exitstatus))
-        stop_event.set() # Just in case
+    def _read_stderr(self, process, job_id):
+        for raw_line in process.stderr:
+            self._append_error_text(job_id, raw_line.decode('utf-8', errors='replace').strip())
 
 
     def __process_copy_status(self, job_id):
@@ -198,6 +234,7 @@ class CopyJobQueue:
         text = '\n'.join(
             '{:>12}: {}'.format(header, status[header])
             for header in headers
+            if status[header]
         )
         text = text.replace("Transferred0", " Transferred")
         self._job_text[job_id] = text
@@ -206,15 +243,9 @@ class CopyJobQueue:
     def __process_copy_percent(self, job_id):
         status = self._job_status[job_id]
 
-        match = re.search(r'(\d+)\%', status['GTransferred'])
-
-        if match is not None:
-            self._job_percent[job_id] = match[1]
-            return
-
-        match = re.search(r'(\d+)\%', status['Transferred0'])
-        if match is not None:
-            self._job_percent[job_id] = match[1]
-            return
-
-        self._job_percent[job_id] = -1
+        for key in ('GTransferred', 'Transferred0'):
+            match = re.search(r'(\d+)\%', status[key])
+            if match is not None:
+                self._job_percent[job_id] = int(match[1])
+                return
+        # No percentage in this update, keep the last known value

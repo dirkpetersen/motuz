@@ -1,14 +1,9 @@
 # Build as
 # docker build -t fredhutch/motuz_app:latest -f deployment/docker/app/Dockerfile .
 
-FROM python:3.7.3-slim as build-image
+FROM python:3.12-slim-bookworm AS build-image
 
 ENV DEBIAN_FRONTEND=noninteractive
-
-RUN mv /etc/apt/sources.list /etc/apt/sources.list.old
-
-RUN echo "deb http://archive.debian.org/debian/ stretch main" > /etc/apt/sources.list
-RUN echo "deb http://archive.debian.org/debian-security stretch/updates main" >> /etc/apt/sources.list
 
 RUN set -x \
     && apt-get update -y \
@@ -18,25 +13,24 @@ RUN set -x \
 
 ENV PATH=/root/.local/bin:$PATH
 COPY ./requirements.txt /code/requirements.txt
-RUN pip install --user -r /code/requirements.txt
+RUN pip install --no-cache-dir --user -r /code/requirements.txt
 
 
 
 
 
 
-FROM python:3.7.3-slim
+FROM python:3.12-slim-bookworm
 
 COPY --from=build-image /root/.local /root/.local
 ENV PATH=/root/.local/bin:$PATH
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-RUN mv /etc/apt/sources.list /etc/apt/sources.list.old
-
-RUN echo "deb http://archive.debian.org/debian/ stretch main" > /etc/apt/sources.list
-RUN echo "deb http://archive.debian.org/debian-security stretch/updates main" >> /etc/apt/sources.list
-
+ARG RCLONE_VERSION=1.75.1
+ARG RCLONE_SHA256_AMD64=982b5aa772841168f8e380f139e9e787b2a105403e32b94da8676a0e1c0a13ab
+ARG RCLONE_SHA256_ARM64=03f2504174034b6d004152ed7369251c9a9ec1f7e0836eda420f5c7a5ec0dff9
+ARG TARGETARCH=amd64
 
 RUN set -x \
     && apt-get update -y \
@@ -47,23 +41,27 @@ RUN set -x \
         libpam-sss \
         sudo \
         curl \
+        ca-certificates \
         unzip \
-    && curl -LO https://downloads.rclone.org/v1.64.0/rclone-v1.64.0-linux-amd64.zip \
-    && unzip rclone-v1.64.0-linux-amd64.zip \
-    && cp rclone-v1.64.0-linux-amd64/rclone /usr/local/bin/ \
-    && rm -rf rclone-v1.64.0-linux-amd64.zip rclone-v1.64.0-linux-amd64/ \
+    && if [ "$TARGETARCH" = "arm64" ]; then RCLONE_SHA256="$RCLONE_SHA256_ARM64"; else RCLONE_SHA256="$RCLONE_SHA256_AMD64"; fi \
+    && RCLONE_NAME="rclone-v${RCLONE_VERSION}-linux-${TARGETARCH}" \
+    && curl -fLO "https://downloads.rclone.org/v${RCLONE_VERSION}/${RCLONE_NAME}.zip" \
+    && echo "${RCLONE_SHA256}  ${RCLONE_NAME}.zip" | sha256sum -c - \
+    && unzip "${RCLONE_NAME}.zip" \
+    && cp "${RCLONE_NAME}/rclone" /usr/local/bin/ \
+    && rm -rf "${RCLONE_NAME}.zip" "${RCLONE_NAME}/" \
     && apt-get remove --purge --auto-remove -y \
         unzip \
         curl \
     && apt-get purge -y --auto-remove \
     && rm -rf /var/lib/apt/lists/*
 
-ENV PYTHONUNBUFFERED 1
-ENV DOCKER_CONTAINER 1
-ENV FLASK_ENV development
-ENV MOTUZ_HOST 0.0.0.0
-# libpython3.7m.so.1.0 cannot be found if /etc is remapped
-ENV LD_LIBRARY_PATH /usr/local/lib
+ENV PYTHONUNBUFFERED=1
+ENV DOCKER_CONTAINER=1
+ENV PYTHON_ENVIRONMENT=prod
+ENV MOTUZ_HOST=0.0.0.0
+# libpython3.12.so.1.0 cannot be found if /etc is remapped
+ENV LD_LIBRARY_PATH=/usr/local/lib
 
 RUN set -x \
     && install -d -m 755 /root/.config/rclone/ \
@@ -77,4 +75,4 @@ COPY \
     /app/src/backend/
 
 WORKDIR /app/src/backend
-CMD /app/src/backend/app-entrypoint.sh
+CMD ["/app/src/backend/app-entrypoint.sh"]

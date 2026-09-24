@@ -7,4 +7,4 @@ set -e
 
 source ./load-secrets.sh
 
-celery -A api.tasks worker -l info
+exec celery -A api.tasks worker -l info

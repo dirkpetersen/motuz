@@ -1,5 +1,6 @@
 import React from 'react';
 import { Modal, Button } from 'react-bootstrap'
+import upath from 'upath'
 
 import UriResource from 'components/UriResource.jsx'
 import serializeForm from 'utils/serializeForm.jsx'
@@ -82,7 +83,7 @@ class MkdirDialog extends React.Component {
 
         const form_data = serializeForm(event.target)
         const data = {
-            path: `${form_data.path_prefix}/${form_data.path_suffix}`,
+            path: upath.join(form_data.path_prefix, form_data.path_suffix),
             connection_id: window.parseInt(form_data.connection_id),
         }
 

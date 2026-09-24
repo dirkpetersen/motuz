@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
-set -e
+# Exports every file in the secrets directory as an environment variable
+# named after the file. Meant to be `source`d.
 
 if [ -z "$1" ]; then
     SECRETS_DIRECTORY="/run/secrets"
@@ -8,16 +9,15 @@ else
     SECRETS_DIRECTORY="$1"
 fi
 
-if [ -z "$(ls -A $SECRETS_DIRECTORY 2> /dev/null)" ]; then
+if [ -z "$(ls -A "$SECRETS_DIRECTORY" 2> /dev/null)" ]; then
     echo "No secrets found at $SECRETS_DIRECTORY"
-    exit 0
+    return 0 2> /dev/null || exit 0
 fi
 
 
-echo $SECRETS_DIRECTORY
+echo "$SECRETS_DIRECTORY"
 
 for secret_path in "$SECRETS_DIRECTORY"/*; do
     key=$(basename "$secret_path")
-    value=$(cat $secret_path)
-    eval "export $key=\"$value\""
+    export "$key=$(cat "$secret_path")"
 done

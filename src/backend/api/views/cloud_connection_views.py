@@ -1,7 +1,7 @@
 import logging
 
 from flask import request
-from flask_restplus import Resource, Namespace, fields
+from flask_restx import Resource, Namespace, fields
 
 from ..managers.auth_manager import token_required
 from ..managers import cloud_connection_manager
@@ -125,7 +125,7 @@ class ConnectionVerify(Resource):
 
 
 
-@api.route('/<id>')
+@api.route('/<int:id>')
 @api.param('id', 'The Connection Identifier')
 @api.response(404, 'Connection not found.')
 class Connection(Resource):

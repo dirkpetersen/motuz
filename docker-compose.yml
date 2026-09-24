@@ -1,5 +1,3 @@
-version: '3.4'
-
 # See the fully generated file using
 # docker-compose config
 
@@ -15,6 +13,7 @@ x-variables:
         MOTUZ_SMTP_SERVER:          # from ./.env
         MOTUZ_SMTP_USER:            # from ./.env
         MOTUZ_SMTP_REQUIRE_SSL:     # from ./.env
+        MOTUZ_ALERT_ADDRESS:        # from ./.env
     - &shared-volumes
         volumes:
             # Using system users for authentication
@@ -68,10 +67,11 @@ services:
         ports:
             - 5000:5000
         environment:
-            <<: *database-environment
+            <<: [*database-environment, *smtp-environment]
         secrets:
             - MOTUZ_DATABASE_PASSWORD
             - MOTUZ_FLASK_SECRET_KEY
+            - MOTUZ_SMTP_PASSWORD
 
 
     celery:
@@ -80,8 +80,7 @@ services:
         network_mode: host
         <<: *shared-volumes
         environment:
-            <<: *database-environment
-            <<: *smtp-environment
+            <<: [*database-environment, *smtp-environment]
         secrets:
             - MOTUZ_DATABASE_PASSWORD
             - MOTUZ_FLASK_SECRET_KEY
@@ -92,7 +91,7 @@ services:
 
     rabbitmq:
         container_name: motuz_rabbitmq
-        image: rabbitmq:3.7.16-alpine
+        image: rabbitmq:3.13-alpine
         network_mode: host
         ports:
             - 5672:5672
@@ -101,7 +100,7 @@ services:
 
     database:
         container_name: motuz_database
-        image: postgres:11.3-alpine
+        image: postgres:11-alpine
         network_mode: host
         volumes:
             - ${MOTUZ_DOCKER_ROOT:-/docker}/volumes/postgres:/var/lib/postgresql/data

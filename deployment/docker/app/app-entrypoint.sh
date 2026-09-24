@@ -8,4 +8,4 @@ set -e
 source ./load-secrets.sh
 
 python3 manage.py db upgrade
-uwsgi --ini wsgi.ini
+exec uwsgi --ini wsgi.ini

@@ -5,9 +5,6 @@ import os
 import subprocess
 from collections import defaultdict
 
-import boto3
-from botocore.exceptions import ClientError
-
 from .abstract_connection import AbstractConnection, RcloneException
 from .copy_job_queue import CopyJobQueue
 from .hashsum_job_queue import HashsumJobQueue
@@ -130,7 +127,7 @@ class RcloneConnection(AbstractConnection):
         option_exclude_dot_snapshot = '' # HACKHACK: remove once https://github.com/rclone/rclone/issues/2425 is addressed
 
         if src_data is None: # Local
-            src = src_resource_path
+            src = _local_path(src_resource_path)
             if os.path.isdir(src):
                 option_exclude_dot_snapshot = '--exclude=\\.snapshot/'
         else:
@@ -138,7 +135,7 @@ class RcloneConnection(AbstractConnection):
             src = 'src:{}'.format(src_resource_path)
 
         if dst_data is None: # Local
-            dst = dst_resource_path
+            dst = _local_path(dst_resource_path)
         else:
             credentials.update(self._formatCredentials(dst_data, name='dst'))
             dst = 'dst:{}'.format(dst_resource_path)
@@ -211,7 +208,7 @@ class RcloneConnection(AbstractConnection):
         option_download = ''
 
         if data is None: # Local
-            src = resource_path
+            src = _local_path(resource_path)
             download = False
             if os.path.isdir(src):
                 option_exclude_dot_snapshot = '--exclude=\\.snapshot/'
@@ -266,6 +263,11 @@ class RcloneConnection(AbstractConnection):
 
     def hashsum_delete(self, job_id):
         return self._hashsum_job_queue.hashsum_delete(job_id)
+
+
+    def terminate_all(self):
+        self._copy_job_queue.terminate_all()
+        self._hashsum_job_queue.terminate_all()
 
 
     def _log_command(self, command, credentials):
@@ -499,6 +501,16 @@ class RcloneConnection(AbstractConnection):
             if len(stderr) == 0:
                 raise
             raise RcloneException(stderr)
+
+
+def _local_path(path):
+    """
+    Local paths are passed to rclone as positional arguments, so they must be
+    absolute to never be interpreted as an option (e.g. "--config=...")
+    """
+    if not path or not path.startswith('/'):
+        raise RcloneException("Local path must be absolute: '{}'".format(path))
+    return path
 
 
 def should_log_full_credential(key):

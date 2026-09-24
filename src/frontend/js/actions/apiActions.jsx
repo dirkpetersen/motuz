@@ -124,7 +124,7 @@ export const makeDirectory = (data) => {
         const state = getState();
         const dirname = upath.dirname(data.path)
         const basename = upath.basename(data.path)
-        if (fileExists(state.pane, dirname, basename) && !confirm(
+        if (fileExists(state.pane, data.connection_id, dirname, basename) && !confirm(
             `${basename} already exists at destination. Overwrite?`
         )) {
             return;
@@ -172,7 +172,7 @@ export const createCopyJob = (data) => {
         const state = getState();
         const dirname = upath.dirname(data.dst_resource_path)
         const basename = upath.basename(data.src_resource_path)
-        if (fileExists(state.pane, dirname, basename) && !confirm(
+        if (fileExists(state.pane, data.dst_cloud_id, dirname, basename) && !confirm(
             `${basename} already exists at destination. Overwrite?`
         )) {
             return;

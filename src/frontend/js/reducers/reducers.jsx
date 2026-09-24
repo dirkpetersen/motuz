@@ -8,7 +8,7 @@ import paneReducer from 'reducers/paneReducer.jsx'
 import settingsReducer from 'reducers/settingsReducer.jsx'
 import loadersReducer from 'reducers/loadersReducer.jsx'
 
-export default (history) => combineReducers({
+export default () => combineReducers({
     alert: alertReducer,
     auth: authReducer,
     api: apiReducer,

@@ -2,7 +2,7 @@ import logging
 import random
 
 from flask import request
-from flask_restplus import Resource, Namespace, fields
+from flask_restx import Resource, Namespace, fields
 
 from ..managers import hashsum_job_manager
 from .. import tasks
@@ -69,7 +69,7 @@ class HashsumJobList(Resource):
 
 
 
-@api.route('/<id>')
+@api.route('/<int:id>')
 @api.param('id', 'The Check Job Identifier')
 @api.response(404, 'Check Job not found.')
 class HashsumJob(Resource):
@@ -89,7 +89,7 @@ class HashsumJob(Resource):
 
 
 
-@api.route('/<id>/stop/')
+@api.route('/<int:id>/stop/')
 @api.param('id', 'The Check Job Identifier')
 @api.response(404, 'Check Job not found.')
 class HashsumJob(Resource):

@@ -60,6 +60,11 @@ if [ "$MOTUZ_DATABASE_HOST" != "0.0.0.0:5432" ]; then
   exit 0
 fi
 
+# Newer postgres images refuse to initialize without a superuser password.
+# The superuser is only used over the local socket during this initialization,
+# and pg_hba.conf allows no local connections afterwards, so a random one is fine.
+export POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-$(head -c 32 /dev/urandom | base64)}"
+
 # Entrypoint in the official docker image for postgres
 docker-entrypoint.sh postgres &
 

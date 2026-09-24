@@ -1,7 +1,7 @@
 import logging
 
 from flask import request
-from flask_restplus import Resource, Namespace, fields
+from flask_restx import Resource, Namespace, fields
 
 from ..managers import system_manager
 from ..exceptions import HTTP_EXCEPTION

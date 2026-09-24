@@ -1,0 +1,13 @@
+# Top-level runtime dependencies. Regenerate the pinned files with:
+#   uv pip compile requirements.in --python-version 3.12 --upgrade -o requirements.txt
+#   uv pip compile requirements-dev.in --python-version 3.12 --upgrade -o requirements-dev.txt
+alembic
+celery
+Flask
+Flask-JWT-Extended
+Flask-Migrate
+flask-restx
+Flask-SQLAlchemy
+psycopg[binary]
+SQLAlchemy
+uWSGI

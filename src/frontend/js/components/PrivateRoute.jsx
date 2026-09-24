@@ -5,7 +5,7 @@ import {Route, Redirect} from 'react-router-dom';
  * https://tylermcginnis.com/react-router-protected-routes-authentication/
  */
 
-const PrivateRoute = ({component: Component, display, redirect, ...rest}) => (
+const PrivateRoute = ({component: Component, display=true, redirect='/', ...rest}) => (
     <Route {...rest} render={props => {
         return display
             ? <Component {...props} />
@@ -13,11 +13,6 @@ const PrivateRoute = ({component: Component, display, redirect, ...rest}) => (
     }
     } />
 );
-
-PrivateRoute.defaultProps = {
-    display: true,
-    redirect: '/',
-};
 
 
 import {connect} from 'react-redux';

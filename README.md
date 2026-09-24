@@ -317,11 +317,11 @@ postgresql://your_user:your_password@your_host.com:5432/your_database_name
 
 ### Initialize
 
-1. Install system dependencies (tested with Ubuntu 18.04 and MacOS 10.14)
+1. Install system dependencies
 
 - [Docker](https://docs.docker.com/install/linux/docker-ce/ubuntu/)
-- Python ~ 3.7
-- Node ~ 10.15
+- Python 3.12
+- Node >= 22.15
 
 
 2. Initialize app
@@ -369,8 +369,8 @@ postgresql://your_user:your_password@your_host.com:5432/your_database_name
 1. Changing the host
 
 ```bash
-MOTUZ_HOST='0.0.0.0' ./bin/frontend_start.sh
-MOTUZ_HOST='0.0.0.0' ./bin/backend_start.sh
+MOTUZ_HOST='0.0.0.0' ./bin/dev/frontend_start.sh
+MOTUZ_HOST='0.0.0.0' ./bin/dev/backend_start.sh
 ```
 
 
@@ -405,7 +405,7 @@ curl -X POST "https://example.com/api/auth/login/" \
 
 - The `access_token` can be provided to Swagger using the "Authorize" button an the top-right and inserting `Bearer $access_token` in the box, where $access_token is the value returned for key "access" in step 1
 
-- The `access_token` is only valid for a limited amount of time (usually 6 hours). Upon expiration, a new `access_token` can be obtained by issuing a POST request to `/api/auth/refresh/` using the `refresh_token` in the Authorization field. Example:
+- The `access_token` is only valid for a limited amount of time (1 day). Upon expiration, a new `access_token` can be obtained by issuing a POST request to `/api/auth/refresh/` using the `refresh_token` in the Authorization field. Example:
     - Authorization: Bearer `refresh_token`
 
 - The `refresh_token` has longer validity, say T days. Please note that the `POST /api/auth/refresh/` endpoint issues a new `refresh_token` as well, so if the users login at least once every T days, they will never be logged out.

@@ -1,6 +1,5 @@
 from datetime import datetime
 from sqlalchemy import Column, DateTime, event
-from sqlalchemy.ext.declarative import declarative_base
 
 
 class _TimestampMixin(object):
@@ -23,5 +22,3 @@ class _TimestampMixin(object):
 
 class TimestampMixin(_TimestampMixin):
     pass
-
-TimestampMixin = declarative_base(cls=TimestampMixin)

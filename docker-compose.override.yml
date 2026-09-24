@@ -1,5 +1,3 @@
-version: '3.4'
-
 # Edit this file to add configuration that is specific to your instance
 # Find additional documentation at https://docs.docker.com/compose/extends/
 

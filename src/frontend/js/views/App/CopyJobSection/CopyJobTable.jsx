@@ -124,26 +124,6 @@ class CopyJobTable extends React.Component {
             );
         })
 
-        const currentJobsInProgress = new Set(this.props.jobs
-            .filter(d => d.progress_state === 'PROGRESS')
-            .map(d => d.id)
-        )
-
-        let shouldRefreshPanes = false;
-        this.previousJobsInProgress.forEach(jobId => {
-            if (!currentJobsInProgress.has(jobId)) {
-                shouldRefreshPanes = true;
-            }
-        })
-        if (shouldRefreshPanes) {
-            this.props.refreshPanes();
-        }
-        this.previousJobsInProgress = currentJobsInProgress;
-
-        if (currentJobsInProgress.size > 0) {
-            this.scheduleRefresh(currentJobsInProgress);
-        }
-
         const pageItems = [];
         const pages = this.props.jobPages;
         const cutoff = 3;
@@ -202,6 +182,32 @@ class CopyJobTable extends React.Component {
 
     componentDidMount() {
         this.props.fetchData(this.page);
+    }
+
+    componentDidUpdate(prevProps) {
+        if (prevProps.jobs === this.props.jobs) {
+            return;
+        }
+
+        const currentJobsInProgress = new Set(this.props.jobs
+            .filter(d => d.progress_state === 'PROGRESS')
+            .map(d => d.id)
+        )
+
+        let shouldRefreshPanes = false;
+        this.previousJobsInProgress.forEach(jobId => {
+            if (!currentJobsInProgress.has(jobId)) {
+                shouldRefreshPanes = true;
+            }
+        })
+        if (shouldRefreshPanes) {
+            this.props.refreshPanes();
+        }
+        this.previousJobsInProgress = currentJobsInProgress;
+
+        if (currentJobsInProgress.size > 0) {
+            this.scheduleRefresh(currentJobsInProgress);
+        }
     }
 
     componentWillUnmount() {

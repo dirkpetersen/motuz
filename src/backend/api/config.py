@@ -20,15 +20,13 @@ except KeyError as e:
 class Config:
     SECRET_KEY = MOTUZ_FLASK_SECRET_KEY
     JWT_SECRET_KEY = MOTUZ_FLASK_SECRET_KEY
-    JWT_BLACKLIST_ENABLED = True
-    JWT_BLACKLIST_TOKEN_CHECKS = ['refresh']
+    JWT_IDENTITY_CLAIM = 'identity' # Frontend reads `identity`, and keeps pre-upgrade tokens valid
     CELERY_BROKER_URL = 'amqp://'
-    CELERY_RESULT_BACKEND = 'amqp://'
 
     DATABASE_PARAMS = ''
     if MOTUZ_DATABASE_REQUIRE_SSL.lower() in ('true', 't'):
         DATABASE_PARAMS = '?sslmode=require'
-    SQLALCHEMY_POOL_RECYCLE=1
+    SQLALCHEMY_ENGINE_OPTIONS = {'pool_pre_ping': True}
     SQLALCHEMY_DATABASE_URI = '{PROTOCOL}://{USER}:{PASSWORD}@{HOST}/{DATABASE}{PARAMS}'.format(
         PROTOCOL=MOTUZ_DATABASE_PROTOCOL,
         USER=MOTUZ_DATABASE_USER,
@@ -37,6 +35,9 @@ class Config:
         DATABASE=MOTUZ_DATABASE_NAME,
         PARAMS=DATABASE_PARAMS,
     )
+    # Task progress is written by the worker and read by the API, so results must be
+    # stored somewhere shared. The amqp result backend was removed in Celery 5.
+    CELERY_RESULT_BACKEND = 'db+' + SQLALCHEMY_DATABASE_URI
 
     DEBUG = False
     # https://flask-sqlalchemy.palletsprojects.com/en/2.x/signals/
@@ -53,6 +54,7 @@ class TestingConfig(Config):
     DEBUG = True
     TESTING = True
     SQLALCHEMY_DATABASE_URI = 'sqlite:///' + os.path.join(basedir, 'database_test.sqlite3')
+    CELERY_RESULT_BACKEND = 'db+' + SQLALCHEMY_DATABASE_URI
     PRESERVE_CONTEXT_ON_EXCEPTION = False
 
 

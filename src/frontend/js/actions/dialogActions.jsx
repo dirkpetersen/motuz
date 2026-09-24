@@ -53,12 +53,21 @@ export const showNewCopyJobDialog = (data) => {
         const dstResourcePaths = []
 
         for (let key in srcPane.fileMultiFocusIndexes) {
-            const srcResourceName = srcFiles[Number(key)].name;
+            const srcFile = srcFiles[Number(key)];
+            // Skip the parent directory and placeholder rows (Loading..., ERROR), which have no type
+            if (!srcFile || !srcFile.type || srcFile.name === '..') {
+                continue;
+            }
+            const srcResourceName = srcFile.name;
             const srcResourcePath = upath.join(srcPane.path, srcResourceName)
             const dstResourcePath = upath.join(dstPane.path, srcResourceName)
 
             srcResourcePaths.push(srcResourcePath)
             dstResourcePaths.push(dstResourcePath)
+        }
+
+        if (srcResourcePaths.length === 0) {
+            return; // Nothing copyable selected
         }
 
         const data = {

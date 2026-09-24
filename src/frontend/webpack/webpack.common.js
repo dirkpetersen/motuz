@@ -1,10 +1,6 @@
 const path = require('path');
-const webpack = require('webpack');
 
 const HtmlWebpackPlugin = require('html-webpack-plugin');
-
-const nodeEnv = process.env.NODE_ENV || 'development';
-const isProd = nodeEnv === 'production';
 
 module.exports = {
     entry: {
@@ -13,7 +9,8 @@ module.exports = {
 
     output: {
         path: path.resolve(__dirname, '..', '..', '..', 'build'),
-        filename: 'js/[name]-[hash].bundle.js',
+        filename: 'js/[name]-[contenthash].bundle.js',
+        clean: true,
         publicPath: '/',
     },
 
@@ -32,13 +29,12 @@ module.exports = {
             }
         }, {
             test: /\.(woff|woff2|eot|ttf)$/,
-            loader: 'url-loader?limit=100000'
+            type: 'asset',
+            parser: { dataUrlCondition: { maxSize: 100000 } },
         }, {
             test: /\.(png|svg|jpg|gif|ico)$/,
-            use: [{
-                loader: 'file-loader',
-                options: { name: 'img/[name].[ext]'}
-            } ]
+            type: 'asset/resource',
+            generator: { filename: 'img/[name][ext]' },
         }]
     },
 
@@ -51,10 +47,6 @@ module.exports = {
             meta: {
             }
         }),
-        new webpack.ProvidePlugin({
-            $: 'jquery',
-            jQuery: 'jquery'
-        }),
     ],
 
     resolve: {
@@ -63,7 +55,11 @@ module.exports = {
             path.resolve('./src/frontend/css'),
             path.resolve('./src/frontend/img'),
             path.resolve('./node_modules')
-        ]
+        ],
+        extensions: ['.js', '.jsx', '...'],
+        fallback: {
+            path: require.resolve('path-browserify'), // For upath
+        },
     },
 
     stats: {

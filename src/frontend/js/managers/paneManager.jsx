@@ -58,16 +58,15 @@ export function setCurrentFiles(state, payload, side=null) {
     }
 }
 
-export function fileExists(state, dirname, basename) {
-    let files;
-    if (getCurrentPane(state, 'left').path === dirname) {
-        files = getCurrentFiles(state, 'left');
-    } else if (getCurrentPane(state, 'right').path === dirname) {
-        files = getCurrentFiles(state, 'right');
-    } else {
-        console.error(`Neither left nor right pane has path '${dirname}'`)
+export function fileExists(state, hostId, dirname, basename) {
+    const side = ['left', 'right'].find(side => {
+        const pane = getCurrentPane(state, side);
+        return (pane.host.id || 0) === (hostId || 0) && pane.path === dirname;
+    });
+    if (!side) {
+        console.error(`Neither left nor right pane shows '${dirname}' on host ${hostId || 0}`)
         return false; // Fail safe
     }
 
-    return files.some(d => d.name === basename);
+    return getCurrentFiles(state, side).some(d => d.name === basename);
 }

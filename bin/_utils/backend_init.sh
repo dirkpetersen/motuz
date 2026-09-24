@@ -9,7 +9,8 @@ cd ../..
 set +x
 
 source venv/bin/activate
+source bin/_utils/load_env.sh
 
 cd src/backend
 
-FLASK_ENV=development python manage.py db upgrade
+python manage.py db upgrade

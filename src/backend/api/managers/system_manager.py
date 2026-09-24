@@ -19,7 +19,7 @@ from ..utils.abstract_connection import RcloneException
 
 @token_required
 def get_uid():
-    uid = os.getuid()
+    uid = pwd.getpwnam(get_logged_in_user(request)).pw_uid
     return {
         "uid": uid,
     }

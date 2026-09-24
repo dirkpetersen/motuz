@@ -133,5 +133,6 @@ def remove_identical_branches(left, right):
 
     while j < len(right):
         new_right.append(right[j])
+        j += 1
 
     return new_left, new_right

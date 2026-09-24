@@ -1,6 +1,7 @@
 import logging
 import os
 import re
+import signal
 import subprocess
 import threading
 import time
@@ -19,6 +20,8 @@ class HashsumJobQueue:
         self._job_exitstatus = {}
 
         self._stop_events = {} # Mapping from id to threading.Event
+        self._processes = {} # Mapping from id to subprocess.Popen
+        self._error_text_lock = threading.Lock()
 
 
     def push(self, command, env, job_id):
@@ -80,19 +83,45 @@ class HashsumJobQueue:
         process = subprocess.Popen(
             command,
             env=full_env,
-            stdin=subprocess.PIPE,
+            stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
+            start_new_session=True, # Own process group, see terminate_all()
         )
+        self._processes[job_id] = process
+
+        # Drain stderr concurrently, otherwise rclone blocks once the pipe buffer is full
+        stderr_thread = threading.Thread(
+            target=self._read_stderr,
+            args=(process, job_id),
+            daemon=True,
+        )
+        stderr_thread.start()
+
+        try:
+            self.__read_stdout(process, job_id)
+        except Exception as e:
+            logging.exception(e)
+            self._append_error_text(job_id, str(e))
+        finally:
+            exitstatus = process.wait()
+            stderr_thread.join(timeout=10)
+            self._job_exitstatus[job_id] = exitstatus
+            self._job_percent[job_id] = 100
+            logging.info("Hashsum process exited with exit status {}".format(exitstatus))
+            stop_event.set()
+
+
+    def __read_stdout(self, process, job_id):
+        stop_event = self._stop_events[job_id]
 
         while not stop_event.is_set():
-            line = process.stdout.readline().decode('utf-8')
+            line = process.stdout.readline().decode('utf-8', errors='replace')
 
             if len(line) == 0:
                 if process.poll() is not None:
                     break
-                else:
-                    time.sleep(0.5)
+                time.sleep(0.5)
                 continue
 
             # The output of the command is 32 md5sum characters,
@@ -102,33 +131,37 @@ class HashsumJobQueue:
                 r'^({})\s\s(.*)'.format('.' * 32), # 32 character md5sum
                 line,
             )
+            if groups is None:
+                logging.info("No match in {}".format(line))
+                continue
+
             self._job_status[job_id].append({
                 'Name': groups[2],
                 'md5chksum': groups[1].strip() or None,
             })
-            self.__process_copy_status(job_id)
 
-        self._job_percent[job_id] = 100
-        self.__process_copy_status(job_id)
 
-        exitstatus = process.poll()
-        self._job_exitstatus[job_id] = exitstatus
+    def terminate_all(self):
+        """
+        Kill every rclone process group started by this queue (used when the task is revoked)
+        """
+        for process in self._processes.values():
+            if process.poll() is None:
+                try:
+                    os.killpg(process.pid, signal.SIGTERM)
+                except ProcessLookupError:
+                    pass
 
-        for _ in range(100000):
-            line = process.stderr.readline().decode('utf-8')
-            if len(line) == 0:
-                break
-            line = line.strip()
-            self._job_error_text[job_id] += line
+
+    def _append_error_text(self, job_id, text):
+        with self._error_text_lock:
+            self._job_error_text[job_id] += text
             self._job_error_text[job_id] += '\n'
             # Restrict size to 10000 characters
             self._job_error_text[job_id] = self._job_error_text[job_id][-10000:]
 
 
-        logging.info("Hashsum process exited with exit status {}".format(exitstatus))
-        stop_event.set() # Just in case
-
-
-    def __process_copy_status(self, job_id):
-        status = self._job_status[job_id]
+    def _read_stderr(self, process, job_id):
+        for raw_line in process.stderr:
+            self._append_error_text(job_id, raw_line.decode('utf-8', errors='replace').strip())
 

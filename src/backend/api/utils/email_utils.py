@@ -50,7 +50,7 @@ class Email:
 
 
     @staticmethod
-    def send_notification(to, subject):
+    def send_notification(to, subject, body=None):
         try:
             if to is None:
                 return
@@ -60,7 +60,8 @@ class Email:
                 logging.error("env variable MOTUZ_SMTP_SERVER not set")
                 return
 
-            body = subject
+            if body is None:
+                body = subject
 
             use_tls = False
             MOTUZ_SMTP_REQUIRE_SSL = os.environ.get('MOTUZ_SMTP_REQUIRE_SSL')

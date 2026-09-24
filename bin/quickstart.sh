@@ -78,6 +78,8 @@ create_folders() {
     mkdir -p ${MOTUZ_DOCKER_ROOT}/volumes/postgres
     mkdir -p ${MOTUZ_DOCKER_ROOT}/secrets
     mkdir -p ${MOTUZ_DOCKER_ROOT}/certs
+    # The Flask secret key also signs the JWTs, keep secrets private
+    chmod 700 ${MOTUZ_DOCKER_ROOT}/secrets
 }
 
 generate_certificates() {
@@ -99,7 +101,7 @@ generate_secrets() {
         if [ ! -f "$secret" ]; then
             _confirm "Generate random value for secret ${secret} ?"
             set -x
-            head /dev/urandom | md5sum | awk '{print $1}' > "$secret"
+            (umask 077 && head /dev/urandom | md5sum | awk '{print $1}' > "$secret")
             set +x
         else
             _color_yellow "$secret exists. Skipping"

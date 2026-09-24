@@ -113,15 +113,6 @@ class HashsumJobTable extends React.Component {
             );
         })
 
-        const currentJobsInProgress = new Set(this.props.jobs
-            .filter(d => d.progress_state === 'PROGRESS')
-            .map(d => d.id)
-        )
-
-        if (currentJobsInProgress.size > 0) {
-            this.scheduleRefresh(currentJobsInProgress);
-        }
-
         return (
             <table className='table table-sm table-striped table-hover text-left'>
                 <thead>
@@ -136,6 +127,21 @@ class HashsumJobTable extends React.Component {
 
     componentDidMount() {
         this.props.fetchData();
+    }
+
+    componentDidUpdate(prevProps) {
+        if (prevProps.jobs === this.props.jobs) {
+            return;
+        }
+
+        const currentJobsInProgress = new Set(this.props.jobs
+            .filter(d => d.progress_state === 'PROGRESS')
+            .map(d => d.id)
+        )
+
+        if (currentJobsInProgress.size > 0) {
+            this.scheduleRefresh(currentJobsInProgress);
+        }
     }
 
     componentWillUnmount() {

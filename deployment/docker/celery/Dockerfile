@@ -6,4 +6,4 @@ FROM fredhutch/motuz_app:latest
 COPY ./deployment/docker/celery/celery-entrypoint.sh /app/src/backend/
 
 WORKDIR /app/src/backend
-CMD ./celery-entrypoint.sh
+CMD ["./celery-entrypoint.sh"]
