@@ -21,20 +21,9 @@ x-variables:
             - /etc/group:/etc/group:ro
             - /etc/shadow:/etc/shadow:ro
 
-            # Authentication:
-            # passwd/group should be mounted into any container needing to share the user/group IDs
-            - /var/run/nscd/socket:/var/run/nscd/socket
-            - /etc/krb5.conf:/etc/krb5.conf
-            - /etc/pam.d:/etc/pam.d
-
-            # Volumes to enable SSSD authentication via PAM in the app container sharing configuration on
-            # host to support remote authenticaion backends such as Active Directory, LDAP, and FreeIPA
-            - /var/lib/sss/pipes:/var/lib/sss/pipes
-            - /var/lib/sss/mc:/var/lib/sss/mc:ro
-            - /etc/sssd/sssd.conf:/etc/sssd/sssd.conf
-
-            # Authentication cannot mount individual files, because the mapping is
-            # based on the inode
+            # Authentication (PAM, Kerberos, SSSD configuration, sudoers) comes from the host's
+            # /etc. It cannot mount individual files, because the mapping is based on the inode.
+            # Hosts using SSSD or nscd also need their sockets, see docker-compose.override.yml
             - /etc:/etc:ro
 
 
@@ -93,6 +82,14 @@ services:
         container_name: motuz_rabbitmq
         image: rabbitmq:3.13-alpine
         network_mode: host
+        environment:
+            # Erlang port mapper and distribution port on loopback only
+            # Node name must resolve to loopback, where epmd listens
+            RABBITMQ_NODENAME: rabbit@localhost
+            ERL_EPMD_ADDRESS: 127.0.0.1
+            RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS: -kernel inet_dist_use_interface {127,0,0,1}
+        volumes:
+            - ./deployment/docker/rabbitmq/10-motuz.conf:/etc/rabbitmq/conf.d/10-motuz.conf:ro
         ports:
             - 5672:5672
             - 15672:15672
@@ -102,6 +99,7 @@ services:
         container_name: motuz_database
         image: postgres:18-alpine
         network_mode: host
+        command: ["postgres", "-c", "listen_addresses=localhost"]
         environment:
             # postgres 18 images default to /var/lib/postgresql/<major>/docker
             PGDATA: /var/lib/postgresql/data

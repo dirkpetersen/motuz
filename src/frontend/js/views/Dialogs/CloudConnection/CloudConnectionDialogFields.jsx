@@ -683,7 +683,8 @@ class CloudConnectionDialogFields extends React.Component {
                     input={{
                         name: 'onedrive_token',
                         defaultValue: this.props.data.onedrive_token,
-                        required: true,
+                        // When editing, the stored token is kept unless a new one is pasted
+                        required: !this.props.isSanitized,
                         type: 'password',
                     }}
                     error={this.props.errors.onedrive_token}
@@ -723,6 +724,10 @@ class CloudConnectionDialogFields extends React.Component {
                         </li>
                         <li className='mb-1'>
                             Find the necessary information into the corresponding section
+                        </li>
+                        <li className='mb-1'>
+                            Paste the complete <tt>token</tt> value, including its <tt>refresh_token</tt>.
+                            Motuz keeps the token refreshed, so it only needs to be pasted once.
                         </li>
                     </ul>
                 </details>

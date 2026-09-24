@@ -67,6 +67,10 @@ class CloudConnection(db.Model):
     webdav_user = db.Column(db.String, nullable=True)
     webdav_pass = db.Column(db.String, nullable=True)
 
+    # OAuth token broker (see managers/token_broker_manager.py): rclone receives this
+    # opaque handle instead of the real refresh token
+    token_broker_handle = db.Column(db.String, nullable=True, unique=True)
+
     created_at = db.Column(db.DateTime, default=datetime.datetime.now)
 
 

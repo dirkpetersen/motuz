@@ -9,12 +9,13 @@ from ..models import CloudConnection
 from ..exceptions import *
 from ..utils.rclone_connection import RcloneConnection
 from ..managers.auth_manager import token_required, get_logged_in_user
+from ..managers import token_broker_manager
 
 
 # Columns a client may set. Everything else (id, owner, created_at) is server controlled.
 _WRITABLE_FIELDS = frozenset(
     column.name for column in CloudConnection.__table__.columns
-    if column.name not in ('id', 'owner', 'created_at')
+    if column.name not in ('id', 'owner', 'created_at', 'token_broker_handle')
 )
 
 
@@ -116,8 +117,26 @@ def delete(id):
 @token_required
 def verify(data):
     owner = get_logged_in_user(request)
-    cloud_connection = CloudConnection(**_writable(data))
+    fields = _writable(data)
+
+    # Verifying an existing connection from the edit form: secrets are never sent
+    # back to the browser, so empty ones mean "use the stored value"
+    stored = retrieve(data['id']) if data.get('id') else None
+    kept_secrets = set()
+    if stored is not None:
+        for key in _SECRET_FIELDS:
+            if not fields.get(key):
+                fields[key] = getattr(stored, key)
+                kept_secrets.add(key)
+
+    cloud_connection = CloudConnection(**fields)
     cloud_connection.owner = owner
+
+    # The stored OAuth token is managed by the token broker, so use it through the broker
+    brokered = token_broker_manager.BROKERED_TYPES.get(cloud_connection.type)
+    if stored is not None and brokered is not None and brokered[0] in kept_secrets:
+        cloud_connection.id = stored.id
+        cloud_connection.token_broker_handle = token_broker_manager.ensure_handle(stored)
 
     rclone = RcloneConnection()
     return rclone.verify(cloud_connection)

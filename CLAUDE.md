@@ -70,6 +70,9 @@ Motuz runs as root in the containers but every filesystem/rclone operation runs 
 
 Hashsum jobs run md5sum on src then dst, build file trees (`utils/file_utils.py`), and store only the differing branches (`remove_identical_branches`) as JSON.
 
+### OAuth token broker (OneDrive)
+rclone gets OAuth tokens via env vars and `--config=/dev/null`, so it can never persist a refreshed token. For brokered types (`token_broker_manager.BROKERED_TYPES`, currently OneDrive) `_formatCredentials` passes the current access token plus an opaque per-connection handle (`cloud_connection.token_broker_handle`) as the refresh token, and sets the remote's `token_url` to `TOKEN_BROKER_URL`. That is `/internal/oauth/token`, served on uWSGI's loopback `http-socket` 127.0.0.1:5001 (outside `/api`, so nginx never forwards it). The broker locks the connection row, returns the cached access token if it has more than 5 minutes left, and otherwise refreshes upstream with the real refresh token, which never leaves the server. Concurrent jobs share a single refresh. Test it against a fake token endpoint by setting `MOTUZ_ONEDRIVE_TOKEN_URL`.
+
 ### Adding a field to a cloud connection type
 Follow the pattern of the `kms_encryption_key_arn` commits (`8a8988f`, `0a02274`):
 1. Add a column in `models/cloud_connection.py` and an Alembic migration.

@@ -125,7 +125,7 @@ that bare metal hardware has faster networking
 than virtual machines.
 
 
-We recommend using a machine running Ubuntu 18.04 (Bionic).
+We recommend using a machine running Ubuntu 24.04 (Noble).
 
 ### Authentication
 
@@ -212,14 +212,14 @@ Obtain an SSL certificate for your domain.
 This will consist of a `.key` file and
 a `.crt` file.
 
-These files must be placed in the directory `/root/certs`. Create that
+These files must be placed in the directory `/docker/certs` (`$MOTUZ_DOCKER_ROOT/certs`). Create that
 directory if it doesn't already exist.
 
 Copy the certificate (.crt) file to
-`/root/certs/cert.crt`.
+`/docker/certs/cert.crt`.
 
 Copy the key (.key) file to
-`/root/certs/cert.key`.
+`/docker/certs/cert.key`.
 
 The `.key` file should have permission 0400.
 

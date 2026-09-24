@@ -39,6 +39,7 @@ class RcloneConnection(AbstractConnection):
             '-u', user,
             '/usr/local/bin/rclone',
             '--config=/dev/null',
+            *_rate_limit_flags(credentials),
             'lsjson',
             'current:{}'.format(bucket),
         ]
@@ -57,6 +58,11 @@ class RcloneConnection(AbstractConnection):
                 'result': False,
                 'message': 'Exit status {}'.format(returncode),
             }
+        except RcloneException as e: # rclone failed and explained why on stderr
+            return {
+                'result': False,
+                'message': str(e)[-1000:],
+            }
 
 
 
@@ -69,6 +75,7 @@ class RcloneConnection(AbstractConnection):
             '-u', user,
             '/usr/local/bin/rclone',
             '--config=/dev/null',
+            *_rate_limit_flags(credentials),
             'lsjson',
             'current:{}'.format(path),
         ]
@@ -96,6 +103,7 @@ class RcloneConnection(AbstractConnection):
             '-u', user,
             '/usr/local/bin/rclone',
             '--config=/dev/null',
+            *_rate_limit_flags(credentials),
             '--s3-no-check-bucket',
             '--s3-acl',
             'bucket-owner-full-control',
@@ -151,6 +159,7 @@ class RcloneConnection(AbstractConnection):
             '-u', user,
             '/usr/local/bin/rclone',
             '--config=/dev/null',
+            *_rate_limit_flags(credentials),
             '--s3-disable-checksum',
             '--s3-no-check-bucket',
             '--s3-acl',
@@ -225,6 +234,7 @@ class RcloneConnection(AbstractConnection):
             '-u', user,
             '/usr/local/bin/rclone',
             '--config=/dev/null',
+            *_rate_limit_flags(credentials),
             'md5sum',
             src,
             option_exclude_dot_snapshot,
@@ -436,10 +446,17 @@ class RcloneConnection(AbstractConnection):
             )
 
         elif data.type == 'onedrive':
-            _addCredential(
-                '{}_TOKEN'.format(prefix),
-                'onedrive_token',
-            )
+            from ..managers.token_broker_manager import broker_token
+            brokered = broker_token(data)
+            if brokered is not None:
+                credentials['{}_TOKEN'.format(prefix)], credentials['{}_TOKEN_URL'.format(prefix)] = brokered
+            else:
+                _addCredential(
+                    '{}_TOKEN'.format(prefix),
+                    'onedrive_token',
+                )
+            # Large chunks for big files; must be a multiple of 320 KiB
+            credentials['{}_CHUNK_SIZE'.format(prefix)] = '50Mi'
             _addCredential(
                 '{}_DRIVE_ID'.format(prefix),
                 'onedrive_drive_id',
@@ -501,6 +518,15 @@ class RcloneConnection(AbstractConnection):
             if len(stderr) == 0:
                 raise
             raise RcloneException(stderr)
+
+
+def _rate_limit_flags(credentials):
+    """
+    Microsoft Graph throttles aggressively (HTTP 429); stay below its limits
+    """
+    if any(key.endswith('_TYPE') and value == 'onedrive' for key, value in credentials.items()):
+        return ['--tpslimit', '10']
+    return []
 
 
 def _local_path(path):

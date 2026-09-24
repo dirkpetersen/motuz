@@ -1,4 +1,5 @@
 import logging
+import os
 
 from celery import Celery
 from flask import Flask, Blueprint
@@ -13,7 +14,9 @@ logging.basicConfig(level=logging.DEBUG, format='[%(asctime)s] %(levelname)s: %(
 db = SQLAlchemy()
 
 app = Flask(__name__, instance_relative_config=True)
-app.config.from_object(config_by_name['dev'])
+# The Celery worker imports this module but never calls create_app(), so the
+# configuration must already be the one selected for this environment
+app.config.from_object(config_by_name[os.getenv('PYTHON_ENVIRONMENT') or 'dev'])
 
 db.init_app(app)
 jwt = JWTManager(app)
@@ -40,6 +43,10 @@ def create_app(config_name='dev'):
     app.config.from_object(config_by_name[config_name])
 
     register_api(app)
+
+    from .views.internal_views import bp as internal_bp
+    if 'internal' not in app.blueprints:
+        app.register_blueprint(internal_bp)
 
     return app
 

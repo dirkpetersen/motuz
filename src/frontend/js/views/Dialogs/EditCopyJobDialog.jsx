@@ -1,3 +1,4 @@
+import constants from 'constants.jsx';
 import React, {Fragment} from 'react';
 import { Modal, Button, ProgressBar } from 'react-bootstrap'
 
@@ -255,7 +256,7 @@ EditCopyJobDialog.defaultProps = {
     data: {},
     clouds: [],
     cloudMapping: {
-        0: { name: 'rhino' },
+        0: { name: constants.local_name },
     },
     fetchData: (id) => {},
     onClose: () => {},

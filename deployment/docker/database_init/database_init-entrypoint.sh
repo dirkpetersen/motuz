@@ -66,7 +66,7 @@ fi
 export POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-$(head -c 32 /dev/urandom | base64)}"
 
 # Entrypoint in the official docker image for postgres
-docker-entrypoint.sh postgres &
+docker-entrypoint.sh postgres -c listen_addresses=localhost &
 
 # Wait for the database to be ready
 ./wait-for-it.sh "${MOTUZ_DATABASE_HOST:-0.0.0.0:5432}" -t 0

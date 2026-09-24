@@ -92,6 +92,7 @@ class EditCloudConnectionDialog extends React.Component {
         }
 
         const data = serializeForm(form)
+        data.id = this.props.data.id; // Lets the backend use the stored secrets
         this.props.onVerify(data);
     }
 

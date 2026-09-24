@@ -32,8 +32,8 @@ dto = api.model('connection', {
     'bucket': OptionalString(required=False, example='my-bucket-name'),
 
     's3_access_key_id': fields.String(required=False, example='KJRHJKHWEIUJDSJKDC2J'),
-    's3_secret_access_key': PrivateString(required=False, example='jksldASDLASdak+asdSDASDKjasldkjadASDAasd'),
-    's3_session_token': PrivateString(required=False, example='IQoJdlc3QtMiJHMEUCIH8EUqB/Qk2OEYpzejW6g9gi/'),
+    's3_secret_access_key': PrivateOptionalString(required=False, example='jksldASDLASdak+asdSDASDKjasldkjadASDAasd'),
+    's3_session_token': PrivateOptionalString(required=False, example='IQoJdlc3QtMiJHMEUCIH8EUqB/Qk2OEYpzejW6g9gi/'),
     's3_region': OptionalString(required=False, example='us-west-2'),
     'kms_encryption_key_arn': OptionalString(required=False, example='arn:aws:kms:us-west-2:999999999999:key/99999999-9999-9999-9999-999999999999'), 
 
@@ -41,16 +41,16 @@ dto = api.model('connection', {
     's3_v2_auth': fields.String(required=False, example='true'),
 
     'azure_account': fields.String(required=False, example='my_azure_account'),
-    'azure_key': PrivateString(required=False, example='qe21euoidjlkadj283u2398rudy8d87adh3dasdkahsd23ey239eaduhawd812e1uidhwdkjdh2es_asdASDAS=='),
-    'azure_sas_url': PrivateString(required=False, example='https://yourstorage.blob.core.windows.net/?sig=hSjdsakwrhasweqweaijdopvbxiudoSOIDAdsduoiqwejsad'),
+    'azure_key': PrivateOptionalString(required=False, example='qe21euoidjlkadj283u2398rudy8d87adh3dasdkahsd23ey239eaduhawd812e1uidhwdkjdh2es_asdASDAS=='),
+    'azure_sas_url': PrivateOptionalString(required=False, example='https://yourstorage.blob.core.windows.net/?sig=hSjdsakwrhasweqweaijdopvbxiudoSOIDAdsduoiqwejsad'),
 
     'swift_user': fields.String(required=False, example='swift_username'),
-    'swift_key': PrivateString(required=False, example='asd*aqeaSDASDASDlkas.u'),
+    'swift_key': PrivateOptionalString(required=False, example='asd*aqeaSDASDASDlkas.u'),
     'swift_auth': fields.String(required=False, example='https://hello.swiftstack.com/auth/v2.0'),
     'swift_tenant': OptionalString(required=False, example='AUTH_swift_tennant'),
 
     'gcp_client_id': fields.String(required=False, example='141849123123812938127'),
-    'gcp_service_account_credentials': PrivateString(required=False, example='{"type": "service_account", "project_id": "myID1233s", "private_key_id": "123012312ea12390d09123aa12390dda1309123a", "private_key": "-----BEGIN PRIVATE KEY-----\nA_PASTE_OF_YOUR_KEY\n-----END PRIVATE KEY-----\n", "client_email": "hello@email.com", "client_id": "141849123123812938127", "auth_uri": "https://accounts.google.com/o/oauth2/auth", "token_uri": "https://oauth2.googleapis.com/token", "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs", "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/sa-datamover%40datamover.iam.gserviceaccount.com"}'),
+    'gcp_service_account_credentials': PrivateOptionalString(required=False, example='{"type": "service_account", "project_id": "myID1233s", "private_key_id": "123012312ea12390d09123aa12390dda1309123a", "private_key": "-----BEGIN PRIVATE KEY-----\nA_PASTE_OF_YOUR_KEY\n-----END PRIVATE KEY-----\n", "client_email": "hello@email.com", "client_id": "141849123123812938127", "auth_uri": "https://accounts.google.com/o/oauth2/auth", "token_uri": "https://oauth2.googleapis.com/token", "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs", "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/sa-datamover%40datamover.iam.gserviceaccount.com"}'),
     'gcp_project_number': fields.String(required=False, example='199432342343'),
     'gcp_object_acl': fields.String(required=False, example='authenticatedRead'),
     'gcp_bucket_acl': fields.String(required=False, example='authenticatedRead'),
@@ -61,15 +61,15 @@ dto = api.model('connection', {
     'sftp_pass': PrivateOptionalString(required=False, example='p@ssw0rd'),
     'sftp_key_file': OptionalString(required=False, example='/path/to/key.pem'),
 
-    'dropbox_token': PrivateString(required=False, example='{"access_token":"hStGBm-oRDsqJksiRspOnbsDiu","token_type":"bearer","expiry":"0001-01-01T00:00:00Z"}'),
+    'dropbox_token': PrivateOptionalString(required=False, example='{"access_token":"hStGBm-oRDsqJksiRspOnbsDiu","token_type":"bearer","expiry":"0001-01-01T00:00:00Z"}'),
 
-    'onedrive_token': PrivateString(required=False, example='{"access_token":"youraccesstoken","token_type":"Bearer","refresh_token":"yourrefreshtoken","expiry":"2018-08-26T22:39:52.486512262+08:00"}'),
+    'onedrive_token': PrivateOptionalString(required=False, example='{"access_token":"youraccesstoken","token_type":"Bearer","refresh_token":"yourrefreshtoken","expiry":"2018-08-26T22:39:52.486512262+08:00"}'),
     'onedrive_drive_id': fields.String(required=False, example='b!Eqwertyuiopasdfghjklzxcvbnm-7mnbvcxzlkjhgfdsapoiuytrewqk'),
     'onedrive_drive_type': fields.String(required=False, example='business'),
 
     'webdav_url': fields.String(required=False, example='https://example.com/remote.php/webdav/'),
     'webdav_user': fields.String(required=False, example='email@example.com'),
-    'webdav_pass': PrivateString(required=False, example='p@ssw0rd'),
+    'webdav_pass': PrivateOptionalString(required=False, example='p@ssw0rd'),
 
     # examples above have the correct length, but characters are made up
 })

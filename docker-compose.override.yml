@@ -5,6 +5,13 @@ x-variables:
     - &shared-volumes
         volumes:
             # These mounts are specific to Fred Hutch:
+
+            # SSSD / nscd sockets for authentication against Active Directory via PAM
+            # (only on hosts running sssd / nscd, otherwise docker creates empty directories)
+            - /var/run/nscd/socket:/var/run/nscd/socket
+            - /var/lib/sss/pipes:/var/lib/sss/pipes
+            - /var/lib/sss/mc:/var/lib/sss/mc:ro
+
             - /home:/home:shared
             - /efs/:/efs/
             - /fh/economy:/fh/economy:shared

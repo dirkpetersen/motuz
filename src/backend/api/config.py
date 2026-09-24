@@ -39,6 +39,12 @@ class Config:
     # stored somewhere shared. The amqp result backend was removed in Celery 5.
     CELERY_RESULT_BACKEND = 'db+' + SQLALCHEMY_DATABASE_URI
 
+    # Where rclone refreshes OAuth tokens (managers/token_broker_manager.py). Loopback
+    # HTTP socket of uWSGI in production, the Flask dev server in development.
+    TOKEN_BROKER_URL = os.environ.get('MOTUZ_TOKEN_BROKER_URL', 'http://127.0.0.1:5001/internal/oauth/token')
+    # Upstream token endpoints the broker refreshes against
+    ONEDRIVE_TOKEN_URL = os.environ.get('MOTUZ_ONEDRIVE_TOKEN_URL', 'https://login.microsoftonline.com/common/oauth2/v2.0/token')
+
     DEBUG = False
     # https://flask-sqlalchemy.palletsprojects.com/en/2.x/signals/
     SQLALCHEMY_TRACK_MODIFICATIONS = False
@@ -47,6 +53,7 @@ class Config:
 
 class DevelopmentConfig(Config):
     DEBUG = True
+    TOKEN_BROKER_URL = os.environ.get('MOTUZ_TOKEN_BROKER_URL', 'http://127.0.0.1:5000/internal/oauth/token')
 
 
 
