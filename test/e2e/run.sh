@@ -239,7 +239,8 @@ if [ "$BUILD" = 1 ]; then
     "$REPO/bin/prod/build.sh" || die "image build failed"
 fi
 
-OBSCURED=$(sed -n "s/^RCLONE_OBSCURED_CLIENT_SECRET = '\(.*\)'$/\1/p" "$REPO/src/backend/api/managers/oauth_manager.py")
+# rclone's obscured OneDrive client secret, from the ONEDRIVE provider definition
+OBSCURED=$(awk '/^ONEDRIVE = /{found=1} found && /rclone_obscured_client_secret=/{match($0, /\x27[^\x27]+\x27/); print substr($0, RSTART+1, RLENGTH-2); exit}' "$REPO/src/backend/api/managers/oauth_manager.py")
 RCLONE_SECRET=$(docker run --rm --entrypoint rclone fredhutch/motuz_app:latest reveal "$OBSCURED") \
     && [ -n "$RCLONE_SECRET" ] || die "could not reveal rclone's OneDrive client secret"
 
