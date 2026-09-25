@@ -171,7 +171,7 @@ class OauthSignIn extends React.Component {
                     <select
                         className='form-control'
                         value={driveId}
-                        onChange={event => this.setState({driveId: event.target.value})}
+                        onChange={event => this.handleDriveChange(event.target.value)}
                     >
                         {drives.map(drive => (
                             <option key={drive.id} value={drive.id}>
@@ -218,6 +218,15 @@ class OauthSignIn extends React.Component {
 
     handleFinish() {
         this.call(this.props.onFinish(this.props.provider, this.state.redirectUrl.trim()), payload => this.showDrives(payload));
+    }
+
+    handleDriveChange(driveId) {
+        // The name follows the chosen drive unless the user typed one
+        const {drives, name} = this.state;
+        const previous = drives.find(d => d.id === this.state.driveId);
+        const next = drives.find(d => d.id === driveId);
+        const nameUnchanged = !name || (previous && name === previous.name);
+        this.setState({driveId, name: nameUnchanged && next ? next.name : name});
     }
 
     handleConnect() {
