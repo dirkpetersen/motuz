@@ -13,6 +13,8 @@ class NewCloudConnectionDialog extends React.Component {
     constructor(props) {
         super(props);
         this.formRef = React.createRef();
+        // "Sign in with Microsoft" creates the connection with its own button
+        this.state = {signIn: false};
     }
 
     render() {
@@ -52,23 +54,35 @@ class NewCloudConnectionDialog extends React.Component {
                             errors={errors}
                             verifySuccess={(this.props.cloudConnectionVerification.success === true)}
                             isSanitized={false}
+                            onSignInChange={signIn => this.setState({signIn})}
                         />
                     </Modal.Body>
-                    <Modal.Footer>
-                        <div className="mr-auto">
-                            <Button variant="info" onClick={() => this.handleVerify()}>
-                                Verify Connection
+                    {this.state.signIn ? (
+                        <Modal.Footer>
+                            <span className="mr-auto text-muted">
+                                Sign in above, or open <i>Advanced</i> to paste a token.
+                            </span>
+                            <Button variant="secondary" onClick={() => this.handleClose()}>
+                                Cancel
                             </Button>
-                            <VerifyStatusButton {...this.props.cloudConnectionVerification} />
-                        </div>
+                        </Modal.Footer>
+                    ) : (
+                        <Modal.Footer>
+                            <div className="mr-auto">
+                                <Button variant="info" onClick={() => this.handleVerify()}>
+                                    Verify Connection
+                                </Button>
+                                <VerifyStatusButton {...this.props.cloudConnectionVerification} />
+                            </div>
 
-                        <Button variant="secondary" onClick={() => this.handleClose()}>
-                            Cancel
-                        </Button>
-                        <Button variant="primary" type="submit">
-                            Create Cloud Connection
-                        </Button>
-                    </Modal.Footer>
+                            <Button variant="secondary" onClick={() => this.handleClose()}>
+                                Cancel
+                            </Button>
+                            <Button variant="primary" type="submit">
+                                Create Cloud Connection
+                            </Button>
+                        </Modal.Footer>
+                    )}
                 </form>
             </Modal>
         );
@@ -92,6 +106,9 @@ class NewCloudConnectionDialog extends React.Component {
 
     handleSubmit(event) {
         event.preventDefault();
+        if (this.state.signIn) { // e.g. Enter in a text field
+            return;
+        }
 
         const data = serializeForm(event.target)
         this.props.onSubmit(data);
