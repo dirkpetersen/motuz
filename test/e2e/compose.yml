@@ -1,0 +1,94 @@
+# End-to-end test stack, started by test/e2e/run.sh. Mirrors docker-compose.yml (host
+# networking, Traefik on :80/:443, uWSGI on 127.0.0.1:5000/5001) with test users instead
+# of the host's /etc, OneDrive/Graph pointed at fake_ms.py on 127.0.0.1:5999, and Azurite
+# for Azure Blob. MOTUZ_DOCKER_ROOT (secrets, certs) and the OD_* settings come from
+# test/e2e/.env, which run.sh generates (never committed).
+name: motuz_e2e
+
+x-env: &env
+    MOTUZ_DATABASE_PROTOCOL: postgresql
+    MOTUZ_DATABASE_USER: motuz_user
+    MOTUZ_DATABASE_HOST: 0.0.0.0:5432
+    MOTUZ_DATABASE_NAME: motuz
+    MOTUZ_DATABASE_REQUIRE_SSL: "false"
+    MOTUZ_SMTP_SERVER: 127.0.0.1:2525
+    MOTUZ_SMTP_REQUIRE_SSL: "false"
+    MOTUZ_SMTP_USER: ""
+    MOTUZ_ALERT_ADDRESS: admin@example.com
+    MOTUZ_ONEDRIVE_TOKEN_URL: http://127.0.0.1:5999/token
+    MOTUZ_ONEDRIVE_AUTH_URL: http://127.0.0.1:5999/authorize
+    MOTUZ_GRAPH_URL: http://127.0.0.1:5999/graph
+    # Own-app mode (oauth-callback phase); empty = rclone's public app
+    MOTUZ_ONEDRIVE_CLIENT_ID: ${OD_CLIENT_ID:-}
+    MOTUZ_ONEDRIVE_REDIRECT_URI: ${OD_REDIRECT_URI:-}
+
+secrets:
+    MOTUZ_DATABASE_PASSWORD:
+        file: ${MOTUZ_DOCKER_ROOT:?run test/e2e/run.sh}/secrets/MOTUZ_DATABASE_PASSWORD
+    MOTUZ_FLASK_SECRET_KEY:
+        file: ${MOTUZ_DOCKER_ROOT:?run test/e2e/run.sh}/secrets/MOTUZ_FLASK_SECRET_KEY
+    MOTUZ_SMTP_PASSWORD:
+        file: ${MOTUZ_DOCKER_ROOT:?run test/e2e/run.sh}/secrets/MOTUZ_SMTP_PASSWORD
+    MOTUZ_ONEDRIVE_CLIENT_SECRET:
+        file: ${MOTUZ_DOCKER_ROOT:?run test/e2e/run.sh}/secrets/MOTUZ_ONEDRIVE_CLIENT_SECRET
+
+volumes:
+    homes:
+    postgres:
+    traefik_acme:
+
+services:
+    database_init:
+        image: fredhutch/motuz_database_init:latest
+        network_mode: host
+        profiles: [init]
+        volumes: [postgres:/var/lib/postgresql/data]
+        environment: *env
+        secrets: [MOTUZ_DATABASE_PASSWORD]
+
+    database:
+        image: postgres:18-alpine
+        network_mode: host
+        command: ["postgres", "-c", "listen_addresses=localhost"]
+        environment: {PGDATA: /var/lib/postgresql/data}
+        volumes: [postgres:/var/lib/postgresql/data]
+
+    rabbitmq:
+        image: rabbitmq:3.13-alpine
+        network_mode: host
+        environment:
+            RABBITMQ_NODENAME: rabbit@localhost
+            ERL_EPMD_ADDRESS: 127.0.0.1
+            RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS: -kernel inet_dist_use_interface {127,0,0,1}
+        volumes: [../../deployment/docker/rabbitmq/10-motuz.conf:/etc/rabbitmq/conf.d/10-motuz.conf:ro]
+
+    app:
+        image: fredhutch/motuz_app:latest
+        network_mode: host
+        environment: *env
+        secrets: [MOTUZ_DATABASE_PASSWORD, MOTUZ_FLASK_SECRET_KEY, MOTUZ_SMTP_PASSWORD, MOTUZ_ONEDRIVE_CLIENT_SECRET]
+        volumes: [./users.sh:/users.sh:ro, homes:/home]
+        command: ["/users.sh", "/app/src/backend/app-entrypoint.sh"]
+
+    celery:
+        image: fredhutch/motuz_celery:latest
+        network_mode: host
+        environment: *env
+        secrets: [MOTUZ_DATABASE_PASSWORD, MOTUZ_FLASK_SECRET_KEY, MOTUZ_SMTP_PASSWORD]
+        volumes: [./users.sh:/users.sh:ro, homes:/home]
+        command: ["/users.sh", "./celery-entrypoint.sh"]
+
+    traefik:
+        # The production service (command flags, dynamic config, certs from
+        # $MOTUZ_DOCKER_ROOT/certs); only the ACME storage moves to a volume
+        extends:
+            file: ../../docker-compose.yml
+            service: traefik
+        volumes:
+            - traefik_acme:/etc/traefik/acme
+
+    azurite:
+        # Azure Blob emulator for the credentials suite (rclone remote in alice's home)
+        image: mcr.microsoft.com/azure-storage/azurite:3.37.0
+        network_mode: host
+        command: ["azurite-blob", "--blobHost", "127.0.0.1", "--blobPort", "10000", "--skipApiVersionCheck", "--loose", "--inMemoryPersistence"]

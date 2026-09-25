@@ -1,0 +1,84 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend-unit:
+    name: Backend unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+      - name: python manage.py test
+        working-directory: src/backend
+        # api/config.py needs these at import time; the tests never connect to a database
+        env:
+          MOTUZ_FLASK_SECRET_KEY: ci-dummy
+          MOTUZ_DATABASE_PROTOCOL: postgresql
+          MOTUZ_DATABASE_USER: ci
+          MOTUZ_DATABASE_PASSWORD: ci
+          MOTUZ_DATABASE_NAME: ci
+          MOTUZ_DATABASE_HOST: 127.0.0.1:5432
+        run: python manage.py test
+
+  frontend-build:
+    name: Frontend build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - run: npm run build
+
+  e2e:
+    name: End-to-end (docker stack)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: test/e2e/ui/package-lock.json
+      - name: Install playwright and chromium (UI suite)
+        working-directory: test/e2e/ui
+        run: |
+          npm ci --no-audit --no-fund
+          npx playwright install --with-deps chromium
+      # Builds the images (bin/prod/build.sh), starts the stack on :80/:443 with host
+      # networking, runs all suites and tears down. rclone's OneDrive client secret is
+      # revealed inside the built app image, so the runner needs no rclone. The checks
+      # against real S3 are skipped: MOTUZ_E2E_AWS_PROFILE is not set.
+      - name: test/e2e/run.sh
+        env:
+          MOTUZ_E2E_UI: require
+        run: test/e2e/run.sh
+      - name: Upload logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-logs
+          path: test/e2e/logs/
+          retention-days: 14

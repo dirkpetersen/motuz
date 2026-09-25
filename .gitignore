@@ -112,3 +112,8 @@ node_modules/
 
 # certs
 certs/
+
+# End-to-end tests (test/e2e/run.sh): generated secrets, certs, compose .env and logs
+test/e2e/.work/
+test/e2e/.env
+test/e2e/logs/
