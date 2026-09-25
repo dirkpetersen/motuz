@@ -2,12 +2,9 @@
 # Example:
 # docker-compose -f docker-compose.yml -f docker-compose.override.yml -f docker-compose.dev.yml build
 
-services:
-    nginx:
-        build:
-            context: .
-            dockerfile: deployment/docker/nginx/Dockerfile
+# Traefik uses the official image (see docker-compose.yml), there is nothing to build.
 
+services:
     app:
         build:
             context: .

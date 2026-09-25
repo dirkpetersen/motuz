@@ -37,24 +37,56 @@ secrets:
 
 
 services:
-    nginx:
-        container_name: motuz_nginx
-        image: fredhutch/motuz_nginx:latest
+    traefik:
+        # TLS termination and routing on :80 (redirects to https) and :443, the only
+        # ports open beyond loopback. Routing, headers and certificates are in
+        # deployment/docker/traefik/dynamic/motuz.yml (file provider; no docker socket).
+        container_name: motuz_traefik
+        image: traefik:v3.7
         network_mode: host
+        # Static configuration. Traefik takes it from exactly one source, and its YAML
+        # file cannot read environment variables, so flags let .env set MOTUZ_ACME_*.
+        # No api/dashboard, ping or metrics are enabled.
+        command:
+            - --global.checkNewVersion=false
+            - --global.sendAnonymousUsage=false
+            - --log.level=INFO
+            - --accessLog=true # to stdout
+            - --entryPoints.web.address=:80
+            - --entryPoints.web.http.redirections.entryPoint.to=websecure
+            - --entryPoints.web.http.redirections.entryPoint.scheme=https
+            - --entryPoints.web.http.aliasHeadersStrategy=delete
+            - --entryPoints.websecure.address=:443
+            # WSGI turns X_Forwarded_For into HTTP_X_FORWARDED_FOR too: drop such aliases
+            - --entryPoints.websecure.http.aliasHeadersStrategy=delete
+            # uWSGI decodes these in PATH_INFO, so path rules could be bypassed with them
+            - --entryPoints.websecure.http.encodedCharacters.allowEncodedSlash=false
+            - --entryPoints.websecure.http.encodedCharacters.allowEncodedBackSlash=false
+            - --entryPoints.websecure.http.encodedCharacters.allowEncodedNullCharacter=false
+            # Responses may start only after up to 600s (serversTransport in motuz.yml)
+            - --entryPoints.websecure.transport.respondingTimeouts.writeTimeout=900s
+            - --providers.file.directory=/etc/traefik/dynamic
+            - --providers.file.watch=true
+            # Only used when MOTUZ_ACME_DOMAIN is set (see README, "Set up HTTPS certificate")
+            - --certificatesResolvers.letsencrypt.acme.httpChallenge.entryPoint=web
+            - --certificatesResolvers.letsencrypt.acme.storage=/etc/traefik/acme/acme.json
+            - --certificatesResolvers.letsencrypt.acme.email=${MOTUZ_ACME_EMAIL:-}
+            - --certificatesResolvers.letsencrypt.acme.caServer=${MOTUZ_ACME_CA_SERVER:-https://acme-v02.api.letsencrypt.org/directory}
+        environment:
+            MOTUZ_ACME_DOMAIN: ${MOTUZ_ACME_DOMAIN:-} # read by motuz.yml
         volumes:
-            - ${MOTUZ_DOCKER_ROOT:-/docker}/certs:/certs/:ro
-        ports:
-            - 443:443
-            - 80:80
+            - ./deployment/docker/traefik/dynamic:/etc/traefik/dynamic:ro
+            - ${MOTUZ_DOCKER_ROOT:-/docker}/certs:/certs:ro
+            - ${MOTUZ_DOCKER_ROOT:-/docker}/traefik:/etc/traefik/acme
 
 
     app:
+        # uWSGI on 127.0.0.1:5000 (for Traefik) and 127.0.0.1:5001 (token broker), both
+        # loopback only (src/backend/wsgi.ini). Serves the API and the built frontend.
         container_name: motuz_app
         image: fredhutch/motuz_app:latest
         network_mode: host
         <<: *shared-volumes
-        ports:
-            - 5000:5000
         environment:
             <<: [*database-environment, *smtp-environment]
         secrets:

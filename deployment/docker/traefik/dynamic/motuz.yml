@@ -1,0 +1,81 @@
+# Traefik dynamic configuration (file provider, reloaded on change).
+# The static configuration (entry points, timeouts, ACME resolver) is the `command`
+# of the traefik service in docker-compose.yml.
+#
+# Traefik renders this file as a Go template. MOTUZ_ACME_DOMAIN selects the TLS mode:
+# - empty (default): $MOTUZ_DOCKER_ROOT/certs/cert.crt + cert.key, mounted at /certs
+# - set: a Let's Encrypt certificate for that name (HTTP-01 on port 80)
+{{- $acmeDomain := env "MOTUZ_ACME_DOMAIN" }}
+
+http:
+  routers:
+    motuz:
+      entryPoints: [websecure]
+      # Everything goes to uWSGI except /internal/*: the OAuth token broker is for
+      # rclone on the loopback socket 127.0.0.1:5001 only. The app refuses /internal
+      # on :5000 as well. Unmatched requests get Traefik's plain 404.
+      rule: "PathPrefix(`/`) && !PathPrefix(`/internal`)"
+      service: motuz-app
+      middlewares: [security-headers]
+      tls:
+{{- if $acmeDomain }}
+        certResolver: letsencrypt
+        domains:
+          - main: "{{ $acmeDomain }}"
+{{- else }}
+        {}
+{{- end }}
+
+  middlewares:
+    security-headers:
+      headers:
+        stsSeconds: 31536000
+        frameDeny: true
+        contentTypeNosniff: true
+        referrerPolicy: same-origin
+
+  services:
+    motuz-app:
+      loadBalancer:
+        servers:
+          - url: "http://127.0.0.1:5000"
+        serversTransport: motuz-app
+
+  serversTransports:
+    motuz-app:
+      forwardingTimeouts:
+        # Some calls (`ls` of large or slow remotes) take minutes. Answer 504 after
+        # 10 minutes, like nginx's former uwsgi_read_timeout 600.
+        responseHeaderTimeout: 600s
+      # uWSGI's http-socket closes the connection after every response, so a pooled
+      # connection could already be closed when it is reused. Never reuse one.
+      maxIdleConnsPerHost: -1
+
+tls:
+  options:
+    default:
+      minVersion: VersionTLS12
+      # TLS 1.2 ciphers (TLS 1.3 ones are not configurable): forward secrecy + AEAD only
+      cipherSuites:
+        - TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256
+        - TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
+        - TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384
+        - TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384
+        - TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256
+        - TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256
+  stores:
+    default:
+{{- if $acmeDomain }}
+      # Also for clients that send no or another server name (e.g. the IP address).
+      # Traefik logs "unable to find certificate" once at start, before acme.json is loaded.
+      defaultGeneratedCert:
+        resolver: letsencrypt
+        domain:
+          main: "{{ $acmeDomain }}"
+{{- else }}
+      # Traefik does not watch certificate files: `docker restart motuz_traefik` after
+      # replacing them
+      defaultCertificate:
+        certFile: /certs/cert.crt
+        keyFile: /certs/cert.key
+{{- end }}

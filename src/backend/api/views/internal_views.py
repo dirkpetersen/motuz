@@ -1,13 +1,30 @@
 import logging
+from urllib.parse import urlsplit
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, abort, current_app, jsonify, request
 
 from ..managers import token_broker_manager
 
 
-# Deliberately not under /api: nginx only forwards /api and /swaggerui, so these
-# routes are reachable only on the loopback HTTP socket (see wsgi.ini)
+# Deliberately not under /api. Traefik refuses /internal (router rule in
+# deployment/docker/traefik/dynamic/motuz.yml), and these routes only answer on the
+# loopback socket that TOKEN_BROKER_URL points to (uWSGI http-socket 127.0.0.1:5001)
 bp = Blueprint('internal', __name__, url_prefix='/internal')
+
+
+def _broker_port():
+    url = urlsplit(current_app.config['TOKEN_BROKER_URL'])
+    return str(url.port or (443 if url.scheme == 'https' else 80))
+
+
+@bp.before_request
+def only_on_broker_socket():
+    """Second line of defense next to the Traefik rule: Traefik forwards to :5000,
+    rclone uses :5001. uWSGI and the Flask dev server set SERVER_PORT to the port of
+    the socket that accepted the connection, never from the Host header (and wsgi.py
+    does not let ProxyFix touch it)."""
+    if request.environ.get('SERVER_PORT') != _broker_port():
+        abort(404)
 
 
 @bp.route('/oauth/token', methods=['POST'])

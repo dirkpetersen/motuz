@@ -13,8 +13,9 @@ returns the cached access token if it is still fresh, and otherwise refreshes it
 upstream with the real refresh token and stores the result. The real refresh
 token never leaves the server, and concurrent jobs share one refresh.
 
-The endpoint is registered outside of /api, so nginx does not expose it; rclone
-reaches it on the loopback HTTP socket (TOKEN_BROKER_URL).
+The endpoint is registered outside of /api and answers only on the socket that
+TOKEN_BROKER_URL points to (uWSGI's loopback HTTP socket 127.0.0.1:5001); Traefik
+refuses /internal and forwards to :5000 only (see views/internal_views.py).
 """
 import datetime
 import json

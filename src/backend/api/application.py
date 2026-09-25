@@ -42,11 +42,20 @@ def create_app(config_name='dev'):
     global app
     app.config.from_object(config_by_name[config_name])
 
-    register_api(app)
+    # create_app may run more than once per process (manage.py test, wsgi), and Flask
+    # refuses to register blueprints again once a request has been handled
+    if 'api' not in app.blueprints:
+        register_api(app)
 
     from .views.internal_views import bp as internal_bp
     if 'internal' not in app.blueprints:
         app.register_blueprint(internal_bp)
+
+    # Werkzeug prefers rules with more static parts, so the frontend's catch-all route
+    # only gets paths no other rule matches (trailing-slash redirects are kept)
+    from .views.frontend_views import bp as frontend_bp
+    if 'frontend' not in app.blueprints:
+        app.register_blueprint(frontend_bp)
 
     return app
 

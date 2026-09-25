@@ -28,7 +28,7 @@ case "$response" in
 esac
 
 tag="$1"
-containers="fredhutch/motuz_app fredhutch/motuz_celery fredhutch/motuz_database_init fredhutch/motuz_nginx"
+containers="fredhutch/motuz_app fredhutch/motuz_celery fredhutch/motuz_database_init"
 
 for container in $containers; do
     docker tag "${container}:latest" "${container}:${tag}"

@@ -78,11 +78,17 @@ create_folders() {
     mkdir -p ${MOTUZ_DOCKER_ROOT}/volumes/postgres
     mkdir -p ${MOTUZ_DOCKER_ROOT}/secrets
     mkdir -p ${MOTUZ_DOCKER_ROOT}/certs
+    # Traefik's Let's Encrypt account and certificates (acme.json), if MOTUZ_ACME_DOMAIN is set
+    mkdir -p ${MOTUZ_DOCKER_ROOT}/traefik
     # The Flask secret key also signs the JWTs, keep secrets private
-    chmod 700 ${MOTUZ_DOCKER_ROOT}/secrets
+    chmod 700 ${MOTUZ_DOCKER_ROOT}/secrets ${MOTUZ_DOCKER_ROOT}/traefik
 }
 
 generate_certificates() {
+    if [ -n "${MOTUZ_ACME_DOMAIN}" ]; then
+        _color_yellow "MOTUZ_ACME_DOMAIN=${MOTUZ_ACME_DOMAIN}: Traefik gets a Let's Encrypt certificate. Skipping ${MOTUZ_DOCKER_ROOT}/certs"
+        return
+    fi
     if [ ! -f "${MOTUZ_DOCKER_ROOT}/certs/cert.crt" ] || [ ! -f "${MOTUZ_DOCKER_ROOT}/certs/cert.key" ]; then
         if [ -f "${MOTUZ_DOCKER_ROOT}/certs/cert.crt" ] || [ -f "${MOTUZ_DOCKER_ROOT}/certs/cert.key" ]; then
             _color_red "Only one of '${MOTUZ_DOCKER_ROOT}/certs/cert.crt', '${MOTUZ_DOCKER_ROOT}/certs/cert.key' found. Need both or none"

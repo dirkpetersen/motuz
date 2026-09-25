@@ -31,8 +31,11 @@
     4. [Shared Filesystems (optional)](#shared-filesystems-optional)
     5. [Cloning the Motuz repository](#cloning-the-motuz-repository)
     6. [Set up HTTPS certificate](#set-up-https-certificate)
+        1. [Option A: certificate files (default)](#option-a-certificate-files-default)
+        2. [Option B: Let's Encrypt](#option-b-lets-encrypt)
     7. [Running Motuz the first time](#running-motuz-the-first-time)
     8. [Redeploying](#redeploying)
+    9. [Migrating from nginx to Traefik](#migrating-from-nginx-to-traefik)
 5. [Developer Installation](#developer-installation)
     1. [Initialize](#initialize)
     2. [Start](#start)
@@ -80,8 +83,9 @@ In this section we will explain what each step of quickstart does. We will also 
 - `mkdir -p /docker/certs`
 - `mkdir -p /docker/secrets`
 - `mkdir -p /docker/volumes/postgres`
+- `mkdir -p -m 700 /docker/traefik` (only used for [Let's Encrypt](#option-b-lets-encrypt))
 
-2. Add SSL certificates inside `/docker/certs` (with names `cert.crt` and `cert.key`). If you don't have SSL certificates, you can temporarily use [self-signed certificates](https://stackoverflow.com/questions/10175812/how-to-create-a-self-signed-certificate-with-openssl#10176685).
+2. Add SSL certificates inside `/docker/certs` (with names `cert.crt` and `cert.key`). If you don't have SSL certificates, you can temporarily use [self-signed certificates](https://stackoverflow.com/questions/10175812/how-to-create-a-self-signed-certificate-with-openssl#10176685), or let Traefik get one from [Let's Encrypt](#option-b-lets-encrypt).
 
 3. Create the following secret files and remember the passwords
 
@@ -109,7 +113,7 @@ docker-compose up -d
 
 ## Customizing your deployment
 
-- Add your SSL certificates - `/docker/certs/`
+- Add your SSL certificates - `/docker/certs/`, or set `MOTUZ_ACME_DOMAIN` for [Let's Encrypt](#option-b-lets-encrypt)
 - Change the environment variables - `.env`
 - Change passwords by editing the files - `/docker/secrets`
 - Change the files that are visible to motuz - `docker-compose.override.yml`
@@ -208,6 +212,18 @@ cd motuz
 
 ### Set up HTTPS certificate
 
+Traefik (container `motuz_traefik`) is the only service reachable from other
+hosts. It terminates TLS on port 443 (TLS 1.2 and 1.3), redirects port 80 to
+HTTPS, adds the security headers and forwards everything except `/internal/*`
+to uWSGI on `127.0.0.1:5000`, which serves both the API and the web UI. Its
+configuration is the `traefik` service in `docker-compose.yml` (static
+settings) and `deployment/docker/traefik/dynamic/motuz.yml` (routing, headers,
+TLS). The request log goes to `docker logs motuz_traefik`.
+
+Traefik gets its certificate in one of two ways.
+
+#### Option A: certificate files (default)
+
 Obtain an SSL certificate for your domain.
 This will consist of a `.key` file and
 a `.crt` file.
@@ -216,7 +232,8 @@ These files must be placed in the directory `/docker/certs` (`$MOTUZ_DOCKER_ROOT
 directory if it doesn't already exist.
 
 Copy the certificate (.crt) file to
-`/docker/certs/cert.crt`.
+`/docker/certs/cert.crt`. If there are intermediate certificates, append them
+to the same file after your certificate (full chain).
 
 Copy the key (.key) file to
 `/docker/certs/cert.key`.
@@ -226,7 +243,51 @@ The `.key` file should have permission 0400.
 If you do not have SSL certificates, you
 can temporarily (but not in a production context!)
 use [self-signed certificates](https://stackoverflow.com/questions/10175812/how-to-create-a-self-signed-certificate-with-openssl#10176685).
+`bin/quickstart.sh` creates them for you.
 
+Traefik reads the files when it starts. After replacing them, run
+`docker restart motuz_traefik`.
+
+#### Option B: Let's Encrypt
+
+Traefik can get and renew a free certificate from Let's Encrypt by itself
+(ACME HTTP-01 challenge), so no certbot or cron job is needed. Requirements:
+
+- a public DNS name that points to this host
+- ports 80 and 443 reachable from the internet (Let's Encrypt connects to port 80)
+
+Set the name in `.env`, or export it in the environment that runs
+`docker-compose` / `./start.sh` (the environment takes precedence over `.env`):
+
+```bash
+MOTUZ_ACME_DOMAIN=motuz.example.org
+MOTUZ_ACME_EMAIL=admin@example.org   # optional, contact address of the ACME account
+```
+
+Then create the directory for Traefik's certificate store and (re)start Motuz:
+
+```bash
+sudo install -d -m 700 /docker/traefik   # $MOTUZ_DOCKER_ROOT/traefik
+./start.sh                               # or: docker-compose up -d traefik
+```
+
+Traefik requests the certificate on start and renews it automatically about 30
+days before it expires. The account and the certificates, including their
+private keys, are stored in `/docker/traefik/acme.json` (mode 600); keep it
+private and include it in backups. `/docker/certs` is not used in this mode.
+Clients that connect by IP address also get the Let's Encrypt certificate.
+
+To try this without hitting Let's Encrypt's rate limits, first use the staging
+CA, whose certificates browsers do not trust:
+
+```bash
+MOTUZ_ACME_CA_SERVER=https://acme-staging-v02.api.letsencrypt.org/directory
+```
+
+When that works, remove `MOTUZ_ACME_CA_SERVER` and `/docker/traefik/acme.json`
+and restart.
+
+To go back to certificate files, unset `MOTUZ_ACME_DOMAIN` and restart.
 
 ### Running Motuz the first time
 
@@ -285,6 +346,43 @@ bin/redeploy.sh
 This will stop Motuz, rebuild Docker images, run
 database migrations if necessary, and bring Motuz
 back up. It will result in short (-2min) downtime.
+
+
+### Migrating from nginx to Traefik
+
+Installations from before Traefik ran nginx in a container named `motuz_nginx`.
+To migrate:
+
+1. Update the code and run `bin/redeploy.sh` as above. `start.sh` runs
+   `docker-compose down --remove-orphans`, which also removes the old
+   `motuz_nginx` container. If you start the containers some other way, run
+   `docker rm -f motuz_nginx` first, otherwise it keeps ports 80 and 443 and
+   Traefik cannot start. The `fredhutch/motuz_nginx` image is no longer used.
+2. Certificate files in `/docker/certs` keep working unchanged (Option A).
+3. If certbot renews the certificate (as on the EC2 instance, where it writes
+   into `/docker/certs` and its renewal hooks run `docker stop motuz_nginx` /
+   `docker start motuz_nginx`), do one of the following:
+   - **Switch to Traefik's Let's Encrypt support (recommended).** Set
+     `MOTUZ_ACME_DOMAIN` (and optionally `MOTUZ_ACME_EMAIL`) as described in
+     [Option B](#option-b-lets-encrypt), run
+     `sudo install -d -m 700 /docker/traefik` and `./start.sh`, and check the
+     certificate with
+     `echo | openssl s_client -connect motuz.example.org:443 2>/dev/null | openssl x509 -noout -issuer -dates`.
+     Then stop certbot, whose standalone renewal would stop the proxy:
+     `sudo systemctl disable --now certbot.timer` (or remove its cron entry) and
+     `sudo certbot delete --cert-name motuz.example.org`.
+     If the deployment script replaces the checkout (like `bin/update.sh`),
+     `.env` changes are lost; export the variables in the environment that runs
+     it instead (e.g. the sourced `secrets.sh`).
+   - **Keep certbot.** Point its hooks at the new container, then test them:
+     ```bash
+     sudo grep -rl motuz_nginx /etc/letsencrypt/renewal /etc/letsencrypt/renewal-hooks \
+         | xargs -r sudo sed -i 's/motuz_nginx/motuz_traefik/g'
+     sudo certbot renew --dry-run
+     ```
+     Traefik must be restarted after new files are copied to `/docker/certs`;
+     the stop/start hook pair around a standalone renewal does that. A hook that
+     only copies files needs a `docker restart motuz_traefik` after the copy.
 
 
 ### Using a custom database

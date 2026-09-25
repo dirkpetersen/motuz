@@ -20,6 +20,8 @@ cli = FlaskGroup(create_app=lambda: app)
 
 @cli.command('run')
 def run():
+    # FlaskGroup sets FLASK_RUN_FROM_CLI, which turns app.run() into a no-op
+    os.environ.pop('FLASK_RUN_FROM_CLI', None)
     app.run(host=os.getenv('MOTUZ_HOST', 'localhost'))
 
 
