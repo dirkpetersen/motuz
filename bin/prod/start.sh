@@ -6,6 +6,10 @@ THIS_DIR=$(dirname "$0")
 cd ${THIS_DIR}
 cd ../..
 
+# Existing installs get empty files for secrets added later (e.g. the OneDrive client
+# secret), otherwise docker-compose refuses to start
+./bin/_utils/optional_secrets.sh
+
 # Shut down anything that might still be running. --remove-orphans also removes the
 # motuz_nginx container of installs from before Traefik, which would hold ports 80/443.
 docker-compose down --remove-orphans

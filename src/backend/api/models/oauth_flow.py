@@ -15,6 +15,8 @@ class OauthFlow(db.Model):
     owner = db.Column(db.String, nullable=False, index=True)
     provider = db.Column(db.String, nullable=False)
     code_verifier = db.Column(db.String, nullable=False)
+    # App registration the sign-in started with; copied to the connection
+    client_id = db.Column(db.String, nullable=True)
 
     # Set once the authorization code was exchanged
     token = db.Column(db.String, nullable=True)

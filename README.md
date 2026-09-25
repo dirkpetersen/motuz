@@ -36,6 +36,7 @@
     7. [Running Motuz the first time](#running-motuz-the-first-time)
     8. [Redeploying](#redeploying)
     9. [Migrating from nginx to Traefik](#migrating-from-nginx-to-traefik)
+    10. [OneDrive: own app registration](#onedrive-own-app-registration)
 5. [Developer Installation](#developer-installation)
     1. [Initialize](#initialize)
     2. [Start](#start)
@@ -94,6 +95,8 @@ mkdir -p /docker/secrets
 head /dev/urandom | md5sum | awk '{print $1}' > /docker/secrets/MOTUZ_DATABASE_PASSWORD
 head /dev/urandom | md5sum | awk '{print $1}' > /docker/secrets/MOTUZ_FLASK_SECRET_KEY
 head /dev/urandom | md5sum | awk '{print $1}' > /docker/secrets/MOTUZ_SMTP_PASSWORD
+# Optional, empty unless you use an own OneDrive app registration
+install -m 600 /dev/null /docker/secrets/MOTUZ_ONEDRIVE_CLIENT_SECRET
 ```
 
 4. Initialize the database
@@ -383,6 +386,75 @@ To migrate:
      Traefik must be restarted after new files are copied to `/docker/certs`;
      the stop/start hook pair around a standalone renewal does that. A hook that
      only copies files needs a `docker restart motuz_traefik` after the copy.
+
+
+### OneDrive: own app registration
+
+"Sign in with Microsoft" (Clouds > New connection > OneDrive) uses rclone's
+public OneDrive app by default. Its only redirect address is
+`http://localhost:53682/`, so after signing in, users copy the address of the
+error page the browser shows and paste it into Motuz. All Motuz installations
+and rclone users share that app's Microsoft Graph throttling quota.
+
+With your own app registration in Microsoft Entra ID, Microsoft redirects back
+to Motuz, which completes the sign-in by itself, and Motuz gets its own
+throttling quota.
+
+1. In the [Microsoft Entra admin center](https://entra.microsoft.com/), open
+   *App registrations* > *New registration*:
+   - Name: e.g. `Motuz`
+   - Supported account types: *Accounts in any organizational directory
+     (Multitenant)*. Motuz signs in through Microsoft's `common` endpoints, like
+     rclone, which single-tenant apps cannot use. The app still only works in
+     tenants whose administrator consents to it (step 3).
+   - Redirect URI: platform *Web*,
+     `https://motuz.example.org/api/oauth/onedrive/callback` (your Motuz host
+     name; it must match `MOTUZ_ONEDRIVE_REDIRECT_URI` exactly).
+2. Note the *Application (client) ID* on the app's *Overview* page.
+3. *API permissions* > *Add a permission* > *Microsoft Graph* > *Delegated
+   permissions*: `Files.ReadWrite.All`, `Sites.Read.All`, `offline_access` and
+   `User.Read` (usually already there). Then *Grant admin consent for
+   <tenant>*: users cannot consent to `Files.ReadWrite.All` and
+   `Sites.Read.All` themselves, so without the tenant's admin consent they see
+   "Need admin approval".
+4. *Certificates & secrets* > *Client secrets* > *New client secret*. Copy its
+   *Value* (not the *Secret ID*); it is shown only once. Note the expiry date:
+   Motuz cannot refresh tokens once the secret expires.
+5. Configure Motuz. The id and redirect URI go in `.env` (or the environment
+   that runs `./start.sh`, which takes precedence), the secret in a docker
+   secret file, never in `.env`:
+   ```bash
+   MOTUZ_ONEDRIVE_CLIENT_ID=<Application (client) ID>
+   MOTUZ_ONEDRIVE_REDIRECT_URI=https://motuz.example.org/api/oauth/onedrive/callback
+   ```
+   ```bash
+   # $MOTUZ_DOCKER_ROOT/secrets, /docker by default
+   (umask 077 && printf '%s' '<secret value>' > /docker/secrets/MOTUZ_ONEDRIVE_CLIENT_SECRET)
+   ```
+6. Redeploy with `bin/redeploy.sh` (or `./start.sh`).
+
+`bin/prod/start.sh` creates `/docker/secrets/MOTUZ_ONEDRIVE_CLIENT_SECRET` as
+an empty file (mode 600) if it does not exist, because docker-compose does not
+start with a missing secret file. Empty or unset values mean "not configured":
+without `MOTUZ_ONEDRIVE_CLIENT_ID` Motuz uses rclone's app and ignores the
+secret and the redirect URI.
+
+Each connection remembers which app issued its token and is always refreshed
+with that app:
+
+- Connections created before the own app was configured, and connections
+  created by pasting a token from `rclone config`, keep using rclone's app.
+- Rotating the client secret (same client id) keeps all connections working:
+  replace the file and redeploy before the old secret expires.
+- Connections created with an own app stop working when its client id changes
+  or is removed from the configuration. Their jobs fail with "This OneDrive
+  connection was created with a different app registration..."; the owner
+  signs in with Microsoft again (or pastes an rclone token into the
+  connection).
+
+The edit dialog of a OneDrive connection shows which app it uses. The client
+secret is only used by the `app` container (sign-in and token refresh); rclone
+never receives it.
 
 
 ### Using a custom database

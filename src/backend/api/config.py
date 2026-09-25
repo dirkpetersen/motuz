@@ -3,6 +3,16 @@ import os
 basedir = os.path.abspath(os.path.dirname(__file__))
 
 
+def _optional_env(name, default=None):
+    """
+    Optional setting: unset, empty and whitespace-only all mean "not configured".
+    docker-compose passes unset .env variables as empty strings, and optional secrets
+    are empty files (see bin/_utils/optional_secrets.sh).
+    """
+    value = (os.environ.get(name) or '').strip()
+    return value or default
+
+
 # Preventing lazy loading of mandatory variables
 try:
     MOTUZ_FLASK_SECRET_KEY = os.environ['MOTUZ_FLASK_SECRET_KEY']
@@ -49,9 +59,10 @@ class Config:
     # OneDrive app, whose only redirect URI is http://localhost:53682/: the user then pastes
     # the address the browser was redirected to. With an own app registration whose redirect
     # URI is https://<motuz host>/api/oauth/onedrive/callback the flow completes by itself.
-    ONEDRIVE_CLIENT_ID = os.environ.get('MOTUZ_ONEDRIVE_CLIENT_ID')
-    ONEDRIVE_CLIENT_SECRET = os.environ.get('MOTUZ_ONEDRIVE_CLIENT_SECRET')
-    ONEDRIVE_REDIRECT_URI = os.environ.get('MOTUZ_ONEDRIVE_REDIRECT_URI', 'http://localhost:53682/')
+    # The redirect URI is only used with an own app (README, "OneDrive: own app registration").
+    ONEDRIVE_CLIENT_ID = _optional_env('MOTUZ_ONEDRIVE_CLIENT_ID')
+    ONEDRIVE_CLIENT_SECRET = _optional_env('MOTUZ_ONEDRIVE_CLIENT_SECRET')
+    ONEDRIVE_REDIRECT_URI = _optional_env('MOTUZ_ONEDRIVE_REDIRECT_URI')
     ONEDRIVE_AUTH_URL = os.environ.get('MOTUZ_ONEDRIVE_AUTH_URL', 'https://login.microsoftonline.com/common/oauth2/v2.0/authorize')
     GRAPH_URL = os.environ.get('MOTUZ_GRAPH_URL', 'https://graph.microsoft.com/v1.0')
 
