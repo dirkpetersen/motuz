@@ -6,6 +6,7 @@ import subprocess
 from collections import defaultdict
 
 from .abstract_connection import AbstractConnection, RcloneException
+from . import local_credentials
 from .copy_job_queue import CopyJobQueue
 from .hashsum_job_queue import HashsumJobQueue
 
@@ -27,7 +28,13 @@ class RcloneConnection(AbstractConnection):
 
 
     def verify(self, data):
-        credentials = self._formatCredentials(data, name='current')
+        try:
+            credentials = self._formatCredentials(data, name='current')
+        except RcloneException as e: # e.g. a profile that cannot be read from the user's home
+            return {
+                'result': False,
+                'message': str(e)[-1000:],
+            }
         user = data.owner
         bucket = getattr(data, 'bucket', None)
         if bucket is None:
@@ -283,7 +290,9 @@ class RcloneConnection(AbstractConnection):
     def _log_command(self, command, credentials):
         sanitized_credentials = {}
         for key, value in credentials.items():
-            if should_log_full_credential(key):
+            if should_never_log_credential(key):
+                sanitized_credentials[key] = '***'
+            elif should_log_full_credential(key):
                 sanitized_credentials[key] = value
             elif should_log_partial_credential(key):
                 sanitized_credentials[key] = '***' + value[-4:]
@@ -313,30 +322,43 @@ class RcloneConnection(AbstractConnection):
 
         def _addCredential(env_key, data_key, *, value_functor=None):
             value = getattr(data, data_key, None)
-            if value is not None:
+            if value is not None and value != '':
                 if value_functor is not None:
                     value = value_functor(value)
                 credentials[env_key] = value
 
 
+        def _addProfile():
+            # Read from the owner's home directory now, as the owner (never stored)
+            options, env = local_credentials.resolve(
+                data.owner, data.type, data.profile_source, data.profile_name)
+            credentials.update(env)
+            for key, value in options.items():
+                credentials['{}_{}'.format(prefix, key.upper())] = value
+
+
         if data.type == 's3':
+            if data.subtype == 'profile':
+                _addProfile()
+            else:
+                _addCredential(
+                    '{}_ACCESS_KEY_ID'.format(prefix),
+                    's3_access_key_id'
+                )
+                _addCredential(
+                    '{}_SECRET_ACCESS_KEY'.format(prefix),
+                    's3_secret_access_key'
+                )
+                if data.subtype == 'sts':
+                    _addCredential(
+                        '{}_SESSION_TOKEN'.format(prefix),
+                        's3_session_token'
+                    )
+            # The connection's region and endpoint win over a profile's
             _addCredential(
                 '{}_REGION'.format(prefix),
                 's3_region'
             )
-            _addCredential(
-                '{}_ACCESS_KEY_ID'.format(prefix),
-                's3_access_key_id'
-            )
-            _addCredential(
-                '{}_SECRET_ACCESS_KEY'.format(prefix),
-                's3_secret_access_key'
-            )
-            if data.subtype == 'sts':
-                _addCredential(
-                    '{}_SESSION_TOKEN'.format(prefix),
-                    's3_session_token'
-                )
             if data.kms_encryption_key_arn:
                 credentials['{}_SERVER_SIDE_ENCRYPTION'.format(prefix)] = "aws:kms"
                 _addCredential(
@@ -351,13 +373,17 @@ class RcloneConnection(AbstractConnection):
                 '{}_V2_AUTH'.format(prefix),
                 's3_v2_auth'
             )
-            if data.s3_endpoint is None:
+            if '{}_PROVIDER'.format(prefix) in credentials: # from an rclone remote
+                pass
+            elif '{}_ENDPOINT'.format(prefix) not in credentials:
                 credentials['{}_PROVIDER'.format(prefix)] = 'AWS'
             else:
                 credentials['{}_PROVIDER'.format(prefix)] = 'Other'
 
         elif data.type == 'azureblob':
-            if data.subtype == 'sas':
+            if data.subtype == 'profile':
+                _addProfile()
+            elif data.subtype == 'sas':
                 _addCredential(
                     '{}_SAS_URL'.format(prefix),
                     'azure_sas_url'
@@ -539,6 +565,27 @@ def _local_path(path):
     return path
 
 
+def should_never_log_credential(key):
+    """
+    Secrets whose names end with an allowlisted suffix (the SAS URL ends in '_URL')
+    """
+    return any(key.endswith(suffix) for suffix in (
+        '_SAS_URL',
+        '_CONNECTION_STRING',
+        '_CLIENT_SECRET',
+        '_ROLE_EXTERNAL_ID',
+    ))
+
+
+# Process variables (not RCLONE_CONFIG_*) that are safe to log
+_LOGGABLE_VARIABLES = frozenset((
+    'HOME',
+    'AWS_CONFIG_FILE',
+    'AWS_SHARED_CREDENTIALS_FILE',
+    'AWS_EC2_METADATA_DISABLED',
+))
+
+
 def should_log_full_credential(key):
     """
     Returns true if we should log the value of the credential given the key (name) of the credential
@@ -550,12 +597,21 @@ def should_log_full_credential(key):
         '_TYPE',
 
         # s3
+        '_PROVIDER',
         '_REGION',
         '_ENDPOINT',
         '_V2_AUTH',
+        '_ROLE_ARN',
+        '_ROLE_SESSION_NAME',
+        '_ROLE_SESSION_DURATION',
+        '_ENV_AUTH',
+        '_PROFILE',
+        '_SHARED_CREDENTIALS_FILE',
+        '_FORCE_PATH_STYLE',
 
         # azureblob
         '_ACCOUNT',
+        '_USE_EMULATOR',
 
         # swift
         '_USER',
@@ -584,7 +640,7 @@ def should_log_full_credential(key):
         '_USER',
     ]
 
-    return any(key.endswith(suffix) for suffix in suffix_allowlist)
+    return key in _LOGGABLE_VARIABLES or any(key.endswith(suffix) for suffix in suffix_allowlist)
 
 
 def should_log_partial_credential(key):

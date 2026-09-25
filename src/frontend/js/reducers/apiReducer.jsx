@@ -233,11 +233,14 @@ export default (state=initialState, action) => {
         }
     }
     case api.VERIFY_CLOUD_CONNECTION_SUCCESS: {
+        // HTTP 200 with {result: false, message} when rclone could not connect
+        const payload = action.payload || {};
         return {
             ...state,
             cloudConnectionVerification: {
                 loading: false,
-                success: true,
+                success: payload.result !== false,
+                message: payload.result === false ? payload.message : null,
             },
         }
     }

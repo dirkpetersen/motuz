@@ -322,6 +322,22 @@ export const deleteCloudConnection = (data) => {
 };
 
 
+// Credentials found in the user's home directory (backend utils/local_credentials.py).
+// Metadata only; components await the dispatched action, nothing is kept in the store.
+export const LIST_LOCAL_CREDENTIALS_REQUEST = '@@api/LIST_LOCAL_CREDENTIALS_REQUEST';
+export const LIST_LOCAL_CREDENTIALS_SUCCESS = '@@api/LIST_LOCAL_CREDENTIALS_SUCCESS';
+export const LIST_LOCAL_CREDENTIALS_FAILURE = '@@api/LIST_LOCAL_CREDENTIALS_FAILURE';
+
+export const listLocalCredentials = (type) => ({
+    [RSAA]: {
+        endpoint: `/api/connections/local-credentials/?type=${encodeURIComponent(type)}`,
+        method: 'GET',
+        headers: withAuth({ 'Content-Type': 'application/json' }),
+        types: [ LIST_LOCAL_CREDENTIALS_REQUEST, LIST_LOCAL_CREDENTIALS_SUCCESS, LIST_LOCAL_CREDENTIALS_FAILURE ],
+    }
+});
+
+
 // "Sign in with Microsoft" for OneDrive (see backend managers/oauth_manager.py).
 // Components await the dispatched action; start/finish/flow results are not kept in the store.
 export const ONEDRIVE_SIGNIN_REQUEST = '@@api/ONEDRIVE_SIGNIN_REQUEST';

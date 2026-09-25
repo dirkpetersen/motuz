@@ -8,6 +8,7 @@ from ..application import db
 from ..models import CloudConnection
 from ..exceptions import *
 from ..utils.rclone_connection import RcloneConnection
+from ..utils import local_credentials as local_credentials_utils
 from ..managers.auth_manager import token_required, get_logged_in_user
 from ..managers import token_broker_manager
 
@@ -35,8 +36,53 @@ _SECRET_FIELDS = frozenset((
 ))
 
 
+# Credentials a 'profile' connection must not keep: they come from the user's home
+_PROFILE_REPLACES = {
+    's3': ('s3_access_key_id', 's3_secret_access_key', 's3_session_token'),
+    'azureblob': ('azure_account', 'azure_key', 'azure_sas_url'),
+}
+
+
 def _writable(data):
     return {key: value for key, value in data.items() if key in _WRITABLE_FIELDS}
+
+
+def _apply_profile_rules(cloud_connection):
+    """
+    A 'profile' connection references credentials in the owner's home directory. Check
+    that the owner has a usable profile of that name (read as the owner) and drop any
+    stored credentials; every other connection drops the profile reference.
+    """
+    if cloud_connection.subtype != 'profile':
+        cloud_connection.profile_source = None
+        cloud_connection.profile_name = None
+        return
+
+    try:
+        local_credentials_utils.resolve(
+            cloud_connection.owner,
+            cloud_connection.type,
+            cloud_connection.profile_source,
+            cloud_connection.profile_name,
+            materialize=False,
+        )
+    except local_credentials_utils.LocalCredentialsError as e:
+        raise HTTP_400_BAD_REQUEST(str(e))
+
+    for key in _PROFILE_REPLACES[cloud_connection.type]:
+        setattr(cloud_connection, key, None)
+
+
+@token_required
+def local_credentials(conn_type):
+    """Profiles in the logged in user's home directory, without secrets"""
+    owner = get_logged_in_user(request)
+    if conn_type not in _PROFILE_REPLACES:
+        raise HTTP_400_BAD_REQUEST('type must be one of: {}'.format(', '.join(_PROFILE_REPLACES)))
+    try:
+        return local_credentials_utils.discover(owner, conn_type)
+    except local_credentials_utils.LocalCredentialsError as e:
+        return {'profiles': [], 'notes': [str(e)]}
 
 
 @token_required
@@ -57,6 +103,7 @@ def create(data):
 
     cloud_connection = CloudConnection(**_writable(data))
     cloud_connection.owner = owner
+    _apply_profile_rules(cloud_connection)
 
     db.session.add(cloud_connection)
     db.session.commit()
@@ -98,6 +145,7 @@ def update(id, data):
         if key in _SECRET_FIELDS and not value:
             continue
         setattr(cloud_connection, key, value)
+    _apply_profile_rules(cloud_connection)
 
     db.session.commit()
     return cloud_connection
