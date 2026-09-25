@@ -19,14 +19,23 @@ class Alerts extends React.Component {
                 width: '100%',
             }}>
                 <Alert
-                    variant="danger"
+                    variant={this.props.variant}
                     onClose={() => this.props.onDismiss()}
                     dismissible
                 >
-                    <Alert.Heading>Something went wrong!</Alert.Heading>
-                        <pre>
-                            {JSON.stringify(this.props.text)}
-                        </pre>
+                    {this.props.notice ? (
+                        <React.Fragment>
+                            <Alert.Heading>{this.props.heading}</Alert.Heading>
+                            <p className='mb-0'>{this.props.text}</p>
+                        </React.Fragment>
+                    ) : (
+                        <React.Fragment>
+                            <Alert.Heading>Something went wrong!</Alert.Heading>
+                            <pre>
+                                {JSON.stringify(this.props.text)}
+                            </pre>
+                        </React.Fragment>
+                    )}
                 </Alert>
             </div>
         );
@@ -40,6 +49,9 @@ class Alerts extends React.Component {
 Alerts.defaultProps = {
     show: true,
     text: 'Foo',
+    notice: false,
+    heading: '',
+    variant: 'danger',
     onDismiss: () => {},
 }
 
@@ -49,6 +61,9 @@ import {hideAlert} from 'actions/alertActions.jsx'
 const mapStateToProps = state => ({
     show: state.alert.show,
     text: state.alert.text,
+    notice: state.alert.notice,
+    heading: state.alert.heading,
+    variant: state.alert.variant,
 });
 
 const mapDispatchToProps = dispatch => ({

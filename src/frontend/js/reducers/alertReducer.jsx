@@ -5,6 +5,9 @@ import * as alert from 'actions/alertActions.jsx';
 const initialState = {
     show: false,
     text: '',
+    notice: false, // A plain-text notice rather than an error response
+    heading: '',
+    variant: 'danger',
 };
 
 
@@ -12,6 +15,17 @@ export default (state=initialState, action) => {
     switch(action.type) {
     case alert.HIDE_ALERT: {
         return initialState;
+    }
+
+    case alert.SHOW_ALERT: {
+        const {heading, text, variant} = action.payload;
+        return {
+            show: true,
+            text,
+            notice: true,
+            heading,
+            variant,
+        };
     }
 
     // case auth.LOGIN_FAILURE: // We do not want to show alert for that
@@ -29,7 +43,7 @@ export default (state=initialState, action) => {
     case api.MAKE_DIRECTORY_FAILURE:
     {
         return {
-            ...state,
+            ...initialState,
             show: true,
             text: action.payload.response || action.payload,
         };
