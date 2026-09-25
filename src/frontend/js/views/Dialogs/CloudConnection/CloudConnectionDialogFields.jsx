@@ -121,7 +121,8 @@ class CloudConnectionDialogFields extends React.Component {
                     label='Connection Name'
                     input={{
                         name: 'name',
-                        defaultValue: this.props.data.name,
+                        value: this._name(),
+                        onChange: event => this.setState({name: event.target.value}),
                         required: true,
                     }}
                     error={this.props.errors.name}
@@ -142,7 +143,30 @@ class CloudConnectionDialogFields extends React.Component {
     }
 
     componentDidMount() {
+        this._reportSignIn();
+    }
 
+    componentDidUpdate() {
+        this._reportSignIn();
+    }
+
+    _name() {
+        return this.state.name === null ? (this.props.data.name || '') : this.state.name;
+    }
+
+    // True while a new OneDrive connection is made with "Sign in with Microsoft", which has its
+    // own button, so the dialog hides its Verify/Create buttons (they need the pasted token)
+    _isSignIn() {
+        const type = this.state.type || this.props.data.type || 's3';
+        return type === 'onedrive' && !this.props.isSanitized && !this.state.onedriveManual;
+    }
+
+    _reportSignIn() {
+        const signIn = this._isSignIn();
+        if (signIn !== this._reportedSignIn) {
+            this._reportedSignIn = signIn;
+            this.props.onSignInChange(signIn);
+        }
     }
 
     // Credentials from the user's home directory: picked in a new connection, or stored
@@ -362,6 +386,22 @@ class CloudConnectionDialogFields extends React.Component {
                     error={this.props.errors.bucket}
                     isValid={this.props.verifySuccess}
                 />
+                {profile.source === 'azure-cli' &&
+                    // An Azure CLI login is an identity, not a storage account
+                    <CloudConnectionField
+                        label='Storage Account'
+                        input={{
+                            name: 'azure_account',
+                            defaultValue: this.props.data.azure_account,
+                            required: true,
+                            placeholder: 'mystorageaccount',
+                            pattern: '[a-z0-9]{3,24}',
+                            title: '3 to 24 lower case letters and digits',
+                        }}
+                        error={this.props.errors.azure_account}
+                        isValid={this.props.verifySuccess}
+                    />
+                }
             </React.Fragment>
         )
     }
@@ -770,8 +810,19 @@ class CloudConnectionDialogFields extends React.Component {
         }
         return (
             <React.Fragment>
-                <OnedriveSignIn />
-                <details>
+                <OnedriveSignIn
+                    name={this._name()}
+                    onNameChange={name => this.setState({name})}
+                />
+                <details
+                    open={this.state.onedriveManual}
+                    onToggle={event => {
+                        // React also passes on the toggle of the nested "How to get these values"
+                        if (event.target === event.currentTarget) {
+                            this.setState({onedriveManual: event.target.open});
+                        }
+                    }}
+                >
                     <summary className='text-primary h5 mt-2 mb-3'>
                         Advanced: paste a token from rclone instead
                     </summary>
@@ -944,6 +995,7 @@ class CloudConnectionDialogFields extends React.Component {
 }
 
 CloudConnectionDialogFields.defaultProps = {
+    onSignInChange: (signIn) => {},
     verifySuccess: false,
     data: {},
     isSanitized: false,
@@ -953,6 +1005,8 @@ CloudConnectionDialogFields.initialState = {
     type: '',
     subtype: '',
     profile: null, // picked from LocalCredentialPicker
+    name: null, // Connection Name as edited, null = data.name
+    onedriveManual: false, // "Advanced: paste a token" is open
 }
 
 

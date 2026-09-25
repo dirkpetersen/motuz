@@ -72,6 +72,32 @@ RUN set -x \
     && apt-get purge -y --auto-remove \
     && rm -rf /var/lib/apt/lists/*
 
+# Optional Azure CLI (az) for "Credentials from your home directory" with Azure CLI
+# logins: rclone's azureblob use_az runs `az account get-access-token` as the user,
+# with the user's ~/.azure (utils/local_credentials.py). Off by default because it
+# adds about 590 MB to the image (azure-cli 2.90: 421 MB -> 1.01 GB). Build with
+#   --build-arg INSTALL_AZURE_CLI=true [--build-arg AZURE_CLI_VERSION=2.90.0]
+# From Microsoft's signed apt repository; the key fingerprint is checked.
+ARG INSTALL_AZURE_CLI=false
+ARG AZURE_CLI_VERSION=
+ARG MICROSOFT_KEY_FINGERPRINT=BC528686B50D79E339D3721CEB3E94ADBE1229CF
+
+RUN if [ "$INSTALL_AZURE_CLI" = "true" ]; then set -x \
+    && apt-get update -y \
+    && apt-get install -y --no-install-recommends --no-install-suggests curl gpg ca-certificates \
+    && install -d -m 755 /etc/apt/keyrings \
+    && curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor -o /etc/apt/keyrings/microsoft.gpg \
+    && gpg --show-keys --with-colons /etc/apt/keyrings/microsoft.gpg | grep -q "^fpr:::::::::${MICROSOFT_KEY_FINGERPRINT}:" \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/microsoft.gpg] https://packages.microsoft.com/repos/azure-cli/ bookworm main" \
+        > /etc/apt/sources.list.d/azure-cli.list \
+    && apt-get update -y \
+    && apt-get install -y --no-install-recommends --no-install-suggests \
+        "azure-cli${AZURE_CLI_VERSION:+=${AZURE_CLI_VERSION}-1~bookworm}" \
+    && apt-get purge -y --auto-remove curl gpg \
+    && rm -rf /var/lib/apt/lists/* \
+    && AZURE_CONFIG_DIR=/tmp/az-build az version && rm -rf /tmp/az-build; \
+    fi
+
 ENV PYTHONUNBUFFERED=1
 ENV DOCKER_CONTAINER=1
 ENV PYTHON_ENVIRONMENT=prod

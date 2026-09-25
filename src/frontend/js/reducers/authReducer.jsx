@@ -46,6 +46,23 @@ export default (state=initialState, action) => {
             },
         };
     }
+    case auth.SYNC_TOKENS: {
+        const {access, refresh} = action.payload;
+        if (!access || !refresh) { // Logged out in another tab
+            return initialState;
+        }
+        try {
+            return {
+                ...state,
+                access: {token: access, ...jwtDecode(access)},
+                refresh: {token: refresh, ...jwtDecode(refresh)},
+                errors: {},
+                loading: false,
+            };
+        } catch (error) {
+            return state;
+        }
+    }
     case auth.LOGIN_FAILURE:
     case auth.REFRESH_TOKEN_FAILURE:
     {

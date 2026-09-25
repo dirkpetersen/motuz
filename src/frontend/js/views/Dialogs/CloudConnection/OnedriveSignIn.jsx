@@ -16,7 +16,7 @@ class OnedriveSignIn extends React.Component {
             flowState: null,
             drives: [],
             driveId: '',
-            name: '',
+            autoName: null, // the drive name this panel put into the Basic "Connection Name"
             busy: false,
             error: null,
         };
@@ -107,7 +107,7 @@ class OnedriveSignIn extends React.Component {
     }
 
     renderChoose() {
-        const {drives, driveId, name} = this.state;
+        const {drives, driveId} = this.state;
         return (
             <React.Fragment>
                 <p className='card-text text-success'>Signed in. Choose the drive for this connection:</p>
@@ -116,7 +116,7 @@ class OnedriveSignIn extends React.Component {
                     <select
                         className='form-control'
                         value={driveId}
-                        onChange={event => this.setState({driveId: event.target.value})}
+                        onChange={event => this.selectDrive(event.target.value)}
                     >
                         {drives.map(drive => (
                             <option key={drive.id} value={drive.id}>
@@ -125,14 +125,10 @@ class OnedriveSignIn extends React.Component {
                         ))}
                     </select>
                 </div>
-                <div className='form-group'>
-                    <label><b>Connection name</b></label>
-                    <input
-                        className='form-control'
-                        value={name}
-                        onChange={event => this.setState({name: event.target.value})}
-                    />
-                </div>
+                <p className='card-text'>
+                    Connection name: <b>{this.props.name.trim() || this.driveName(driveId)}</b>
+                    <span className='text-muted'> (change it in <i>Connection Name</i> above)</span>
+                </p>
                 <Button
                     variant='success'
                     disabled={this.state.busy || !driveId}
@@ -166,21 +162,36 @@ class OnedriveSignIn extends React.Component {
     }
 
     handleConnect() {
-        const {flowState, driveId, name} = this.state;
+        const {flowState, driveId} = this.state;
+        const name = this.props.name.trim() || this.driveName(driveId);
         this.call(this.props.onConnect({state: flowState, drive_id: driveId, name}), () => {});
     }
 
     showDrives(payload) {
         const drives = payload.drives || [];
         const driveId = payload.default_drive_id || (drives[0] && drives[0].id) || '';
-        const drive = drives.find(d => d.id === driveId);
         this.setState({
             step: 'choose',
             flowState: payload.state,
             drives,
-            driveId,
-            name: drive ? drive.name : 'OneDrive',
-        });
+        }, () => this.selectDrive(driveId));
+    }
+
+    driveName(driveId) {
+        const drive = this.state.drives.find(d => d.id === driveId);
+        return drive ? drive.name : 'OneDrive';
+    }
+
+    // Prefill the Basic "Connection Name" with the drive's name, unless the user typed one
+    selectDrive(driveId) {
+        const current = this.props.name.trim();
+        const name = this.driveName(driveId);
+        if (!current || current === this.state.autoName) {
+            this.props.onNameChange(name);
+            this.setState({driveId, autoName: name});
+        } else {
+            this.setState({driveId});
+        }
     }
 
     call(promise, onSuccess, onFailure=() => {}) {
@@ -202,6 +213,8 @@ class OnedriveSignIn extends React.Component {
 }
 
 OnedriveSignIn.defaultProps = {
+    name: '', // the dialog's Basic "Connection Name"
+    onNameChange: (name) => {},
     onStart: () => {},
     onFinish: (redirectUrl) => {},
     onRetrieve: (state) => {},

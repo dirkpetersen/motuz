@@ -5,7 +5,8 @@ import { createFilter } from 'redux-persist-transform-filter';
 import { persistReducer, persistStore } from 'redux-persist';
 
 import getRootReducer from 'reducers/reducers.jsx';
-import authMiddleware from 'middleware/authMiddleware.jsx';
+import authMiddleware, { syncTokensAcrossTabs } from 'middleware/authMiddleware.jsx';
+import { PERSIST_CONFIG_KEY } from 'utils/persistedAuth.jsx';
 
 export default () => {
     const rootReducer = getRootReducer()
@@ -13,7 +14,7 @@ export default () => {
     const authFilter = createFilter('auth', ['access', 'refresh']);
 
     const persistedReducer = persistReducer({
-        key: 'polls',
+        key: PERSIST_CONFIG_KEY,
         storage: storage,
         whitelist: ['auth', 'settings'],
         transforms: [authFilter],
@@ -41,6 +42,7 @@ export default () => {
     );
 
     const persistor = persistStore(store);
+    syncTokensAcrossTabs(store);
 
     return {store, persistor};
 };

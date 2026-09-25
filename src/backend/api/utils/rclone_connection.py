@@ -383,6 +383,11 @@ class RcloneConnection(AbstractConnection):
         elif data.type == 'azureblob':
             if data.subtype == 'profile':
                 _addProfile()
+                if data.profile_source == 'azure-cli': # the login has no storage account
+                    _addCredential(
+                        '{}_ACCOUNT'.format(prefix),
+                        'azure_account'
+                    )
             elif data.subtype == 'sas':
                 _addCredential(
                     '{}_SAS_URL'.format(prefix),
@@ -633,6 +638,7 @@ _LOGGABLE_VARIABLES = frozenset((
     'AWS_CONFIG_FILE',
     'AWS_SHARED_CREDENTIALS_FILE',
     'AWS_EC2_METADATA_DISABLED',
+    'AZURE_CONFIG_DIR',
 ))
 
 
@@ -662,6 +668,7 @@ def should_log_full_credential(key):
         # azureblob
         '_ACCOUNT',
         '_USE_EMULATOR',
+        '_USE_AZ',
 
         # swift
         '_USER',

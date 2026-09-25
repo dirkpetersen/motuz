@@ -14,6 +14,9 @@ export const LOGOUT_REQUEST = '@@auth/LOGOUT_REQUEST';
 export const LOGOUT_SUCCESS = '@@auth/LOGOUT_SUCCESS';
 export const LOGOUT_FAILURE = '@@auth/LOGOUT_FAILURE';
 
+// Tokens written to localStorage by another tab (utils/persistedAuth.jsx)
+export const SYNC_TOKENS = '@@auth/SYNC_TOKENS';
+
 export const login = (username, password) => ({
     [RSAA]: {
         endpoint: '/api/auth/login/',
@@ -26,7 +29,9 @@ export const login = (username, password) => ({
     }
 });
 
-export const logout = (refresh_token) => ({
+// Revokes the refresh token and its whole session on the server, i.e. every access
+// token of this login, in all tabs
+export const logout = () => ({
     [RSAA]: {
         endpoint: '/api/auth/logout/',
         method: 'POST',
@@ -38,13 +43,20 @@ export const logout = (refresh_token) => ({
 });
 
 
+// Rotates the refresh token: the server revokes the one sent here (after a short
+// grace window for other tabs), so the pair in the response replaces both tokens
 export const refreshAccessToken = (refresh_token) => ({
     [RSAA]: {
         endpoint: '/api/auth/refresh/',
         method: 'POST',
-        headers: withRefresh({ 'Content-Type': 'application/json' }),
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${refresh_token}` },
         types: [
             REFRESH_TOKEN_REQUEST, REFRESH_TOKEN_SUCCESS, REFRESH_TOKEN_FAILURE
         ]
     }
+});
+
+export const syncTokens = ({access, refresh}) => ({
+    type: SYNC_TOKENS,
+    payload: {access, refresh},
 });

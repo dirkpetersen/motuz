@@ -8,7 +8,8 @@ home directory"). Only these fixed paths below the user's home are ever read:
     .aws/sso/cache/<sha1>.json           AWS SSO login state of an SSO profile
     .config/rclone/rclone.conf           rclone s3 / azureblob remotes
     .rclone.conf                         (legacy rclone location, if the above is missing)
-    .azure/azureProfile.json             only to say that an Azure CLI login exists
+    .azure/azureProfile.json             Azure CLI logins (tenants, subscriptions, user
+                                         names; the tokens are in other files)
 
 Security model
 - Files are read only as the user, through `sudo -n -u <user>` like every other
@@ -24,6 +25,12 @@ Security model
   make the AWS SDK execute `credential_process` commands, i.e. let any user run
   programs inside the Motuz containers. The only env_auth use is for SSO profiles,
   with a config file that Motuz writes from allowlisted SSO settings.
+- Azure CLI logins (only if the image has the Azure CLI, build arg INSTALL_AZURE_CLI):
+  rclone's use_az runs `az account get-access-token` as the user, with HOME and
+  AZURE_CONFIG_DIR pointing at the user's ~/.azure (az reads and refreshes the MSAL
+  token cache there, as the user). `azure_cli_env()` turns off what would run the
+  user's code in the containers (az extensions from ~/.azure) and managed identity
+  (the server's own identity).
 """
 import configparser
 import datetime
@@ -58,7 +65,7 @@ RCLONE_CONF = '.config/rclone/rclone.conf'
 RCLONE_CONF_LEGACY = '.rclone.conf'
 AZURE_PROFILE = '.azure/azureProfile.json'
 
-SOURCES = ('aws', 'rclone')
+SOURCES = ('aws', 'rclone', 'azure-cli')
 MAX_FILE_SIZE = 1024 * 1024
 READ_TIMEOUT = 20 # seconds
 
@@ -67,12 +74,17 @@ READ_TIMEOUT = 20 # seconds
 PROFILE_NAME_RE = re.compile(r'^[A-Za-z0-9_.+@=,\- ]{1,128}$')
 _SAFE_NAME = re.compile(r'^[A-Za-z0-9_.+@=,\-]{1,128}$')
 _SAFE_VALUE = re.compile(r'^[A-Za-z0-9_.:/@+=,#\-]{1,1024}$')
+# Azure CLI logins are stored by tenant id; storage account names are 3-24 lower case
+# letters and digits
+_TENANT_ID = re.compile(r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$')
+STORAGE_ACCOUNT_RE = re.compile(r'^[a-z0-9]{3,24}$')
 
 # Written config files for SSO profiles (no secrets: start URL, account, role, region)
 SSO_CONFIG_DIR = os.environ.get('MOTUZ_SSO_CONFIG_DIR', '/tmp/motuz-aws-config')
 
 # rclone remote options passed through to rclone, everything else is ignored. Never
-# env_auth / use_msi / use_az: those would use the Motuz server's own identity.
+# env_auth / use_msi: those would use the Motuz server's own identity. use_az is added
+# by classify_rclone_remote when the Azure CLI is installed.
 _RCLONE_S3_OPTIONS = (
     'provider', 'access_key_id', 'secret_access_key', 'session_token', 'region',
     'endpoint', 'location_constraint', 'force_path_style', 'v2_auth',
@@ -436,7 +448,16 @@ def classify_rclone_remote(conn_type, settings):
         if _truthy(settings.get('use_msi')) or _truthy(settings.get('env_auth')):
             raise _Unusable('unsupported', 'managed identity / env_auth would use the Motuz server\'s own identity')
         if _truthy(settings.get('use_az')):
-            raise _Unusable('azure_cli', 'uses the Azure CLI, which is not installed on the Motuz server')
+            if not azure_cli_installed():
+                raise _Unusable('azure_cli', AZURE_CLI_MISSING)
+            if not options.get('account'):
+                raise _Unusable('azure_cli', 'uses the Azure CLI but has no account')
+            if options.get('tenant') and not _TENANT_ID.match(options['tenant']):
+                raise _Unusable('azure_cli', 'tenant must be a tenant id')
+            # Only the account, tenant and endpoint: never a key or client secret next to it
+            options = {key: options[key] for key in ('account', 'tenant', 'endpoint', 'access_tier') if options.get(key)}
+            options['use_az'] = 'true'
+            return 'azure_cli', options
         if options.get('connection_string'):
             return 'connection_string', options
         if options.get('sas_url'):
@@ -465,6 +486,121 @@ def _azure_account(kind, options):
     if kind == 'emulator':
         return options.get('account') or 'devstoreaccount1'
     return options.get('account')
+
+
+# ---------------------------------------------------------------- Azure CLI
+
+AZURE_CLI_MISSING = ('the Azure CLI is not installed on this Motuz server '
+                     '(image build arg INSTALL_AZURE_CLI=true)')
+_MANAGED_IDENTITY_USERS = ('systemAssignedIdentity', 'userAssignedIdentity')
+# Points az at a closed port for managed identity (App Service style variables win over
+# the instance metadata service), so a login can never become the server's identity
+_NO_MANAGED_IDENTITY = 'http://127.0.0.1:9/motuz-no-managed-identity'
+
+
+def azure_cli_installed():
+    """Whether rclone (use_az) finds `az` on the PATH it runs with"""
+    from .abstract_connection import user_process_env
+    return shutil.which('az', path=user_process_env()['PATH']) is not None
+
+
+def azure_cli_env(home):
+    """
+    Environment for rclone with use_az, which runs `az account get-access-token` as the
+    user (rclone's process runs as the user, never as root). az reads and refreshes the
+    user's own ~/.azure. Everything else from ~/.azure that could run code in the
+    containers is switched off: extensions (Python packages in ~/.azure/cliextensions
+    or the dev_sources of ~/.azure/config; environment variables win over that file)
+    and dynamic extension installs, telemetry (a helper process) and ~/.local
+    site-packages (.pth files are code). The az launcher runs Python with -I.
+    """
+    return {
+        'HOME': home, # sudo -E keeps root's HOME otherwise
+        'AZURE_CONFIG_DIR': os.path.join(home, '.azure'),
+        'AZURE_EXTENSION_DIR': '/nonexistent/motuz-no-az-extensions',
+        'AZURE_EXTENSION_DEV_SOURCES': '',
+        'AZURE_EXTENSION_USE_DYNAMIC_INSTALL': 'no',
+        'AZURE_CORE_COLLECT_TELEMETRY': 'false',
+        'AZURE_CORE_SURVEY_MESSAGE': 'false',
+        'AZURE_CORE_ONLY_SHOW_ERRORS': 'true',
+        'AZURE_CORE_NO_COLOR': 'true',
+        # az starts some helpers (telemetry) with plain `python`, not -I
+        'PYTHONNOUSERSITE': '1',
+        'IDENTITY_ENDPOINT': _NO_MANAGED_IDENTITY,
+        'IDENTITY_HEADER': 'none',
+        'MSI_ENDPOINT': _NO_MANAGED_IDENTITY,
+        'MSI_SECRET': 'none',
+    }
+
+
+def parse_azure_profile(content):
+    """
+    Azure CLI logins from ~/.azure/azureProfile.json, by tenant id (a login can span
+    several tenants, and rclone asks az for a token of one tenant). Returns
+    {tenant_id: {'user', 'subscriptions', 'reason'}}, where reason is set for logins
+    Motuz cannot use. The file has no tokens (they are in the MSAL cache). Raises
+    _ParseError.
+    """
+    try:
+        data = json.loads(content.lstrip('\ufeff')) # az writes it with a BOM
+    except ValueError:
+        raise _ParseError()
+    subscriptions = data.get('subscriptions') if isinstance(data, dict) else None
+    if not isinstance(subscriptions, list):
+        raise _ParseError()
+
+    logins = {}
+    for subscription in subscriptions:
+        if not isinstance(subscription, dict):
+            continue
+        tenant = subscription.get('tenantId')
+        if not isinstance(tenant, str) or not _TENANT_ID.match(tenant):
+            continue
+        user = subscription.get('user') if isinstance(subscription.get('user'), dict) else {}
+        login = logins.setdefault(tenant.lower(), {
+            'user': str(user.get('name') or '')[:128] or None,
+            'subscriptions': [],
+            'reason': None,
+        })
+        name = subscription.get('name')
+        if isinstance(name, str) and name and not name.startswith('N/A('):
+            login['subscriptions'].append(name[:64])
+        if user.get('assignedIdentityInfo') or user.get('name') in _MANAGED_IDENTITY_USERS:
+            login['reason'] = 'a managed identity login would use the Motuz server\'s own identity'
+        elif subscription.get('environmentName', 'AzureCloud') != 'AzureCloud':
+            login['reason'] = login['reason'] or 'only the public Azure cloud is supported'
+    return logins
+
+
+def _azure_cli_note(login):
+    parts = []
+    if login['user']:
+        parts.append('signed in as {}'.format(login['user']))
+    if login['subscriptions']:
+        parts.append('subscriptions: {}'.format(', '.join(sorted(set(login['subscriptions']))[:5])))
+    return '; '.join(parts) or None
+
+
+def _discover_azure_cli(files, profiles_out, notes):
+    entry = files.get(AZURE_PROFILE)
+    note = _file_note('~/' + AZURE_PROFILE, entry)
+    if note:
+        notes.append(note)
+    if not entry or 'content' not in entry:
+        return
+    try:
+        logins = parse_azure_profile(entry['content'])
+    except _ParseError:
+        notes.append('~/{} could not be parsed'.format(AZURE_PROFILE))
+        return
+    installed = azure_cli_installed()
+    for tenant in sorted(logins):
+        login = logins[tenant]
+        reason = login['reason'] or (None if installed else AZURE_CLI_MISSING)
+        profiles_out.append(_entry(
+            'azure-cli', tenant, 'azure_cli', usable=reason is None, reason=reason,
+            note=_azure_cli_note(login), file='~/' + AZURE_PROFILE,
+        ))
 
 
 # ---------------------------------------------------------------- discovery
@@ -605,11 +741,8 @@ def discover(user, conn_type):
     if conn_type == 's3':
         _discover_aws(user, home, files, profiles, notes)
     _discover_rclone(conn_type, files, profiles, notes)
-    if conn_type == 'azureblob' and 'content' in (files.get(AZURE_PROFILE) or {}):
-        profiles.append(_entry(
-            'azure-cli', 'az login', 'azure_cli', usable=False, file='~/' + AZURE_PROFILE,
-            reason='Motuz cannot use Azure CLI logins. Use an account key, a SAS URL or an rclone remote.',
-        ))
+    if conn_type == 'azureblob':
+        _discover_azure_cli(files, profiles, notes)
     return {'profiles': profiles, 'notes': notes}
 
 
@@ -618,10 +751,13 @@ def discover(user, conn_type):
 def validate_reference(conn_type, source, name):
     if conn_type not in ('s3', 'azureblob'):
         raise LocalCredentialsError('Only S3 and Azure Blob connections can use local credentials')
-    if source not in SOURCES or (source == 'aws' and conn_type != 's3'):
+    if (source not in SOURCES or (source == 'aws' and conn_type != 's3')
+            or (source == 'azure-cli' and conn_type != 'azureblob')):
         raise LocalCredentialsError('Unknown credential source')
     if not isinstance(name, str) or not PROFILE_NAME_RE.match(name):
         raise LocalCredentialsError('Invalid profile name')
+    if source == 'azure-cli' and not _TENANT_ID.match(name):
+        raise LocalCredentialsError('Invalid Azure tenant id')
 
 
 def resolve(user, conn_type, source, name, *, materialize=True):
@@ -629,8 +765,32 @@ def resolve(user, conn_type, source, name, *, materialize=True):
     Reads the user's files (as the user) and returns (options, env): rclone options for
     the remote (without the RCLONE_CONFIG_<REMOTE>_ prefix) and extra process variables.
     Raises LocalCredentialsError with a message for the user.
+
+    Azure CLI logins ('azure-cli', name = tenant id) have no storage account: the
+    connection's azure_account is added by RcloneConnection._formatCredentials.
     """
     validate_reference(conn_type, source, name)
+
+    if source == 'azure-cli':
+        if not azure_cli_installed():
+            raise LocalCredentialsError('Azure CLI login: {}'.format(AZURE_CLI_MISSING))
+        home, files = read_home_files(user, [AZURE_PROFILE])
+        entry = files.get(AZURE_PROFILE) or {}
+        if 'content' not in entry:
+            if entry.get('error', 'missing') != 'missing':
+                raise LocalCredentialsError('~/{}: {}'.format(AZURE_PROFILE, entry['error']))
+            raise LocalCredentialsError('No Azure CLI login in your home directory: run `az login` on a cluster node')
+        try:
+            logins = parse_azure_profile(entry['content'])
+        except _ParseError:
+            raise LocalCredentialsError('~/{} could not be parsed'.format(AZURE_PROFILE))
+        login = logins.get(name.lower())
+        if login is None:
+            raise LocalCredentialsError(
+                'No Azure CLI login for tenant {0}: run `az login --tenant {0}` on a cluster node'.format(name))
+        if login['reason']:
+            raise LocalCredentialsError('Azure CLI login for tenant {}: {}'.format(name, login['reason']))
+        return {'use_az': 'true', 'tenant': name.lower()}, azure_cli_env(home)
 
     if source == 'aws':
         home, files = read_home_files(user, [AWS_CREDENTIALS, AWS_CONFIG])
@@ -679,7 +839,7 @@ def resolve(user, conn_type, source, name, *, materialize=True):
         return options, env
 
     # rclone remote
-    _, files = read_home_files(user, [RCLONE_CONF, RCLONE_CONF_LEGACY])
+    home, files = read_home_files(user, [RCLONE_CONF, RCLONE_CONF_LEGACY])
     entry, label = _rclone_file(files)
     if not entry or 'content' not in entry:
         if entry and entry.get('error') != 'missing':
@@ -696,7 +856,8 @@ def resolve(user, conn_type, source, name, *, materialize=True):
         raise LocalCredentialsError('rclone remote "{}": {}'.format(name, e.reason))
     if classified is None:
         raise LocalCredentialsError('rclone remote "{}" ({}) not found in your home directory'.format(name, conn_type))
-    return dict(classified[1]), {}
+    kind, options = classified
+    return dict(options), (azure_cli_env(home) if kind == 'azure_cli' else {})
 
 
 def write_sso_config(content):

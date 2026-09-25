@@ -9,6 +9,9 @@ class RevokedToken(db.Model):
     type = db.Column(db.String, nullable=False)
     identity = db.Column(db.String, nullable=False)
     exp = db.Column(db.Integer, nullable=False)
+    # A rotated refresh token still works until then (tabs refreshing concurrently).
+    # NULL: revoked now. type 'session' rows hold a session id (JWT claim sid) as jti.
+    grace_until = db.Column(db.Integer, nullable=True)
 
     def __repr__(self):
         return '<jti: {}>'.format(self.jti)

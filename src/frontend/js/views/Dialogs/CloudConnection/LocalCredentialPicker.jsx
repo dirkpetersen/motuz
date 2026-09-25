@@ -85,7 +85,15 @@ class LocalCredentialPicker extends React.Component {
                             ))}
                         </select>
                     }
-                    {selected &&
+                    {selected && selected.source === 'azure-cli' &&
+                        <p className='card-text text-muted small mt-2 mb-0'>
+                            Motuz runs the Azure CLI as you (<tt>az account get-access-token</tt>) each time
+                            it uses this connection. Your login stays in <tt>~/.azure</tt>; when it expires,
+                            run <tt>az login</tt> again on a cluster node.
+                            {selected.note && <React.Fragment><br/>{selected.note}</React.Fragment>}
+                        </p>
+                    }
+                    {selected && selected.source !== 'azure-cli' &&
                         <p className='card-text text-muted small mt-2 mb-0'>
                             Motuz reads <tt>{selected.file}</tt> as you each time it uses this connection,
                             so updated keys are picked up. The keys are not copied into Motuz.

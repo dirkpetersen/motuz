@@ -9,6 +9,9 @@ services:
         build:
             context: .
             dockerfile: deployment/docker/app/Dockerfile
+            args:
+                # Azure CLI for Azure CLI logins (+590 MB), see the Dockerfile
+                INSTALL_AZURE_CLI: ${MOTUZ_INSTALL_AZURE_CLI:-false}
 
     celery:
         build:
