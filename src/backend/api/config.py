@@ -66,6 +66,18 @@ class Config:
     ONEDRIVE_AUTH_URL = os.environ.get('MOTUZ_ONEDRIVE_AUTH_URL', 'https://login.microsoftonline.com/common/oauth2/v2.0/authorize')
     GRAPH_URL = os.environ.get('MOTUZ_GRAPH_URL', 'https://graph.microsoft.com/v1.0')
 
+    # Google Drive: token broker upstream and "Sign in with Google", same rules as
+    # OneDrive. Default is rclone's public Drive app (redirect http://127.0.0.1:53682/,
+    # users paste the address); an own OAuth client with the redirect URI
+    # https://<motuz host>/api/oauth/gdrive/callback completes by itself (README,
+    # "Google Drive"). The secret is the docker secret MOTUZ_GDRIVE_CLIENT_SECRET.
+    GDRIVE_TOKEN_URL = os.environ.get('MOTUZ_GDRIVE_TOKEN_URL', 'https://oauth2.googleapis.com/token')
+    GDRIVE_CLIENT_ID = _optional_env('MOTUZ_GDRIVE_CLIENT_ID')
+    GDRIVE_CLIENT_SECRET = _optional_env('MOTUZ_GDRIVE_CLIENT_SECRET')
+    GDRIVE_REDIRECT_URI = _optional_env('MOTUZ_GDRIVE_REDIRECT_URI')
+    GDRIVE_AUTH_URL = os.environ.get('MOTUZ_GDRIVE_AUTH_URL', 'https://accounts.google.com/o/oauth2/v2/auth')
+    GDRIVE_API_URL = os.environ.get('MOTUZ_GDRIVE_API_URL', 'https://www.googleapis.com/drive/v3')
+
     # Built frontend (`npm run build`), served by views/frontend_views.py. The app image
     # puts it at /app/build, which is also <repository>/build in development.
     FRONTEND_DIR = os.environ.get('MOTUZ_FRONTEND_DIR', os.path.abspath(os.path.join(basedir, '..', '..', '..', 'build')))

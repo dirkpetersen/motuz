@@ -14,12 +14,16 @@ x-variables:
         MOTUZ_SMTP_USER:            # from ./.env
         MOTUZ_SMTP_REQUIRE_SSL:     # from ./.env
         MOTUZ_ALERT_ADDRESS:        # from ./.env
-    - &onedrive-environment
+    - &oauth-environment
         # Own OneDrive app registration (README, "OneDrive: own app registration"). Empty
         # means rclone's public app. The client secret is the MOTUZ_ONEDRIVE_CLIENT_SECRET
         # docker secret, given to the app only.
         MOTUZ_ONEDRIVE_CLIENT_ID: ${MOTUZ_ONEDRIVE_CLIENT_ID:-}
         MOTUZ_ONEDRIVE_REDIRECT_URI: ${MOTUZ_ONEDRIVE_REDIRECT_URI:-}
+        # Own Google OAuth client (README, "Google Drive"), the same way. The secret is
+        # the MOTUZ_GDRIVE_CLIENT_SECRET docker secret.
+        MOTUZ_GDRIVE_CLIENT_ID: ${MOTUZ_GDRIVE_CLIENT_ID:-}
+        MOTUZ_GDRIVE_REDIRECT_URI: ${MOTUZ_GDRIVE_REDIRECT_URI:-}
     - &shared-volumes
         volumes:
             # Using system users for authentication
@@ -45,6 +49,9 @@ secrets:
     # refuses to start with a missing secret file.
     MOTUZ_ONEDRIVE_CLIENT_SECRET:
         file: ${MOTUZ_DOCKER_ROOT:-/docker}/secrets/MOTUZ_ONEDRIVE_CLIENT_SECRET
+    # Optional, empty unless an own Google OAuth client is configured (same as above)
+    MOTUZ_GDRIVE_CLIENT_SECRET:
+        file: ${MOTUZ_DOCKER_ROOT:-/docker}/secrets/MOTUZ_GDRIVE_CLIENT_SECRET
 
 
 services:
@@ -99,7 +106,7 @@ services:
         network_mode: host
         <<: *shared-volumes
         environment:
-            <<: [*database-environment, *smtp-environment, *onedrive-environment]
+            <<: [*database-environment, *smtp-environment, *oauth-environment]
         secrets:
             - MOTUZ_DATABASE_PASSWORD
             - MOTUZ_FLASK_SECRET_KEY
@@ -107,6 +114,7 @@ services:
             # Only the app signs in and refreshes tokens (token broker); celery never
             # needs it
             - MOTUZ_ONEDRIVE_CLIENT_SECRET
+            - MOTUZ_GDRIVE_CLIENT_SECRET
 
 
     celery:
@@ -115,7 +123,7 @@ services:
         network_mode: host
         <<: *shared-volumes
         environment:
-            <<: [*database-environment, *smtp-environment, *onedrive-environment]
+            <<: [*database-environment, *smtp-environment, *oauth-environment]
         secrets:
             - MOTUZ_DATABASE_PASSWORD
             - MOTUZ_FLASK_SECRET_KEY

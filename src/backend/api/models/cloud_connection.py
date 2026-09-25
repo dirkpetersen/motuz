@@ -71,6 +71,14 @@ class CloudConnection(db.Model):
     # Microsoft". NULL (pasted rclone token) means rclone's app. Server controlled.
     onedrive_client_id = db.Column(db.String, nullable=True)
 
+    # Google Drive (rclone backend "drive", scope "drive")
+    gdrive_token = db.Column(db.String, nullable=True)
+    gdrive_root_folder_id = db.Column(db.String, nullable=True)
+    gdrive_team_drive = db.Column(db.String, nullable=True) # Shared drive id
+    # Client id of the OAuth client that issued gdrive_token, set by "Sign in with
+    # Google". NULL (pasted rclone token) means rclone's app. Server controlled.
+    gdrive_client_id = db.Column(db.String, nullable=True)
+
     # WebDAV
     webdav_url = db.Column(db.String, nullable=True)
     webdav_user = db.Column(db.String, nullable=True)

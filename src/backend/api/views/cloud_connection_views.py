@@ -73,6 +73,12 @@ dto = api.model('connection', {
     # App registration that issued the token (null: rclone's app). Set by the server only.
     'onedrive_client_id': OptionalString(readonly=True, example='b15665d9-eda6-4092-8539-0eec376afd59'),
 
+    'gdrive_token': PrivateOptionalString(required=False, example='{"access_token":"ya29.youraccesstoken","token_type":"Bearer","refresh_token":"1//yourrefreshtoken","expiry":"2026-09-26T22:39:52.486512262+02:00"}'),
+    'gdrive_root_folder_id': OptionalString(required=False, example='1AbCdEfGhIjKlMnOpQrStUvWxYz012345'),
+    'gdrive_team_drive': OptionalString(required=False, example='0ABCDEFabcdefghijkl'),
+    # OAuth client that issued the token (null: rclone's app). Set by the server only.
+    'gdrive_client_id': OptionalString(readonly=True, example='202264815644.apps.googleusercontent.com'),
+
     'webdav_url': fields.String(required=False, example='https://example.com/remote.php/webdav/'),
     'webdav_user': fields.String(required=False, example='email@example.com'),
     'webdav_pass': PrivateOptionalString(required=False, example='p@ssw0rd'),

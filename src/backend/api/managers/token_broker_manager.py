@@ -13,10 +13,12 @@ returns the cached access token if it is still fresh, and otherwise refreshes it
 upstream with the real refresh token and stores the result. The real refresh
 token never leaves the server, and concurrent jobs share one refresh.
 
-OneDrive refresh tokens only work with the app registration that issued them
-(CloudConnection.onedrive_client_id, see upstream_client_credentials): rclone's
-public app, whose credentials rclone sends along, or Motuz's own app, whose
-secret the broker adds and which rclone never gets.
+Refresh tokens only work with the OAuth client (app registration) that issued
+them, which the connection remembers (CloudConnection.onedrive_client_id /
+gdrive_client_id, see upstream_client_credentials): rclone's public app, whose
+credentials rclone sends along, or Motuz's own app, whose secret the broker adds
+and which rclone never gets. The per-provider settings are the Provider
+definitions in oauth_manager (OneDrive, Google Drive).
 
 The endpoint is registered outside of /api and answers only on the socket that
 TOKEN_BROKER_URL points to (uWSGI's loopback HTTP socket 127.0.0.1:5001); Traefik
@@ -41,17 +43,15 @@ from . import oauth_manager
 
 # Connection type -> (token column, config key of the upstream token URL)
 BROKERED_TYPES = {
-    'onedrive': ('onedrive_token', 'ONEDRIVE_TOKEN_URL'),
+    connection_type: (p.token_column, p.token_url_key)
+    for connection_type, p in oauth_manager.PROVIDERS_BY_CONNECTION_TYPE.items()
 }
 
 # Hand out a cached access token only if it stays valid at least this long
 _MIN_REMAINING = datetime.timedelta(minutes=5)
 _UPSTREAM_TIMEOUT = 30
 
-APP_MISMATCH_DESCRIPTION = (
-    'This OneDrive connection was created with a different app registration than '
-    'the one Motuz uses now. Sign in with Microsoft again.'
-)
+APP_MISMATCH_DESCRIPTION = oauth_manager.ONEDRIVE.app_mismatch_description
 
 
 class AppRegistrationMismatch(Exception):
@@ -60,10 +60,11 @@ class AppRegistrationMismatch(Exception):
 
 def upstream_client_credentials(stored_client_id, forwarded, own_app, rclone_client_id):
     """
-    Client credentials to refresh a OneDrive token with. A refresh token is only
-    accepted from the app it was issued to, which the connection remembers.
+    Client credentials to refresh a token with, the same rules for every provider. A
+    refresh token is only accepted from the app it was issued to, which the
+    connection remembers.
 
-    @param stored_client_id: CloudConnection.onedrive_client_id; None for connections
+    @param stored_client_id: CloudConnection.<provider>_client_id; None for connections
                              created from a pasted rclone token, i.e. rclone's app
     @param forwarded: (client_id, client_secret) that rclone sent; rclone always uses
                       its own public app
@@ -80,6 +81,23 @@ def upstream_client_credentials(stored_client_id, forwarded, own_app, rclone_cli
         # The own app's secret is added here, on the way upstream; rclone never sees it
         return own_app
     raise AppRegistrationMismatch(stored_client_id)
+
+
+def connection_client_credentials(cloud_connection, forwarded):
+    """
+    upstream_client_credentials for a brokered connection, with the settings of its
+    provider (oauth_manager.PROVIDERS_BY_CONNECTION_TYPE): the column that remembers
+    the issuing client, the configured own app, and rclone's client id.
+    """
+    provider = oauth_manager.PROVIDERS_BY_CONNECTION_TYPE[cloud_connection.type]
+    stored_client_id = getattr(cloud_connection, provider.client_id_column, None)
+    own_app = provider.own_client_credentials() if provider.uses_own_app() else None
+    try:
+        return upstream_client_credentials(stored_client_id, forwarded, own_app, provider.rclone_client_id)
+    except AppRegistrationMismatch:
+        raise AppRegistrationMismatch(
+            "its token was issued to client {}, which is neither rclone's app nor the configured "
+            "{} app ({})".format(stored_client_id, provider.service, own_app[0] if own_app else 'none'))
 
 
 def broker_token(cloud_connection):
@@ -136,21 +154,13 @@ def handle_token_request(form, authorization):
             forwarded[1] or (urllib.parse.unquote_plus(authorization.password) if authorization.password else None),
         )
 
-    if cloud_connection.type == 'onedrive':
-        own_app = oauth_manager.own_client_credentials() if oauth_manager.uses_own_app() else None
-        try:
-            client_id, client_secret = upstream_client_credentials(
-                cloud_connection.onedrive_client_id, forwarded, own_app, oauth_manager.RCLONE_CLIENT_ID,
-            )
-        except AppRegistrationMismatch:
-            db.session.rollback()
-            logging.error("Token refresh for cloud connection {} refused: its token was issued to client {}, "
-                "which is neither rclone's app nor the configured app registration ({})".format(
-                cloud_connection.id, cloud_connection.onedrive_client_id, own_app[0] if own_app else 'none',
-            ))
-            return 400, {'error': 'invalid_grant', 'error_description': APP_MISMATCH_DESCRIPTION}
-    else:
-        client_id, client_secret = forwarded
+    try:
+        client_id, client_secret = connection_client_credentials(cloud_connection, forwarded)
+    except AppRegistrationMismatch as e:
+        db.session.rollback()
+        logging.error("Token refresh for cloud connection {} refused: {}".format(cloud_connection.id, e))
+        provider = oauth_manager.PROVIDERS_BY_CONNECTION_TYPE[cloud_connection.type]
+        return 400, {'error': 'invalid_grant', 'error_description': provider.app_mismatch_description}
 
     token_column, token_url_key = BROKERED_TYPES[cloud_connection.type]
     token = _parse_token(getattr(cloud_connection, token_column)) or {}
@@ -195,7 +205,9 @@ def handle_token_request(form, authorization):
         'token_type': body.get('token_type', token.get('token_type', 'Bearer')),
         'expiry': expiry.isoformat().replace('+00:00', 'Z'),
     })
-    if body.get('refresh_token'): # Rotated refresh token
+    # Microsoft rotates refresh tokens. Google's refresh responses usually have no
+    # refresh_token, which keeps the stored one.
+    if body.get('refresh_token'):
         token['refresh_token'] = body['refresh_token']
     setattr(cloud_connection, token_column, json.dumps(token))
     db.session.commit()
