@@ -1,0 +1,9 @@
+{
+  "name": "motuz-e2e-ui",
+  "private": true,
+  "description": "Playwright UI checks of the Motuz e2e stack (run by test/e2e/run.sh)",
+  "type": "module",
+  "dependencies": {
+    "playwright": "1.58.2"
+  }
+}

@@ -40,6 +40,7 @@
 5. [Developer Installation](#developer-installation)
     1. [Initialize](#initialize)
     2. [Start](#start)
+    3. [Tests](#tests)
 6. [Development Options](#development-options)
 7. [Examples](#examples)
     1. [How to use the API](#how-to-use-the-api)
@@ -533,6 +534,32 @@ postgresql://your_user:your_password@your_host.com:5432/your_database_name
 ```
 
 6. See result at http://localhost:8080/
+
+### Tests
+
+Backend unit tests (no database needed):
+
+```bash
+./bin/ci/backend_unittest.sh
+```
+
+End-to-end tests build the Docker images, start a production-like stack (Traefik on ports
+80/443, test users `alice`/`bob`, a fake Microsoft sign-in and Graph, Azurite), run all
+suites (API, token broker, OneDrive sign-in, Traefik, credentials from the home directory,
+UI with playwright) and remove the stack again. Nothing else may use ports 80, 443, 5000,
+5001, 5432, 5672, 5999 or 10000, so do not run them on a Motuz server.
+
+```bash
+test/e2e/run.sh                     # everything
+test/e2e/run.sh --no-build broker   # a single suite with the existing images
+test/e2e/run.sh --keep              # leave the stack running for debugging (--down removes it)
+```
+
+The UI suite runs when Node and a playwright chromium are available
+(`cd test/e2e/ui && npm ci && npx playwright install chromium`). Checks against a real S3
+bucket run only with `MOTUZ_E2E_AWS_PROFILE` and `MOTUZ_E2E_AWS_BUCKET` set. GitHub Actions
+(`.github/workflows/ci.yml`) runs the unit tests, the frontend build and the end-to-end
+tests on every push and pull request.
 
 ## Development Options
 

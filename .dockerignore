@@ -15,3 +15,8 @@ build/
 
 # Databases
 **/*.sqlite3
+
+# End-to-end test state and logs
+test/e2e/.work/
+test/e2e/.env
+test/e2e/logs/
