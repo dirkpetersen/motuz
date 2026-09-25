@@ -32,6 +32,7 @@ Tests (unittest, discovered from `test/backend/`, run with cwd `src/backend` so 
 ./bin/ci/backend_unittest.sh                      # all backend tests (python manage.py test)
 cd src/backend && python -m unittest discover -s ../../test/backend -p 'test_rclone_connection.py' -k test_allowlist   # single test
 cd src/backend/api/utils && python -m unittest file_utils_test   # legacy test next to the code, not picked up by manage.py test
+./bin/ci/frontend_unittest.sh                     # node --test test/frontend/*.mjs: plain-JS helpers only (e.g. utils/parentDirectory.js), not JSX
 ```
 
 Lint: `pylint` using `.pylintrc` (no npm lint script / eslint config).

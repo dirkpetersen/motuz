@@ -4,6 +4,7 @@ import upath from 'upath';
 
 import PaneFile from 'views/App/Pane/PaneFile.jsx'
 import {isCopyableFile} from 'managers/paneManager.jsx'
+import {parentDirectory} from 'utils/parentDirectory.js'
 
 // Drag and drop between panes. The payload ({side}) is only readable on drop,
 // so the source side is also encoded in a second type, which dragover can see.
@@ -195,6 +196,7 @@ class Pane extends React.Component {
             if (dropTarget === null) {
                 return;
             }
+            // '..' is resolved to the parent directory by showDropCopyJobDialog
             const dstSubdir = dropTarget === DROP_ON_PANE ? null : this.props.files[dropTarget].name
             this.props.onDropFiles(srcSide, this.props.side, dstSubdir)
         } else if (types.includes('Files')) {
@@ -214,6 +216,11 @@ class Pane extends React.Component {
         if (row) {
             const index = Number(row.getAttribute('data-file-index'))
             const file = this.props.files[index]
+            if (file && file.name === '..' && file.type === 'dir') {
+                // The parent folder, also from the same pane (copies one level up).
+                // Not a target at "/" or at the root of a bucket.
+                return parentDirectory(this.props.pane.path, this.props.pane.host) === null ? null : index;
+            }
             const isFolder = isCopyableFile(file) && file.type === 'dir'
             // Within the same pane, a folder that is being dragged is not a target
             if (isFolder && !(isSameSide && this.isSelected(index))) {
