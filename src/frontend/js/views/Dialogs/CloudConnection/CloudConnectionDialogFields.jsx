@@ -654,12 +654,52 @@ class CloudConnectionDialogFields extends React.Component {
     _renderOnedriveSection() {
         return (
             <React.Fragment>
+                <details open={!this.props.isSanitized}>
+                    <summary className='text-primary h5 mt-2 mb-2'>
+                        How to get these values
+                    </summary>
+
+                    <ol>
+                        <li className='mb-1'>
+                            On your own computer (it needs a web browser), install
+                            {' '}<a href='https://rclone.org/install/' target='_blank' rel='noopener noreferrer'>rclone</a>{' '}
+                            and run
+                            <pre className='mb-1'>rclone config</pre>
+                        </li>
+                        <li className='mb-1'>
+                            Answer: <tt>n</tt> (new remote), name <tt>onedrive</tt>, storage <tt>onedrive</tt>.
+                            Leave <tt>client_id</tt> and <tt>client_secret</tt> empty, region <tt>1</tt> (global),
+                            press Enter for any other question and <tt>n</tt> for advanced config.
+                        </li>
+                        <li className='mb-1'>
+                            Answer <tt>y</tt> to authenticate in the web browser and sign in with your
+                            university account.
+                        </li>
+                        <li className='mb-1'>
+                            Choose <i>OneDrive Personal or Business</i> (or a SharePoint site), pick your drive,
+                            confirm with <tt>y</tt>, keep the remote with <tt>y</tt> and quit with <tt>q</tt>.
+                        </li>
+                        <li className='mb-1'>
+                            Show the values to paste below:
+                            <pre className='mb-1'>rclone config show onedrive</pre>
+                            It prints <tt>drive_id</tt>, <tt>drive_type</tt> and a <tt>token</tt> line.
+                            Paste everything after <tt>token = </tt>, from <tt>{'{'}</tt> to <tt>{'}'}</tt>,
+                            including the <tt>refresh_token</tt>.
+                        </li>
+                    </ol>
+                    <p className='text-muted'>
+                        Motuz keeps the token refreshed, so it only needs to be pasted once. If the sign-in
+                        page asks for admin approval, your institution does not allow rclone yet.
+                    </p>
+                </details>
+
                 <CloudConnectionField
                     label='Drive ID'
                     input={{
                         name: 'onedrive_drive_id',
                         defaultValue: this.props.data.onedrive_drive_id,
                         required: true,
+                        placeholder: 'drive_id, e.g. b!AbCd...',
                     }}
                     error={this.props.errors.onedrive_drive_id}
                     isValid={this.props.verifySuccess}
@@ -667,14 +707,19 @@ class CloudConnectionDialogFields extends React.Component {
 
                 <CloudConnectionField
                     label='Drive Type'
-                    input={{
-                        name: 'onedrive_drive_type',
-                        defaultValue: this.props.data.onedrive_drive_type,
-                        required: true,
-                    }}
+                    input={{required: true}}
                     error={this.props.errors.onedrive_drive_type}
-                    isValid={this.props.verifySuccess}
-                />
+                >
+                    <select
+                        className="form-control"
+                        name="onedrive_drive_type"
+                        defaultValue={this.props.data.onedrive_drive_type || 'business'}
+                    >
+                        <option value='business'>business (OneDrive for work or school)</option>
+                        <option value='personal'>personal (OneDrive Personal)</option>
+                        <option value='documentLibrary'>documentLibrary (SharePoint)</option>
+                    </select>
+                </CloudConnectionField>
 
                 <h5 className='text-primary mt-5 mb-2'>Credentials</h5>
 
@@ -686,51 +731,14 @@ class CloudConnectionDialogFields extends React.Component {
                         // When editing, the stored token is kept unless a new one is pasted
                         required: !this.props.isSanitized,
                         type: 'password',
+                        placeholder: this.props.isSanitized
+                            ? 'Leave empty to keep the stored token'
+                            : '{"access_token":"...","refresh_token":"...",...}',
                     }}
                     error={this.props.errors.onedrive_token}
                     isValid={this.props.verifySuccess}
                     isSanitized={this.props.isSanitized}
                 />
-
-
-                <details>
-                    <summary className='text-primary h5 mt-5 mb-2'>
-                        Instructions
-                    </summary>
-
-                    <ul>
-                        <li className='mb-1'>
-                            Open a terminal
-                        </li>
-                        <li className='mb-1'>
-                            Paste the following command into the terminal
-                        </li>
-                        <li className='mb-1'>
-                            <pre className='mb-1'>
-                                rclone config
-                            </pre>
-                        </li>
-                        <li className='mb-1'>
-                            Select new -> give any name -> OneDrive
-                        </li>
-                        <li className='mb-1'>
-                            Leave <tt>client_id</tt> and <tt>client_secret</tt> blank, no advanced configs
-                        </li>
-                        <li className='mb-1'>
-                            Select <tt>yes</tt> for auto config, then follow instructions
-                        </li>
-                        <li className='mb-1'>
-                            Open <tt>~/.config/rclone/rclone.conf</tt>
-                        </li>
-                        <li className='mb-1'>
-                            Find the necessary information into the corresponding section
-                        </li>
-                        <li className='mb-1'>
-                            Paste the complete <tt>token</tt> value, including its <tt>refresh_token</tt>.
-                            Motuz keeps the token refreshed, so it only needs to be pasted once.
-                        </li>
-                    </ul>
-                </details>
             </React.Fragment>
         )
     }
