@@ -13,17 +13,27 @@ class PaneFile extends React.Component {
     render() {
         const {type, name, size, useSiUnits} = this.props;
 
+        // Both grid cells of the row share the handlers, so the row can be
+        // clicked, dragged and dropped onto from either cell.
+        const rowProps = {
+            'data-file-index': this.props.index,
+            draggable: this.props.draggable,
+            onClick: event => this.props.onClick(event),
+            onDoubleClick: event => this.props.onDoubleClick(event),
+            onMouseDown: event => this.props.onMouseDown(event),
+            onDragStart: event => this.props.onDragStart(event),
+        }
+
         return (
             <React.Fragment>
                 <div
                     className={classnames({
                         'grid-file-row': true,
                         'active': this.props.active,
+                        'drop-target': this.props.dropTarget,
                     })}
                     style={{paddingLeft: "10px"}}
-                    onClick={event => this.props.onClick(event)}
-                    onDoubleClick={event => this.props.onDoubleClick(event)}
-                    onMouseDown={event => this.props.onMouseDown(event)}
+                    {...rowProps}
                 >
                     <Icon
                         name={type === 'dir' ? 'file-directory' : 'file'}
@@ -36,11 +46,10 @@ class PaneFile extends React.Component {
                         'text-right': true,
                         'grid-file-row': true,
                         'active': this.props.active,
+                        'drop-target': this.props.dropTarget,
                         'pr-2': true,
                     })}
-                    onClick={event => this.props.onClick(event)}
-                    onDoubleClick={event => this.props.onDoubleClick(event)}
-                    onMouseDown={event => this.props.onMouseDown(event)}
+                    {...rowProps}
                 >
                     <em>
                         {type === 'dir' ? 'Folder' : formatBytes(size, useSiUnits)}
@@ -56,13 +65,17 @@ class PaneFile extends React.Component {
 }
 
 PaneFile.defaultProps = {
+    index: 0,
     type: 'dir',
     name: '',
     size: 0,
     useSiUnits: false,
+    draggable: false,
+    dropTarget: false,
     onClick: event => {},
     onDoubleClick: event => {},
     onMouseDown: event => {},
+    onDragStart: event => {},
 }
 
 export default PaneFile;

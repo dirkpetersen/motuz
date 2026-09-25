@@ -7,6 +7,7 @@ import {
     setCurrentPane,
     getCurrentFiles,
     setCurrentFiles,
+    isCopyableFile,
 } from 'managers/paneManager.jsx'
 
 export const SHOW_NEW_COPY_JOB_DIALOG = '@@dialog/SHOW_NEW_COPY_JOB_DIALOG';
@@ -43,43 +44,91 @@ export const showNewCopyJobDialog = (data) => {
         const state = getState();
 
         const srcSide = getSide(state.pane);
-        const srcPane = getCurrentPane(state.pane, srcSide);
-        const srcFiles = getCurrentFiles(state.pane, srcSide);
-
         const dstSide = getOtherSide(srcSide);
-        const dstPane = getCurrentPane(state.pane, dstSide)
 
-        const srcResourcePaths = []
-        const dstResourcePaths = []
-
-        for (let key in srcPane.fileMultiFocusIndexes) {
-            const srcFile = srcFiles[Number(key)];
-            // Skip the parent directory and placeholder rows (Loading..., ERROR), which have no type
-            if (!srcFile || !srcFile.type || srcFile.name === '..') {
-                continue;
-            }
-            const srcResourceName = srcFile.name;
-            const srcResourcePath = upath.join(srcPane.path, srcResourceName)
-            const dstResourcePath = upath.join(dstPane.path, srcResourceName)
-
-            srcResourcePaths.push(srcResourcePath)
-            dstResourcePaths.push(dstResourcePath)
-        }
-
-        if (srcResourcePaths.length === 0) {
+        const data = buildCopyJobData(state.pane, srcSide, dstSide);
+        if (data === null) {
             return; // Nothing copyable selected
-        }
-
-        const data = {
-            source_cloud: srcPane.host,
-            source_paths: srcResourcePaths,
-            destination_cloud: dstPane.host,
-            destination_paths: dstResourcePaths,
         }
 
         dispatch(_showNewCopyJobDialog(data))
     }
 };
+
+/**
+ * Open the New Copy Job dialog for a drag and drop of the selection of `srcSide`
+ * onto the pane `dstSide`, or onto the folder `dstSubdir` in that pane.
+ *
+ * Dropping onto the pane it came from is only allowed onto a folder that is not
+ * itself part of the dragged selection.
+ */
+export const showDropCopyJobDialog = (srcSide, dstSide, dstSubdir=null) => {
+    return async (dispatch, getState) => {
+        const state = getState();
+
+        if (srcSide === dstSide) {
+            if (!dstSubdir) {
+                return; // Copying a selection onto itself
+            }
+            const srcPane = getCurrentPane(state.pane, srcSide);
+            const srcFiles = getCurrentFiles(state.pane, srcSide);
+            const isSubdirDragged = Object.keys(srcPane.fileMultiFocusIndexes).some(key => {
+                const srcFile = srcFiles[Number(key)];
+                return srcFile && srcFile.name === dstSubdir;
+            });
+            if (isSubdirDragged) {
+                return; // Copying a folder into itself
+            }
+        }
+
+        const data = buildCopyJobData(state.pane, srcSide, dstSide, dstSubdir);
+        if (data === null) {
+            return; // Nothing copyable selected
+        }
+
+        dispatch(_showNewCopyJobDialog(data))
+    }
+};
+
+/**
+ * Build the New Copy Job dialog data for the selected files of `srcSide`,
+ * copied into the current path of `dstSide` (or its subdirectory `dstSubdir`).
+ * Returns null if nothing copyable is selected.
+ */
+function buildCopyJobData(paneState, srcSide, dstSide, dstSubdir=null) {
+    const srcPane = getCurrentPane(paneState, srcSide);
+    const srcFiles = getCurrentFiles(paneState, srcSide);
+    const dstPane = getCurrentPane(paneState, dstSide);
+
+    const dstDirectory = dstSubdir ? upath.join(dstPane.path, dstSubdir) : dstPane.path;
+
+    const srcResourcePaths = []
+    const dstResourcePaths = []
+
+    for (let key in srcPane.fileMultiFocusIndexes) {
+        const srcFile = srcFiles[Number(key)];
+        if (!isCopyableFile(srcFile)) {
+            continue;
+        }
+        const srcResourceName = srcFile.name;
+        const srcResourcePath = upath.join(srcPane.path, srcResourceName)
+        const dstResourcePath = upath.join(dstDirectory, srcResourceName)
+
+        srcResourcePaths.push(srcResourcePath)
+        dstResourcePaths.push(dstResourcePath)
+    }
+
+    if (srcResourcePaths.length === 0) {
+        return null;
+    }
+
+    return {
+        source_cloud: srcPane.host,
+        source_paths: srcResourcePaths,
+        destination_cloud: dstPane.host,
+        destination_paths: dstResourcePaths,
+    }
+}
 
 export const _showNewCopyJobDialog = (data) => ({
     type: SHOW_NEW_COPY_JOB_DIALOG,

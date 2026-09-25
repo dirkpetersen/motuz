@@ -20,6 +20,14 @@ export function getOtherSide(side) {
     }
 }
 
+/**
+ * Whether a pane row can be copied. The parent directory (..) and the
+ * placeholder rows (Loading..., ERROR), which have no type, cannot.
+ */
+export function isCopyableFile(file) {
+    return Boolean(file && file.type && file.name !== '..');
+}
+
 export function getCurrentPane(state, side=null) {
     if (!side) {
         side = getSide(state);
