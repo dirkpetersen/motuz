@@ -380,6 +380,22 @@ class CloudConnectionDialogFields extends React.Component {
                     error={this.props.errors.bucket}
                     isValid={this.props.verifySuccess}
                 />
+                {profile.source === 'azure-cli' &&
+                    // An Azure CLI login is an identity, not a storage account
+                    <CloudConnectionField
+                        label='Storage Account'
+                        input={{
+                            name: 'azure_account',
+                            defaultValue: this.props.data.azure_account,
+                            required: true,
+                            placeholder: 'mystorageaccount',
+                            pattern: '[a-z0-9]{3,24}',
+                            title: '3 to 24 lower case letters and digits',
+                        }}
+                        error={this.props.errors.azure_account}
+                        isValid={this.props.verifySuccess}
+                    />
+                }
             </React.Fragment>
         )
     }

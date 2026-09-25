@@ -54,11 +54,21 @@ def _apply_profile_rules(cloud_connection):
     A 'profile' connection references credentials in the owner's home directory. Check
     that the owner has a usable profile of that name (read as the owner) and drop any
     stored credentials; every other connection drops the profile reference.
+
+    An Azure CLI login has no storage account, so that connection keeps its
+    azure_account (not a secret).
     """
     if cloud_connection.subtype != 'profile':
         cloud_connection.profile_source = None
         cloud_connection.profile_name = None
         return
+
+    is_azure_cli = cloud_connection.profile_source == 'azure-cli'
+    if is_azure_cli:
+        account = (cloud_connection.azure_account or '').strip()
+        if not local_credentials_utils.STORAGE_ACCOUNT_RE.match(account):
+            raise HTTP_400_BAD_REQUEST('Storage account: 3 to 24 lower case letters and digits')
+        cloud_connection.azure_account = account
 
     try:
         local_credentials_utils.resolve(
@@ -72,7 +82,8 @@ def _apply_profile_rules(cloud_connection):
         raise HTTP_400_BAD_REQUEST(str(e))
 
     for key in _PROFILE_REPLACES[cloud_connection.type]:
-        setattr(cloud_connection, key, None)
+        if not (is_azure_cli and key == 'azure_account'):
+            setattr(cloud_connection, key, None)
 
 
 @token_required

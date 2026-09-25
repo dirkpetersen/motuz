@@ -131,6 +131,25 @@ type = drive
 token = {{"access_token":"x"}}
 """.format(secret=SECRET, azure_key=AZURE_KEY, sas=SAS)
 
+TENANT = '11111111-2222-3333-4444-555555555555'
+TENANT2 = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
+MSI_TENANT = '99999999-8888-7777-6666-555555555555'
+# As written by `az login` (with a BOM). There are no tokens in this file.
+AZURE_PROFILE = '\ufeff' + json.dumps({
+    'installationId': 'x',
+    'subscriptions': [
+        {'id': 's1', 'name': 'Research', 'state': 'Enabled', 'isDefault': True, 'tenantId': TENANT,
+         'environmentName': 'AzureCloud', 'user': {'name': 'alice@example.org', 'type': 'user'}},
+        {'id': 's2', 'name': 'Lab', 'state': 'Enabled', 'isDefault': False, 'tenantId': TENANT,
+         'environmentName': 'AzureCloud', 'user': {'name': 'alice@example.org', 'type': 'user'}},
+        {'id': TENANT2, 'name': 'N/A(tenant level account)', 'state': 'Enabled', 'tenantId': TENANT2,
+         'environmentName': 'AzureCloud', 'user': {'name': 'alice@partner.org', 'type': 'user'}},
+        {'id': 's3', 'name': 'VM', 'state': 'Enabled', 'tenantId': MSI_TENANT, 'environmentName': 'AzureCloud',
+         'user': {'name': 'systemAssignedIdentity', 'type': 'servicePrincipal', 'assignedIdentityInfo': 'MSI'}},
+        {'id': 's4', 'name': 'bad', 'tenantId': '$(touch /tmp/x)', 'user': {'name': 'x'}},
+    ],
+})
+
 ALL_SECRETS = (SECRET, SECRET2, TOKEN, AZURE_KEY, 'SASSIGNATURESECRET', 'EXTERNALIDSECRET',
                'AKIARESEARCH0000', 'CEPHKEY000000000')
 
@@ -290,6 +309,17 @@ class TestRclone(unittest.TestCase):
         kind, options = lc.classify_rclone_remote('azureblob', remotes['azurite'])
         self.assertEqual(options['endpoint'], 'http://127.0.0.1:10000/devstoreaccount1')
 
+    def test_use_az_remote(self):
+        remotes = lc.parse_rclone('[az]\ntype = azureblob\naccount = myacct\nuse_az = true\n'
+                                  'tenant = {}\nkey = {}\n'.format(TENANT, AZURE_KEY))
+        with mock.patch.object(lc, 'azure_cli_installed', return_value=False):
+            with self.assertRaises(lc._Unusable):
+                lc.classify_rclone_remote('azureblob', remotes['az'])
+        with mock.patch.object(lc, 'azure_cli_installed', return_value=True):
+            kind, options = lc.classify_rclone_remote('azureblob', remotes['az'])
+        self.assertEqual(kind, 'azure_cli')
+        self.assertEqual(options, {'account': 'myacct', 'tenant': TENANT, 'use_az': 'true'})
+
     def test_env_auth_is_never_passed(self):
         remotes = lc.parse_rclone('[x]\ntype = s3\naccess_key_id = A\nsecret_access_key = B\nenv_auth = true\n')
         _, options = lc.classify_rclone_remote('s3', remotes['x'])
@@ -338,18 +368,40 @@ class TestDiscover(unittest.TestCase):
         self.assertEqual(result['notes'], [])
 
     def test_azure(self):
-        files = self.files(**{lc.AZURE_PROFILE: '{"subscriptions": []}'})
-        with mock.patch.object(lc, 'read_home_files', fake_reader(files)):
+        files = self.files(**{lc.AZURE_PROFILE: AZURE_PROFILE})
+        with mock.patch.object(lc, 'read_home_files', fake_reader(files)), \
+                mock.patch.object(lc, 'azure_cli_installed', return_value=True):
             result = lc.discover('alice', 'azureblob')
         raw = json.dumps(result)
         for secret in ALL_SECRETS:
             self.assertNotIn(secret, raw)
         by_name = {p['name']: p for p in result['profiles']}
-        self.assertEqual(set(by_name), {'blobkey', 'blobsas', 'blobmsi', 'azurite', 'az login'})
+        self.assertEqual(set(by_name), {'blobkey', 'blobsas', 'blobmsi', 'azurite', TENANT, TENANT2, MSI_TENANT})
         self.assertEqual((by_name['blobkey']['account'], by_name['blobkey']['kind']), ('myacct', 'account_key'))
         self.assertEqual(by_name['blobsas']['account'], 'myacct')
         self.assertFalse(by_name['blobmsi']['usable'])
-        self.assertFalse(by_name['az login']['usable'])
+        login = by_name[TENANT]
+        self.assertEqual((login['source'], login['kind'], login['usable']), ('azure-cli', 'azure_cli', True))
+        self.assertEqual(login['note'], 'signed in as alice@example.org; subscriptions: Lab, Research')
+        self.assertEqual(by_name[TENANT2]['note'], 'signed in as alice@partner.org')
+        self.assertFalse(by_name[MSI_TENANT]['usable'])
+        self.assertIn('managed identity', by_name[MSI_TENANT]['reason'])
+
+    def test_azure_cli_not_installed(self):
+        files = {lc.AZURE_PROFILE: AZURE_PROFILE}
+        with mock.patch.object(lc, 'read_home_files', fake_reader(files)), \
+                mock.patch.object(lc, 'azure_cli_installed', return_value=False):
+            result = lc.discover('alice', 'azureblob')
+        login = {p['name']: p for p in result['profiles']}[TENANT]
+        self.assertFalse(login['usable'])
+        self.assertIn('INSTALL_AZURE_CLI', login['reason'])
+
+    def test_azure_profile_unparseable(self):
+        for content in ('not json', '[]', '{"subscriptions": 1}'):
+            with mock.patch.object(lc, 'read_home_files', fake_reader({lc.AZURE_PROFILE: content})):
+                result = lc.discover('alice', 'azureblob')
+            self.assertEqual(result['profiles'], [])
+            self.assertEqual(result['notes'], ['~/.azure/azureProfile.json could not be parsed'])
 
     def test_unreadable_and_encrypted(self):
         files = {lc.AWS_CREDENTIALS: None, lc.RCLONE_CONF: 'RCLONE_ENCRYPT_V0:\nxyz'}
@@ -414,6 +466,46 @@ class TestResolve(unittest.TestCase):
         with self.assertRaises(lc.LocalCredentialsError) as cm:
             self.resolve({lc.RCLONE_CONF: 'RCLONE_ENCRYPT_V0:\nx'}, 'alice', 's3', 'rclone', 'mys3')
         self.assertIn('encrypted', str(cm.exception))
+
+    def test_azure_cli(self):
+        files = {lc.AZURE_PROFILE: AZURE_PROFILE}
+        with mock.patch.object(lc, 'azure_cli_installed', return_value=True):
+            options, env = self.resolve(files, 'alice', 'azureblob', 'azure-cli', TENANT.upper())
+            self.assertEqual(options, {'use_az': 'true', 'tenant': TENANT})
+            self.assertEqual(env['HOME'], '/home/alice')
+            self.assertEqual(env['AZURE_CONFIG_DIR'], '/home/alice/.azure')
+            # Never the user's az extensions, never the server's managed identity
+            self.assertEqual(env['AZURE_EXTENSION_DEV_SOURCES'], '')
+            self.assertTrue(env['AZURE_EXTENSION_DIR'].startswith('/nonexistent/'))
+            self.assertTrue(env['IDENTITY_ENDPOINT'].startswith('http://127.0.0.1:'))
+            self.assertEqual((env['PYTHONNOUSERSITE'], env['AZURE_CORE_COLLECT_TELEMETRY']), ('1', 'false'))
+
+            cases = (
+                ((MSI_TENANT,), 'managed identity'),
+                (('00000000-0000-0000-0000-000000000000',), 'az login --tenant'),
+                (('not-a-tenant',), 'Invalid Azure tenant id'),
+            )
+            for args, text in cases:
+                with self.assertRaises(lc.LocalCredentialsError) as cm:
+                    self.resolve(files, 'alice', 'azureblob', 'azure-cli', *args)
+                self.assertIn(text, str(cm.exception))
+            with self.assertRaises(lc.LocalCredentialsError) as cm:
+                self.resolve({}, 'alice', 'azureblob', 'azure-cli', TENANT)
+            self.assertIn('run `az login`', str(cm.exception))
+            with self.assertRaises(lc.LocalCredentialsError) as cm:
+                self.resolve(files, 'alice', 's3', 'azure-cli', TENANT)
+            self.assertIn('Unknown credential source', str(cm.exception))
+        with mock.patch.object(lc, 'azure_cli_installed', return_value=False):
+            with self.assertRaises(lc.LocalCredentialsError) as cm:
+                self.resolve(files, 'alice', 'azureblob', 'azure-cli', TENANT)
+            self.assertIn('not installed', str(cm.exception))
+
+    def test_rclone_use_az_gets_the_az_environment(self):
+        conf = '[az]\ntype = azureblob\naccount = myacct\nuse_az = true\n'
+        with mock.patch.object(lc, 'azure_cli_installed', return_value=True):
+            options, env = self.resolve({lc.RCLONE_CONF: conf}, 'alice', 'azureblob', 'rclone', 'az')
+        self.assertEqual(options, {'account': 'myacct', 'use_az': 'true'})
+        self.assertEqual(env['AZURE_CONFIG_DIR'], '/home/alice/.azure')
 
     def test_sso(self):
         files = {
@@ -528,6 +620,20 @@ class TestRcloneFormatCredentials(unittest.TestCase):
             credentials = RcloneConnection()._formatCredentials(self.connection(type='azureblob', profile_source='rclone'), 'current')
         self.assertEqual(credentials, {'RCLONE_CONFIG_CURRENT_TYPE': 'azureblob', 'RCLONE_CONFIG_CURRENT_SAS_URL': SAS})
 
+    def test_profile_azure_cli_adds_the_storage_account(self):
+        resolved = ({'use_az': 'true', 'tenant': TENANT}, {'HOME': '/home/alice', 'AZURE_CONFIG_DIR': '/home/alice/.azure'})
+        connection = self.connection(type='azureblob', profile_source='azure-cli', profile_name=TENANT, azure_account='myacct')
+        with mock.patch.object(lc, 'resolve', return_value=resolved):
+            credentials = RcloneConnection()._formatCredentials(connection, 'src')
+        self.assertEqual(credentials, {
+            'RCLONE_CONFIG_SRC_TYPE': 'azureblob',
+            'RCLONE_CONFIG_SRC_USE_AZ': 'true',
+            'RCLONE_CONFIG_SRC_TENANT': TENANT,
+            'RCLONE_CONFIG_SRC_ACCOUNT': 'myacct',
+            'HOME': '/home/alice',
+            'AZURE_CONFIG_DIR': '/home/alice/.azure',
+        })
+
     def test_verify_reports_profile_errors(self):
         with mock.patch.object(lc, 'resolve', side_effect=lc.LocalCredentialsError('AWS profile "x" not found')):
             result = RcloneConnection().verify(self.connection())
@@ -561,3 +667,30 @@ class TestRcloneFormatCredentials(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class TestProfileRules(unittest.TestCase):
+    """cloud_connection_manager._apply_profile_rules"""
+
+    def apply(self, **fields):
+        from api.managers import cloud_connection_manager
+        connection = SimpleNamespace(**dict(dict(
+            type='azureblob', subtype='profile', owner='alice', profile_source='azure-cli', profile_name=TENANT,
+            azure_account='myacct', azure_key='OLDKEY', azure_sas_url=None), **fields))
+        with mock.patch.object(lc, 'resolve', return_value=({}, {})):
+            cloud_connection_manager._apply_profile_rules(connection)
+        return connection
+
+    def test_azure_cli_keeps_the_account(self):
+        connection = self.apply(azure_account=' myacct ')
+        self.assertEqual((connection.azure_account, connection.azure_key), ('myacct', None))
+
+    def test_azure_cli_needs_a_valid_account(self):
+        from api.exceptions import HTTP_400_BAD_REQUEST
+        for account in (None, '', 'My-Account', 'a' * 25):
+            with self.assertRaises(HTTP_400_BAD_REQUEST):
+                self.apply(azure_account=account)
+
+    def test_other_sources_drop_the_account(self):
+        connection = self.apply(profile_source='rclone', profile_name='blobsas')
+        self.assertIsNone(connection.azure_account)

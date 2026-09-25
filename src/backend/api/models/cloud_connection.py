@@ -18,7 +18,8 @@ class CloudConnection(db.Model):
 
     # subtype 'profile' (S3, Azure Blob): credentials are read from the owner's home
     # directory each time the connection is used (utils/local_credentials.py).
-    # profile_source is 'aws' (~/.aws) or 'rclone' (~/.config/rclone/rclone.conf).
+    # profile_source is 'aws' (~/.aws), 'rclone' (~/.config/rclone/rclone.conf) or
+    # 'azure-cli' (~/.azure, profile_name is the tenant id, azure_account is kept).
     profile_source = db.Column(db.String, nullable=True)
     profile_name = db.Column(db.String, nullable=True)
 
