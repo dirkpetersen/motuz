@@ -107,9 +107,11 @@ def handle_token_request(form, authorization):
     upstream_form = {key: value for key, value in form.items() if value}
     upstream_form['refresh_token'] = token['refresh_token']
     if authorization is not None and authorization.username:
-        upstream_form.setdefault('client_id', authorization.username)
+        # RFC 6749 2.3.1: client id and secret are form-urlencoded inside HTTP basic auth
+        # (Go's oauth2, used by rclone, does this)
+        upstream_form.setdefault('client_id', urllib.parse.unquote_plus(authorization.username))
         if authorization.password:
-            upstream_form.setdefault('client_secret', authorization.password)
+            upstream_form.setdefault('client_secret', urllib.parse.unquote_plus(authorization.password))
     if cloud_connection.type == 'onedrive' and oauth_manager.uses_own_app():
         # Tokens from "Sign in with Microsoft" belong to Motuz's app registration, while
         # rclone only knows its own client; its secret is never handed to rclone
