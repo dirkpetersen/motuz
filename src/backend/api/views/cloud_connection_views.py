@@ -31,6 +31,10 @@ dto = api.model('connection', {
     'subtype': fields.String(required=False, example='key'),
     'bucket': OptionalString(required=False, example='my-bucket-name'),
 
+    # subtype 'profile': credentials from the user's home directory, see /local-credentials/
+    'profile_source': OptionalString(required=False, example='aws'),
+    'profile_name': OptionalString(required=False, example='research'),
+
     's3_access_key_id': fields.String(required=False, example='KJRHJKHWEIUJDSJKDC2J'),
     's3_secret_access_key': PrivateOptionalString(required=False, example='jksldASDLASdak+asdSDASDKjasldkjadASDAasd'),
     's3_session_token': PrivateOptionalString(required=False, example='IQoJdlc3QtMiJHMEUCIH8EUqB/Qk2OEYpzejW6g9gi/'),
@@ -117,6 +121,44 @@ class ConnectionVerify(Resource):
         """
         try:
             return cloud_connection_manager.verify(request.json), 200
+        except HTTP_EXCEPTION as e:
+            api.abort(e.code, e.payload)
+        except Exception as e:
+            logging.exception(e, exc_info=True)
+            api.abort(500, str(e))
+
+
+
+local_credential_dto = api.model('local_credential', {
+    'source': fields.String(example='aws', description="'aws' (~/.aws), 'rclone' (rclone.conf) or 'azure-cli'"),
+    'name': fields.String(example='research'),
+    'kind': fields.String(example='static'),
+    'label': fields.String(example='static keys'),
+    'region': OptionalString(example='us-west-2'),
+    'access_key_id': OptionalString(example='****ABCD', description='Last 4 characters only'),
+    'account': OptionalString(example='mystorageaccount'),
+    'usable': fields.Boolean(example=True),
+    'reason': OptionalString(example=None, description='Why Motuz cannot use it'),
+    'note': OptionalString(example='SSO login valid until 2026-09-24 20:00 UTC'),
+    'file': OptionalString(example='~/.aws/credentials'),
+})
+
+local_credentials_dto = api.model('local_credentials', {
+    'profiles': fields.List(fields.Nested(local_credential_dto)),
+    'notes': fields.List(fields.String),
+})
+
+
+@api.route('/local-credentials/')
+class LocalCredentials(Resource):
+    @api.param('type', "'s3' or 'azureblob'")
+    @api.marshal_with(local_credentials_dto)
+    def get(self):
+        """
+        Credentials found in the logged in user's home directory (no secrets)
+        """
+        try:
+            return cloud_connection_manager.local_credentials(request.args.get('type', 's3')), 200
         except HTTP_EXCEPTION as e:
             api.abort(e.code, e.payload)
         except Exception as e:

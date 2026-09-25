@@ -16,6 +16,12 @@ class CloudConnection(db.Model):
     subtype = db.Column(db.String, nullable=True)
     bucket = db.Column(db.String, nullable=True)
 
+    # subtype 'profile' (S3, Azure Blob): credentials are read from the owner's home
+    # directory each time the connection is used (utils/local_credentials.py).
+    # profile_source is 'aws' (~/.aws) or 'rclone' (~/.config/rclone/rclone.conf).
+    profile_source = db.Column(db.String, nullable=True)
+    profile_name = db.Column(db.String, nullable=True)
+
     # S3 fields
     s3_access_key_id = db.Column(db.String, nullable=True)
     s3_secret_access_key = db.Column(db.String, nullable=True)

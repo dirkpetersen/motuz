@@ -1,4 +1,5 @@
 import OnedriveSignIn from 'views/Dialogs/CloudConnection/OnedriveSignIn.jsx';
+import LocalCredentialPicker, { describeProfile, profileKey } from 'views/Dialogs/CloudConnection/LocalCredentialPicker.jsx';
 import React from 'react';
 import classnames from 'classnames';
 
@@ -135,9 +136,58 @@ class CloudConnectionDialogFields extends React.Component {
 
     }
 
-    _renderS3Section(subtype) {
+    // Credentials from the user's home directory: picked in a new connection, or stored
+    // (subtype 'profile') when editing one
+    _profile() {
+        const data = this.props.data;
+        if (this.props.isSanitized) {
+            return data.subtype === 'profile'
+                ? {source: data.profile_source, name: data.profile_name, label: 'from your home directory'}
+                : null;
+        }
+        return this.state.profile;
+    }
+
+    _renderProfilePicker(type) {
+        if (this.props.isSanitized) {
+            return null;
+        }
+        return (
+            <LocalCredentialPicker
+                type={type}
+                selected={this.state.profile}
+                onSelect={profile => this.setState({profile})}
+            />
+        );
+    }
+
+    _renderProfileInputs(profile) {
         return (
             <React.Fragment>
+                <input type='hidden' name='subtype' value='profile'/>
+                <input type='hidden' name='profile_source' value={profile.source}/>
+                <input type='hidden' name='profile_name' value={profile.name}/>
+                {this.props.isSanitized &&
+                    <div className='row form-group'>
+                        <div className='col-4 text-right control-label'>
+                            <b className='form-label'>Credentials</b>
+                        </div>
+                        <div className='col-8 pt-2'>
+                            {describeProfile(profile)}
+                        </div>
+                    </div>
+                }
+            </React.Fragment>
+        );
+    }
+
+    _renderS3Section(subtype) {
+        const profile = this._profile();
+        const pickedRegion = this.state.profile && this.state.profile.region;
+        return (
+            <React.Fragment>
+                {this._renderProfilePicker('s3')}
+                {profile && this._renderProfileInputs(profile)}
                 <CloudConnectionField
                     label='Bucket Name'
                     input={{
@@ -150,10 +200,11 @@ class CloudConnectionDialogFields extends React.Component {
                     isValid={this.props.verifySuccess}
                 />
                 <CloudConnectionField
+                    key={'region-' + profileKey(this.state.profile)}
                     label='Region'
                     input={{
                         name: 's3_region',
-                        defaultValue: this.props.data.s3_region,
+                        defaultValue: pickedRegion || this.props.data.s3_region,
                         title: "Must be a valid AWS region",
                         // this regex works in python but not js, and it's not futureproof....
                         // pattern: "^(us(-gov)?|ap|ca|cn|eu|sa)-(central|(north|south)?(east|west)?)-\d$",
@@ -172,7 +223,31 @@ class CloudConnectionDialogFields extends React.Component {
                     isValid={this.props.verifySuccess}
                 />
 
+                {!profile && this._renderS3Credentials(subtype)}
 
+                <details>
+                    <summary className='text-primary h5 mt-5 mb-2'>
+                        S3 Compatible Storage
+                    </summary>
+
+                    <CloudConnectionField
+                        label='Endpoint URL'
+                        input={{
+                            name: 's3_endpoint',
+                            defaultValue: this.props.data.s3_endpoint,
+                        }}
+                        error={this.props.errors.s3_endpoint}
+                        isValid={this.props.verifySuccess}
+                    />
+                </details>
+
+            </React.Fragment>
+        )
+    }
+
+    _renderS3Credentials(subtype) {
+        return (
+            <React.Fragment>
                 <div className="row form-group required">
                     <div className="col-4 text-right control-label">
                         <b className='form-label'>S3 Connection Type</b>
@@ -247,28 +322,42 @@ class CloudConnectionDialogFields extends React.Component {
                         isSanitized={this.props.isSanitized}
                     />
                 }
-
-                <details>
-                    <summary className='text-primary h5 mt-5 mb-2'>
-                        S3 Compatible Storage
-                    </summary>
-
-                    <CloudConnectionField
-                        label='Endpoint URL'
-                        input={{
-                            name: 's3_endpoint',
-                            defaultValue: this.props.data.s3_endpoint,
-                        }}
-                        error={this.props.errors.s3_endpoint}
-                        isValid={this.props.verifySuccess}
-                    />
-                </details>
-
             </React.Fragment>
         )
     }
 
     _renderAzureSection(subtype) {
+        const profile = this._profile();
+        return (
+            <React.Fragment>
+                {this._renderProfilePicker('azureblob')}
+                {profile
+                    ? this._renderAzureProfileSubsection(profile)
+                    : this._renderAzureManualSubsection(subtype)
+                }
+            </React.Fragment>
+        )
+    }
+
+    _renderAzureProfileSubsection(profile) {
+        return (
+            <React.Fragment>
+                {this._renderProfileInputs(profile)}
+                <CloudConnectionField
+                    label='Bucket Name'
+                    input={{
+                        name: 'bucket',
+                        defaultValue: this.props.data.bucket,
+                        placeholder: 'container',
+                    }}
+                    error={this.props.errors.bucket}
+                    isValid={this.props.verifySuccess}
+                />
+            </React.Fragment>
+        )
+    }
+
+    _renderAzureManualSubsection(subtype) {
         return (
             <React.Fragment>
                 <div className="row form-group required">
@@ -815,7 +904,7 @@ class CloudConnectionDialogFields extends React.Component {
             subtype = 'key'
         }
 
-        this.setState({type, subtype})
+        this.setState({type, subtype, profile: null})
     }
 
 }
@@ -829,6 +918,7 @@ CloudConnectionDialogFields.defaultProps = {
 CloudConnectionDialogFields.initialState = {
     type: '',
     subtype: '',
+    profile: null, // picked from LocalCredentialPicker
 }
 
 
