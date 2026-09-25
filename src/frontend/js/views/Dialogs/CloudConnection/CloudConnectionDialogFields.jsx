@@ -1,4 +1,5 @@
 import OnedriveSignIn from 'views/Dialogs/CloudConnection/OnedriveSignIn.jsx';
+import GdriveSection from 'views/Dialogs/CloudConnection/GdriveSection.jsx';
 import LocalCredentialPicker, { describeProfile, profileKey } from 'views/Dialogs/CloudConnection/LocalCredentialPicker.jsx';
 import React from 'react';
 import classnames from 'classnames';
@@ -38,6 +39,10 @@ const CONNECTION_TYPES = [
     {
         label: 'Microsoft OneDrive (beta)',
         value: 'onedrive',
+    },
+    {
+        label: 'Google Drive (beta)',
+        value: 'drive',
     },
 ]
 
@@ -130,6 +135,7 @@ class CloudConnectionDialogFields extends React.Component {
                 {type === 'sftp' && this._renderSFTPSection(subtype)}
                 {type === 'dropbox' && this._renderDropboxSection()}
                 {type === 'onedrive' && this._renderOnedriveSection()}
+                {type === 'drive' && this._renderGdriveSection()}
                 {type === 'webdav' && this._renderWebdavSection()}
             </div>
         );
@@ -864,6 +870,18 @@ class CloudConnectionDialogFields extends React.Component {
                     isSanitized={this.props.isSanitized}
                 />
             </React.Fragment>
+        )
+    }
+
+    _renderGdriveSection() {
+        return (
+            <GdriveSection
+                data={this.props.data}
+                errors={this.props.errors}
+                verifySuccess={this.props.verifySuccess}
+                isSanitized={this.props.isSanitized}
+                Field={CloudConnectionField}
+            />
         )
     }
 

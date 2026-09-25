@@ -492,6 +492,28 @@ class RcloneConnection(AbstractConnection):
                 'onedrive_drive_type',
             )
 
+        elif data.type == 'drive': # Google Drive
+            from ..managers.token_broker_manager import broker_token
+            brokered = broker_token(data)
+            if brokered is not None:
+                credentials['{}_TOKEN'.format(prefix)], credentials['{}_TOKEN_URL'.format(prefix)] = brokered
+            else:
+                _addCredential(
+                    '{}_TOKEN'.format(prefix),
+                    'gdrive_token',
+                )
+            # The scope the token was issued for (Sign in with Google, `rclone config`)
+            credentials['{}_SCOPE'.format(prefix)] = 'drive'
+            _addCredential(
+                '{}_ROOT_FOLDER_ID'.format(prefix),
+                'gdrive_root_folder_id',
+            )
+            _addCredential(
+                '{}_TEAM_DRIVE'.format(prefix),
+                'gdrive_team_drive',
+            )
+            credentials.update(_drive_tuning(prefix))
+
         elif data.type == 'webdav':
             _addCredential(
                 '{}_URL'.format(prefix),
@@ -545,12 +567,41 @@ class RcloneConnection(AbstractConnection):
             raise RcloneException(stderr)
 
 
+def _drive_tuning(prefix):
+    """
+    Google Drive settings of a remote, following rclone's Drive documentation:
+    - Google's default quota is 10 API transactions per second per client id, so pace
+      API calls at the documented default of one per 100ms (also --tpslimit below)
+    - larger upload chunks are faster (each is buffered in memory, per transfer; must
+      be a power of 2); the default is 8Mi
+    - Drive allows about 750 GiB of uploads per user and day: fail the job when it is
+      reached instead of retrying for hours
+    """
+    return {
+        '{}_PACER_MIN_SLEEP'.format(prefix): '100ms',
+        '{}_CHUNK_SIZE'.format(prefix): '64Mi',
+        '{}_STOP_ON_UPLOAD_LIMIT'.format(prefix): 'true',
+    }
+
+
+# Transactions per second rclone may make when a remote is of this type
+_TPS_LIMITS = {
+    'onedrive': 10, # Microsoft Graph throttles aggressively (HTTP 429)
+    'drive': 10,    # Google's default quota per client id (rclone docs, "Making your own client_id")
+}
+
+
 def _rate_limit_flags(credentials):
     """
-    Microsoft Graph throttles aggressively (HTTP 429); stay below its limits
+    Stay below the API limits of throttling providers (--tpslimit applies to the
+    whole rclone process, i.e. both remotes of a copy)
     """
-    if any(key.endswith('_TYPE') and value == 'onedrive' for key, value in credentials.items()):
-        return ['--tpslimit', '10']
+    limits = [
+        _TPS_LIMITS[value] for key, value in credentials.items()
+        if key.endswith('_TYPE') and value in _TPS_LIMITS
+    ]
+    if limits:
+        return ['--tpslimit', str(min(limits))]
     return []
 
 
@@ -633,6 +684,12 @@ def should_log_full_credential(key):
         # onedrive
         '_DRIVE_ID',
         '_DRIVE_TYPE',
+        '_CHUNK_SIZE',
+
+        # drive (Google Drive); the token URL is the broker's (ends in '_URL')
+        '_SCOPE',
+        '_PACER_MIN_SLEEP',
+        '_STOP_ON_UPLOAD_LIMIT',
 
         # webdav
         '_URL',
@@ -655,6 +712,10 @@ def should_log_partial_credential(key):
 
         # google cloud storage
         '_CLIENT_ID',
+
+        # drive: rclone treats folder and shared drive ids as sensitive
+        '_ROOT_FOLDER_ID',
+        '_TEAM_DRIVE',
     ]
 
     return any(key.endswith(suffix) for suffix in suffix_allowlist)

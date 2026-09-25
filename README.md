@@ -37,6 +37,7 @@
     8. [Redeploying](#redeploying)
     9. [Migrating from nginx to Traefik](#migrating-from-nginx-to-traefik)
     10. [OneDrive: own app registration](#onedrive-own-app-registration)
+    11. [Google Drive](#google-drive)
 5. [Developer Installation](#developer-installation)
     1. [Initialize](#initialize)
     2. [Start](#start)
@@ -98,6 +99,8 @@ head /dev/urandom | md5sum | awk '{print $1}' > /docker/secrets/MOTUZ_FLASK_SECR
 head /dev/urandom | md5sum | awk '{print $1}' > /docker/secrets/MOTUZ_SMTP_PASSWORD
 # Optional, empty unless you use an own OneDrive app registration
 install -m 600 /dev/null /docker/secrets/MOTUZ_ONEDRIVE_CLIENT_SECRET
+# Optional, empty unless you use an own Google OAuth client
+install -m 600 /dev/null /docker/secrets/MOTUZ_GDRIVE_CLIENT_SECRET
 ```
 
 4. Initialize the database
@@ -456,6 +459,104 @@ with that app:
 The edit dialog of a OneDrive connection shows which app it uses. The client
 secret is only used by the `app` container (sign-in and token refresh); rclone
 never receives it.
+
+
+### Google Drive
+
+Clouds > New connection > *Google Drive (beta)* creates an rclone `drive`
+remote with the `drive` scope (full access to the user's files). My Drive is the
+default; a shared drive (formerly Team Drive) sets rclone's `team_drive`, and an
+optional root folder id starts the connection in a folder. As with OneDrive,
+the token broker keeps the token fresh and rclone never sees the refresh token.
+Jobs use rclone's recommendations for Drive: API calls paced at 10 per second
+(`--tpslimit 10`, which applies to the whole rclone process, and a 100ms pacer),
+64 MiB upload chunks (buffered in memory per transfer), and the job fails when
+Google's daily upload limit (about 750 GiB per user) is reached.
+
+There are three ways to connect:
+
+1. **Paste a token from `rclone config`** (*Advanced* in the dialog, which
+   shows the steps): `rclone config`, new remote, storage `drive`, empty
+   `client_id` and `client_secret`, scope `1`, confirm that you want to use
+   rclone's shared client, sign in, then `rclone config show <name>` and paste
+   the `token` JSON (and `team_drive`, if any). Only tokens of rclone's own
+   client work: Motuz cannot refresh a token issued to a client id whose secret
+   it does not have.
+2. **Sign in with Google, rclone's app** (default): Motuz opens Google's sign-in
+   page. rclone's app only redirects to `http://127.0.0.1:53682/`, so the
+   browser shows an error page afterwards and the user pastes its address into
+   Motuz, then picks My Drive or a shared drive.
+3. **Sign in with Google, own OAuth client**: Google redirects back to Motuz,
+   which completes the sign-in by itself.
+
+**rclone's shared client is not a long-term option.** It is shared by all
+rclone users worldwide and heavily rate limited (Google's default quota is per
+client id), and rclone announced that it is being retired and will stop
+working during 2026 (`rclone config` now warns about it). When that happens,
+connections created with it (pasted tokens and option 2) stop refreshing and
+users must sign in again with an own client. Configure an own client for
+production.
+
+#### Own OAuth client
+
+1. In the [Google Cloud Console](https://console.cloud.google.com/), create or
+   select a project, then *APIs & Services* > *Library* > *Google Drive API* >
+   *Enable*. Without it, sign-in succeeds but Motuz reports "Google Drive
+   cannot be accessed: Google Drive API has not been used in project ...".
+2. *Google Auth Platform* (formerly *OAuth consent screen*): app name, support
+   email, contact email.
+   - *Audience*: *Internal* if all users are in your Google Workspace domain
+     (no verification needed, only your domain's accounts can sign in);
+     *External* otherwise.
+   - *Data access*: add the scope `https://www.googleapis.com/auth/drive`.
+3. *Clients* > *Create client* > type *Web application*, authorized redirect
+   URI `https://motuz.example.org/api/oauth/gdrive/callback` (your Motuz host
+   name; it must match `MOTUZ_GDRIVE_REDIRECT_URI` exactly). Copy the client id
+   and the client secret.
+4. Configure Motuz: the id and redirect URI in `.env` (or the environment that
+   runs `./start.sh`), the secret in the docker secret file, never in `.env`:
+   ```bash
+   MOTUZ_GDRIVE_CLIENT_ID=<client id>.apps.googleusercontent.com
+   MOTUZ_GDRIVE_REDIRECT_URI=https://motuz.example.org/api/oauth/gdrive/callback
+   ```
+   ```bash
+   (umask 077 && printf '%s' '<client secret>' > /docker/secrets/MOTUZ_GDRIVE_CLIENT_SECRET)
+   ```
+5. Redeploy with `bin/redeploy.sh` (or `./start.sh`). `bin/prod/start.sh`
+   creates an empty `MOTUZ_GDRIVE_CLIENT_SECRET` if it is missing; empty or
+   unset values mean "not configured" (rclone's app).
+
+Google's restrictions on the `drive` scope, which Google classifies as
+*restricted*:
+
+- An *External* app that is not verified is in *Testing* mode: only the test
+  users listed under *Audience* (up to 100) can sign in, they see a "Google
+  hasn't verified this app" warning, and Google expires their refresh tokens
+  after 7 days, so those connections need a new sign-in every week. Publishing
+  the app for everyone requires Google's verification of the restricted scope,
+  which includes a security assessment by a third party.
+- An *Internal* app avoids verification, but only works for accounts of the
+  Workspace organization that owns the Cloud project.
+- Google Workspace administrators can block third-party apps or unconfigured
+  apps (*Admin console* > *Security* > *API controls* > *App access
+  control*). Users then see "Access blocked" or "admin_policy_enforced", the
+  same situation as a OneDrive tenant that requires admin approval: the
+  administrator has to trust the client id (Motuz's own client, or rclone's
+  `202264815644.apps.googleusercontent.com`).
+- Google sends a refresh token only with `access_type=offline` and
+  `prompt=consent`, which Motuz always requests. Refresh tokens stop working
+  when the user revokes access (myaccount.google.com > *Security* >
+  *Third-party apps*), when an administrator removes the app's access, or
+  after 6 months without use.
+
+Each connection remembers the client that issued its token
+(`gdrive_client_id`) and is always refreshed with it, exactly like OneDrive:
+pasted tokens and connections created before the own client was configured
+keep using rclone's app; changing or removing `MOTUZ_GDRIVE_CLIENT_ID` breaks
+connections of the old client ("This Google Drive connection was created with
+a different OAuth client ... Sign in with Google again"); rotating only the
+secret keeps them working. The client secret is used only by the `app`
+container.
 
 
 ### Using a custom database

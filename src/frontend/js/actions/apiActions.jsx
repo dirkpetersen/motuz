@@ -360,3 +360,19 @@ export const retrieveOnedriveSignin = (state) => onedriveSignin(`/api/oauth/oned
 // Success is a regular CREATE_CLOUD_CONNECTION_SUCCESS: adds the connection and closes the dialog
 export const connectOnedrive = (data) => onedriveSignin('/api/oauth/onedrive/connect/', 'POST', data,
     [ ONEDRIVE_SIGNIN_REQUEST, CREATE_CLOUD_CONNECTION_SUCCESS, ONEDRIVE_SIGNIN_FAILURE ]);
+
+
+// The same sign-in for any provider of backend oauth_manager.PROVIDERS ('onedrive', 'gdrive'),
+// used by views/Dialogs/CloudConnection/OauthSignIn.jsx
+export const OAUTH_SIGNIN_REQUEST = '@@api/OAUTH_SIGNIN_REQUEST';
+export const OAUTH_SIGNIN_SUCCESS = '@@api/OAUTH_SIGNIN_SUCCESS';
+export const OAUTH_SIGNIN_FAILURE = '@@api/OAUTH_SIGNIN_FAILURE';
+
+const oauthPath = (provider, path) => `/api/oauth/${encodeURIComponent(provider)}/${path}`;
+const oauthSignin = (provider, path, method, body, success=OAUTH_SIGNIN_SUCCESS) => onedriveSignin(
+    oauthPath(provider, path), method, body, [ OAUTH_SIGNIN_REQUEST, success, OAUTH_SIGNIN_FAILURE ]);
+
+export const startOauthSignin = (provider) => oauthSignin(provider, 'start/', 'POST', {});
+export const finishOauthSignin = (provider, redirectUrl) => oauthSignin(provider, 'finish/', 'POST', {redirect_url: redirectUrl});
+export const retrieveOauthSignin = (provider, state) => oauthSignin(provider, `flows/${encodeURIComponent(state)}/`, 'GET');
+export const connectOauth = (provider, data) => oauthSignin(provider, 'connect/', 'POST', data, CREATE_CLOUD_CONNECTION_SUCCESS);

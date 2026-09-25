@@ -13,12 +13,19 @@ from ..managers.auth_manager import token_required, get_logged_in_user
 from ..managers import token_broker_manager
 
 
-# Columns a client may set. Everything else is server controlled: onedrive_client_id
-# is set only by "Sign in with Microsoft" (oauth_manager.connect) and decides which
-# client credentials the token broker refreshes with.
+# Token column -> column of the OAuth client that issued it. The client id columns are
+# server controlled: set only by "Sign in with Microsoft/Google" (oauth_manager.connect),
+# they decide which client credentials the token broker refreshes with. A pasted token
+# comes from `rclone config`, i.e. rclone's app, so pasting one resets the client id.
+_TOKEN_CLIENT_COLUMNS = {
+    'onedrive_token': 'onedrive_client_id',
+    'gdrive_token': 'gdrive_client_id',
+}
+
+# Columns a client may set. Everything else is server controlled.
 _WRITABLE_FIELDS = frozenset(
     column.name for column in CloudConnection.__table__.columns
-    if column.name not in ('id', 'owner', 'created_at', 'token_broker_handle', 'onedrive_client_id')
+    if column.name not in ('id', 'owner', 'created_at', 'token_broker_handle', *_TOKEN_CLIENT_COLUMNS.values())
 )
 
 
@@ -34,6 +41,7 @@ _SECRET_FIELDS = frozenset((
     'sftp_pass',
     'dropbox_token',
     'onedrive_token',
+    'gdrive_token',
     'webdav_pass',
 ))
 
@@ -147,9 +155,9 @@ def update(id, data):
         if key in _SECRET_FIELDS and not value:
             continue
         setattr(cloud_connection, key, value)
-        if key == 'onedrive_token':
+        if key in _TOKEN_CLIENT_COLUMNS:
             # A pasted token comes from `rclone config`, i.e. rclone's app
-            cloud_connection.onedrive_client_id = None
+            setattr(cloud_connection, _TOKEN_CLIENT_COLUMNS[key], None)
     _apply_profile_rules(cloud_connection)
 
     db.session.commit()
