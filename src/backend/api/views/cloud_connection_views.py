@@ -66,6 +66,8 @@ dto = api.model('connection', {
     'onedrive_token': PrivateOptionalString(required=False, example='{"access_token":"youraccesstoken","token_type":"Bearer","refresh_token":"yourrefreshtoken","expiry":"2018-08-26T22:39:52.486512262+08:00"}'),
     'onedrive_drive_id': fields.String(required=False, example='b!Eqwertyuiopasdfghjklzxcvbnm-7mnbvcxzlkjhgfdsapoiuytrewqk'),
     'onedrive_drive_type': fields.String(required=False, example='business'),
+    # App registration that issued the token (null: rclone's app). Set by the server only.
+    'onedrive_client_id': OptionalString(readonly=True, example='b15665d9-eda6-4092-8539-0eec376afd59'),
 
     'webdav_url': fields.String(required=False, example='https://example.com/remote.php/webdav/'),
     'webdav_user': fields.String(required=False, example='email@example.com'),

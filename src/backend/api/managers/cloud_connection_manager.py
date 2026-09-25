@@ -12,10 +12,12 @@ from ..managers.auth_manager import token_required, get_logged_in_user
 from ..managers import token_broker_manager
 
 
-# Columns a client may set. Everything else (id, owner, created_at) is server controlled.
+# Columns a client may set. Everything else is server controlled: onedrive_client_id
+# is set only by "Sign in with Microsoft" (oauth_manager.connect) and decides which
+# client credentials the token broker refreshes with.
 _WRITABLE_FIELDS = frozenset(
     column.name for column in CloudConnection.__table__.columns
-    if column.name not in ('id', 'owner', 'created_at', 'token_broker_handle')
+    if column.name not in ('id', 'owner', 'created_at', 'token_broker_handle', 'onedrive_client_id')
 )
 
 
@@ -98,6 +100,9 @@ def update(id, data):
         if key in _SECRET_FIELDS and not value:
             continue
         setattr(cloud_connection, key, value)
+        if key == 'onedrive_token':
+            # A pasted token comes from `rclone config`, i.e. rclone's app
+            cloud_connection.onedrive_client_id = None
 
     db.session.commit()
     return cloud_connection

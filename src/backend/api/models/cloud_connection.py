@@ -61,6 +61,9 @@ class CloudConnection(db.Model):
     onedrive_token = db.Column(db.String, nullable=True)
     onedrive_drive_id = db.Column(db.String, nullable=True)
     onedrive_drive_type = db.Column(db.String, nullable=True)
+    # Client id of the app registration that issued onedrive_token, set by "Sign in with
+    # Microsoft". NULL (pasted rclone token) means rclone's app. Server controlled.
+    onedrive_client_id = db.Column(db.String, nullable=True)
 
     # WebDAV
     webdav_url = db.Column(db.String, nullable=True)

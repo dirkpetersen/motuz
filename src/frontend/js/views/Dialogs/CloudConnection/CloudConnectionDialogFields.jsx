@@ -2,6 +2,9 @@ import OnedriveSignIn from 'views/Dialogs/CloudConnection/OnedriveSignIn.jsx';
 import React from 'react';
 import classnames from 'classnames';
 
+// rclone's public OneDrive app (oauth_manager.RCLONE_CLIENT_ID)
+const RCLONE_ONEDRIVE_CLIENT_ID = 'b15665d9-eda6-4092-8539-0eec376afd59';
+
 const CONNECTION_TYPES = [
     {
         label: 'Amazon Simple Storage Service (s3)',
@@ -655,7 +658,20 @@ class CloudConnectionDialogFields extends React.Component {
     _renderOnedriveSection() {
         const manualFields = this._renderOnedriveManualFields();
         if (this.props.isSanitized) { // Editing an existing connection
-            return manualFields;
+            // The token broker refreshes the token with the app registration that issued it
+            const clientId = this.props.data.onedrive_client_id;
+            const app = !clientId || clientId === RCLONE_ONEDRIVE_CLIENT_ID
+                ? "rclone's app"
+                : `Motuz app (${clientId})`;
+            return (
+                <React.Fragment>
+                    <p className='text-muted'>
+                        Signed in through: {app}. Pasting a new token from rclone switches
+                        this connection to rclone's app.
+                    </p>
+                    {manualFields}
+                </React.Fragment>
+            );
         }
         return (
             <React.Fragment>

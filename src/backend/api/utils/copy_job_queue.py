@@ -9,7 +9,7 @@ import time
 import os
 import signal
 
-from .abstract_connection import AbstractConnection, RcloneException
+from .abstract_connection import AbstractConnection, RcloneException, subprocess_env
 
 class CopyJobQueue:
     def __init__(self):
@@ -76,8 +76,7 @@ class CopyJobQueue:
 
     def __execute_interactive(self, command, env, job_id):
         stop_event = self._stop_events[job_id]
-        full_env = os.environ.copy()
-        full_env.update(env)
+        full_env = subprocess_env(env)
 
         process = subprocess.Popen(
             command,

@@ -113,6 +113,8 @@ generate_secrets() {
             _color_yellow "$secret exists. Skipping"
         fi
     done
+    # Optional secrets (empty = not configured), e.g. MOTUZ_ONEDRIVE_CLIENT_SECRET
+    ./bin/_utils/optional_secrets.sh "${MOTUZ_DOCKER_ROOT}/secrets"
 }
 
 start() {

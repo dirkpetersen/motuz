@@ -11,7 +11,8 @@ that users do not have to run `rclone config` themselves.
 3. finish()/callback() exchange the code for a token and discover the user's drives
    (OneDrive, SharePoint libraries of followed sites). The token stays in the flow row.
 4. connect(): the user picks a drive and Motuz creates the cloud connection. From then
-   on the token broker keeps the token fresh.
+   on the token broker keeps the token fresh, with the app registration that issued it
+   (CloudConnection.onedrive_client_id).
 """
 import base64
 import datetime
@@ -34,32 +35,63 @@ from ..managers.auth_manager import token_required, get_logged_in_user
 
 PROVIDER = 'onedrive'
 CALLBACK_PATH = '/api/oauth/onedrive/callback'
-SCOPES = 'Files.Read Files.ReadWrite Files.Read.All Files.ReadWrite.All Sites.Read.All offline_access'
+# What rclone requests for its app (and what tenants consented to for it)
+RCLONE_SCOPES = 'Files.Read Files.ReadWrite Files.Read.All Files.ReadWrite.All Sites.Read.All offline_access'
+# The delegated permissions an own app registration needs (README, "OneDrive: own app
+# registration"); requesting more would ask for consent to more
+OWN_APP_SCOPES = 'Files.ReadWrite.All Sites.Read.All offline_access User.Read'
 FLOW_TTL = datetime.timedelta(minutes=15)
 
 # rclone's public OneDrive app (backend/onedrive/onedrive.go); the secret is stored obscured
 # there and revealed with `rclone reveal`, exactly like rclone itself does
 RCLONE_CLIENT_ID = 'b15665d9-eda6-4092-8539-0eec376afd59'
 RCLONE_OBSCURED_CLIENT_SECRET = '_JUdzh3LnKNqSPcf4Wu5fgMFIQOI8glZu_akYgR8yf6egowNBg-R'
+RCLONE_REDIRECT_URI = 'http://localhost:53682/'
 
 _HTTP_TIMEOUT = 30
 
 
-def client_credentials():
-    """(client_id, client_secret) of the app used for OneDrive sign-in and token refresh"""
-    client_id = current_app.config.get('ONEDRIVE_CLIENT_ID')
-    if client_id:
-        return client_id, current_app.config.get('ONEDRIVE_CLIENT_SECRET') or ''
-    return RCLONE_CLIENT_ID, _reveal(RCLONE_OBSCURED_CLIENT_SECRET)
+def own_client_id():
+    """Client id of Motuz's own app registration, or None if none is configured"""
+    return current_app.config.get('ONEDRIVE_CLIENT_ID') or None
+
+
+def own_client_credentials():
+    """(client_id, client_secret) of the own app registration; the secret may be empty"""
+    return own_client_id(), current_app.config.get('ONEDRIVE_CLIENT_SECRET') or ''
 
 
 def uses_own_app():
-    return bool(current_app.config.get('ONEDRIVE_CLIENT_ID'))
+    return own_client_id() is not None
+
+
+def client_credentials():
+    """
+    (client_id, client_secret) of the app that new sign-ins use: the own app
+    registration if one is configured, rclone's public app otherwise. Existing
+    connections keep the app they were created with (CloudConnection.onedrive_client_id,
+    see token_broker_manager.upstream_client_credentials).
+    """
+    if uses_own_app():
+        return own_client_credentials()
+    return RCLONE_CLIENT_ID, _reveal(RCLONE_OBSCURED_CLIENT_SECRET)
+
+
+def redirect_uri():
+    """The configured redirect URI applies to an own app only: rclone's app accepts
+    nothing but its localhost address"""
+    if uses_own_app():
+        return current_app.config.get('ONEDRIVE_REDIRECT_URI') or RCLONE_REDIRECT_URI
+    return RCLONE_REDIRECT_URI
+
+
+def scopes():
+    return OWN_APP_SCOPES if uses_own_app() else RCLONE_SCOPES
 
 
 def redirect_mode():
     """'callback' if Microsoft redirects back to Motuz, 'paste' otherwise"""
-    return 'callback' if current_app.config['ONEDRIVE_REDIRECT_URI'].rstrip('/').endswith(CALLBACK_PATH) else 'paste'
+    return 'callback' if redirect_uri().rstrip('/').endswith(CALLBACK_PATH) else 'paste'
 
 
 @token_required
@@ -72,22 +104,23 @@ def start():
         hashlib.sha256(code_verifier.encode()).digest()
     ).decode().rstrip('=')
 
+    client_id, _ = client_credentials()
     flow = OauthFlow(
         state=secrets.token_urlsafe(32),
         owner=owner,
         provider=PROVIDER,
         code_verifier=code_verifier,
+        client_id=client_id,
     )
     db.session.add(flow)
     db.session.commit()
 
-    client_id, _ = client_credentials()
     query = urllib.parse.urlencode({
         'client_id': client_id,
         'response_type': 'code',
-        'redirect_uri': current_app.config['ONEDRIVE_REDIRECT_URI'],
+        'redirect_uri': redirect_uri(),
         'response_mode': 'query',
-        'scope': SCOPES,
+        'scope': scopes(),
         'state': flow.state,
         'code_challenge': code_challenge,
         'code_challenge_method': 'S256',
@@ -161,6 +194,8 @@ def connect(data):
         onedrive_token=flow.token,
         onedrive_drive_id=drive['id'],
         onedrive_drive_type=drive['drive_type'],
+        # The app that issued the token: the broker refreshes it with the same app
+        onedrive_client_id=flow.client_id,
     )
     db.session.add(cloud_connection)
     db.session.delete(flow)
@@ -176,13 +211,16 @@ def _complete_flow(flow, params):
         raise HTTP_400_BAD_REQUEST('The pasted address does not contain a sign-in code')
 
     client_id, client_secret = client_credentials()
+    if flow.client_id != client_id:
+        # The configured app changed (redeploy) after this sign-in started
+        raise HTTP_400_BAD_REQUEST('The OneDrive app registration of Motuz has changed. Please start again.')
     form = {
         'grant_type': 'authorization_code',
         'client_id': client_id,
         'code': params['code'],
-        'redirect_uri': current_app.config['ONEDRIVE_REDIRECT_URI'],
+        'redirect_uri': redirect_uri(),
         'code_verifier': flow.code_verifier,
-        'scope': SCOPES,
+        'scope': scopes(),
     }
     if client_secret:
         form['client_secret'] = client_secret

@@ -13,6 +13,11 @@ returns the cached access token if it is still fresh, and otherwise refreshes it
 upstream with the real refresh token and stores the result. The real refresh
 token never leaves the server, and concurrent jobs share one refresh.
 
+OneDrive refresh tokens only work with the app registration that issued them
+(CloudConnection.onedrive_client_id, see upstream_client_credentials): rclone's
+public app, whose credentials rclone sends along, or Motuz's own app, whose
+secret the broker adds and which rclone never gets.
+
 The endpoint is registered outside of /api and answers only on the socket that
 TOKEN_BROKER_URL points to (uWSGI's loopback HTTP socket 127.0.0.1:5001); Traefik
 refuses /internal and forwards to :5000 only (see views/internal_views.py).
@@ -42,6 +47,39 @@ BROKERED_TYPES = {
 # Hand out a cached access token only if it stays valid at least this long
 _MIN_REMAINING = datetime.timedelta(minutes=5)
 _UPSTREAM_TIMEOUT = 30
+
+APP_MISMATCH_DESCRIPTION = (
+    'This OneDrive connection was created with a different app registration than '
+    'the one Motuz uses now. Sign in with Microsoft again.'
+)
+
+
+class AppRegistrationMismatch(Exception):
+    pass
+
+
+def upstream_client_credentials(stored_client_id, forwarded, own_app, rclone_client_id):
+    """
+    Client credentials to refresh a OneDrive token with. A refresh token is only
+    accepted from the app it was issued to, which the connection remembers.
+
+    @param stored_client_id: CloudConnection.onedrive_client_id; None for connections
+                             created from a pasted rclone token, i.e. rclone's app
+    @param forwarded: (client_id, client_secret) that rclone sent; rclone always uses
+                      its own public app
+    @param own_app: (client_id, client_secret) of the configured own app registration,
+                    or None if there is none
+    @param rclone_client_id: client id of rclone's public app
+    @return: (client_id, client_secret); either may be None/empty
+    @raise AppRegistrationMismatch: the token belongs to an app that is not configured
+                                    (any more)
+    """
+    if not stored_client_id or stored_client_id == rclone_client_id:
+        return forwarded
+    if own_app is not None and own_app[0] and stored_client_id == own_app[0]:
+        # The own app's secret is added here, on the way upstream; rclone never sees it
+        return own_app
+    raise AppRegistrationMismatch(stored_client_id)
 
 
 def broker_token(cloud_connection):
@@ -89,6 +127,31 @@ def handle_token_request(form, authorization):
         db.session.rollback()
         return 400, {'error': 'invalid_grant', 'error_description': 'Unknown token handle'}
 
+    # Client credentials rclone sent, in the body or (RFC 6749 2.3.1) form-urlencoded
+    # inside HTTP basic auth, which is what Go's oauth2 (used by rclone) does
+    forwarded = (form.get('client_id'), form.get('client_secret'))
+    if authorization is not None and authorization.username:
+        forwarded = (
+            forwarded[0] or urllib.parse.unquote_plus(authorization.username),
+            forwarded[1] or (urllib.parse.unquote_plus(authorization.password) if authorization.password else None),
+        )
+
+    if cloud_connection.type == 'onedrive':
+        own_app = oauth_manager.own_client_credentials() if oauth_manager.uses_own_app() else None
+        try:
+            client_id, client_secret = upstream_client_credentials(
+                cloud_connection.onedrive_client_id, forwarded, own_app, oauth_manager.RCLONE_CLIENT_ID,
+            )
+        except AppRegistrationMismatch:
+            db.session.rollback()
+            logging.error("Token refresh for cloud connection {} refused: its token was issued to client {}, "
+                "which is neither rclone's app nor the configured app registration ({})".format(
+                cloud_connection.id, cloud_connection.onedrive_client_id, own_app[0] if own_app else 'none',
+            ))
+            return 400, {'error': 'invalid_grant', 'error_description': APP_MISMATCH_DESCRIPTION}
+    else:
+        client_id, client_secret = forwarded
+
     token_column, token_url_key = BROKERED_TYPES[cloud_connection.type]
     token = _parse_token(getattr(cloud_connection, token_column)) or {}
 
@@ -104,21 +167,15 @@ def handle_token_request(form, authorization):
 
     # Forward rclone's request upstream, with the real refresh token and the client
     # credentials in the body (supported by all providers)
-    upstream_form = {key: value for key, value in form.items() if value}
+    upstream_form = {
+        key: value for key, value in form.items()
+        if value and key not in ('client_id', 'client_secret')
+    }
     upstream_form['refresh_token'] = token['refresh_token']
-    if authorization is not None and authorization.username:
-        # RFC 6749 2.3.1: client id and secret are form-urlencoded inside HTTP basic auth
-        # (Go's oauth2, used by rclone, does this)
-        upstream_form.setdefault('client_id', urllib.parse.unquote_plus(authorization.username))
-        if authorization.password:
-            upstream_form.setdefault('client_secret', urllib.parse.unquote_plus(authorization.password))
-    if cloud_connection.type == 'onedrive' and oauth_manager.uses_own_app():
-        # Tokens from "Sign in with Microsoft" belong to Motuz's app registration, while
-        # rclone only knows its own client; its secret is never handed to rclone
-        upstream_form['client_id'], client_secret = oauth_manager.client_credentials()
-        upstream_form.pop('client_secret', None)
-        if client_secret:
-            upstream_form['client_secret'] = client_secret
+    if client_id:
+        upstream_form['client_id'] = client_id
+    if client_secret:
+        upstream_form['client_secret'] = client_secret
 
     status, body = _post_form(current_app.config[token_url_key], upstream_form)
     if status != 200 or not body.get('access_token'):
