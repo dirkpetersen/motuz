@@ -6,7 +6,7 @@ import CloudConnectionDialogFields from 'views/Dialogs/CloudConnection/CloudConn
 import VerifyStatusButton from 'views/Dialogs/CloudConnection/VerifyStatusButton.jsx'
 import Icon from 'components/Icon.jsx'
 import serializeForm from 'utils/serializeForm.jsx';
-import { oauthStateFromUrl } from 'views/Dialogs/CloudConnection/OnedriveSignIn.jsx';
+import { oauthConnectionTypeFromUrl } from 'views/Dialogs/CloudConnection/OauthSignIn.jsx';
 
 
 class NewCloudConnectionDialog extends React.Component {
@@ -44,8 +44,8 @@ class NewCloudConnectionDialog extends React.Component {
                     <Modal.Body>
                         <CloudConnectionDialogFields
                             data={{
-                                // Back from an automatic "Sign in with Microsoft"
-                                type: oauthStateFromUrl() ? 'onedrive' : undefined,
+                                // Back from an automatic "Sign in with Microsoft/Google"
+                                type: oauthConnectionTypeFromUrl(),
                                 s3_region: 'us-west-2',
                                 sftp_port: '22',
                             }}

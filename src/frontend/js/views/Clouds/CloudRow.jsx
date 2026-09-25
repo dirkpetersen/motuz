@@ -37,6 +37,8 @@ class CloudRow extends React.Component {
             headers.push("") // We do not have an ID here
         } else if (data.type === "onedrive") {
             headers.push("onedrive_drive_id")
+        } else if (data.type === "drive") {
+            headers.push("gdrive_team_drive") // Shared drive; empty for My Drive
         } else if (data.type === "webdav") {
             headers.push("webdav_user")
         } else {
