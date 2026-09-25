@@ -5,7 +5,7 @@ import os
 import subprocess
 from collections import defaultdict
 
-from .abstract_connection import AbstractConnection, RcloneException
+from .abstract_connection import AbstractConnection, RcloneException, user_process_env
 from . import local_credentials
 from .copy_job_queue import CopyJobQueue
 from .hashsum_job_queue import HashsumJobQueue
@@ -527,8 +527,7 @@ class RcloneConnection(AbstractConnection):
         if env is None:
             env = {}
 
-        full_env = os.environ.copy()
-        full_env.update(env)
+        full_env = user_process_env(env)
         try:
             byteOutput = subprocess.check_output(
                 command,

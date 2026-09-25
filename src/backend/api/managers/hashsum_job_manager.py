@@ -48,7 +48,7 @@ def create(data):
 
     task_id = hashsum_job.id
     try:
-        tasks.hashsum_job.apply_async(task_id=str(task_id), kwargs={
+        tasks.hashsum_job.apply_async(task_id=_celery_task_id(task_id), kwargs={
             'task_id': task_id,
         })
     except Exception as e:
@@ -75,7 +75,7 @@ def retrieve(id):
 
     for _ in range(2): # Sometimes Rabbitmq closes the connection, just retry
         try:
-            task = tasks.hashsum_job.AsyncResult(str(hashsum_job.id))
+            task = _async_result(hashsum_job.id)
 
             for field in (
                 'progress_src_tree',
@@ -114,7 +114,7 @@ def retrieve(id):
 def stop(id):
     hashsum_job = retrieve(id)
 
-    task = tasks.hashsum_job.AsyncResult(str(hashsum_job.id))
+    task = _async_result(hashsum_job.id)
     task.revoke(terminate=True)
 
     hashsum_job = db.session.get(HashsumJob, id) # Avoid race conditions
@@ -123,3 +123,18 @@ def stop(id):
         db.session.commit()
 
     return hashsum_job
+
+
+def _celery_task_id(job_id):
+    # Copy and hashsum jobs have separate id sequences, so the Celery task id needs a
+    # prefix: revoking copy job 4 must not discard hashsum job 4
+    return 'hashsum-{}'.format(job_id)
+
+
+def _async_result(job_id):
+    task = tasks.hashsum_job.AsyncResult(_celery_task_id(job_id))
+    if task.state == 'PENDING': # Unknown id: job created before the prefix existed
+        legacy = tasks.hashsum_job.AsyncResult(str(job_id))
+        if legacy.state != 'PENDING':
+            return legacy
+    return task
