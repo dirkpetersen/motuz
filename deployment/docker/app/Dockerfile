@@ -1,6 +1,22 @@
 # Build as
 # docker build -t fredhutch/motuz_app:latest -f deployment/docker/app/Dockerfile .
 
+# The React frontend. uWSGI serves it (src/backend/api/views/frontend_views.py);
+# Traefik in front of it only terminates TLS and routes.
+FROM node:22-alpine AS frontend-build
+
+WORKDIR /app
+COPY ./package.json ./package-lock.json /app/
+RUN npm ci --no-audit --no-fund
+
+COPY ./src/frontend /app/src/frontend
+RUN npm run build
+
+
+
+
+
+
 FROM python:3.12-slim-bookworm AS build-image
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -66,6 +82,9 @@ ENV LD_LIBRARY_PATH=/usr/local/lib
 RUN set -x \
     && install -d -m 755 /root/.config/rclone/ \
     && touch /root/.config/rclone/rclone.conf
+
+# FRONTEND_DIR (src/backend/api/config.py). The celery image inherits it unused (< 1 MB).
+COPY --from=frontend-build /app/build /app/build
 
 COPY ./src/backend /app/src/backend
 COPY \

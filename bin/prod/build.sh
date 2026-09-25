@@ -10,6 +10,8 @@ COMPOSE="docker-compose -f docker-compose.yml -f docker-compose.override.yml -f 
 
 # Pick up latest changes. Add `--no-cache` if this turns out to be unreliable.
 # The celery image is built FROM fredhutch/motuz_app, so the app image must exist first
-# (otherwise an old image is pulled from Docker Hub).
+# (otherwise an old image is pulled from Docker Hub). The app image includes the frontend.
 $COMPOSE build "$@" app
-$COMPOSE build "$@" nginx celery database_init
+$COMPOSE build "$@" celery database_init
+# Traefik is not built; fetch the pinned release so a changed tag is picked up
+$COMPOSE pull traefik

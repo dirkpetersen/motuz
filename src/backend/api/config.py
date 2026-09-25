@@ -45,6 +45,10 @@ class Config:
     # Upstream token endpoints the broker refreshes against
     ONEDRIVE_TOKEN_URL = os.environ.get('MOTUZ_ONEDRIVE_TOKEN_URL', 'https://login.microsoftonline.com/common/oauth2/v2.0/token')
 
+    # Built frontend (`npm run build`), served by views/frontend_views.py. The app image
+    # puts it at /app/build, which is also <repository>/build in development.
+    FRONTEND_DIR = os.environ.get('MOTUZ_FRONTEND_DIR', os.path.abspath(os.path.join(basedir, '..', '..', '..', 'build')))
+
     DEBUG = False
     # https://flask-sqlalchemy.palletsprojects.com/en/2.x/signals/
     SQLALCHEMY_TRACK_MODIFICATIONS = False

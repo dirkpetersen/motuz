@@ -8,6 +8,10 @@ __pycache__/
 # Other
 .pytest_cache/
 .git/
+.claude/
+
+# Local frontend build; the image builds its own
+build/
 
 # Databases
 **/*.sqlite3

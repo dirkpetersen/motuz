@@ -300,7 +300,7 @@ export default (state=initialState, action) => {
 
 /**
  * Field errors of a failed request. Network errors and non-JSON responses
- * (e.g. an nginx 502 page) have no parsed response.
+ * (e.g. a reverse proxy 502 page) have no parsed response.
  */
 function responseErrors(action) {
     return ((action.payload && action.payload.response) || {}).errors || {};
