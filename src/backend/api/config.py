@@ -1,3 +1,4 @@
+import datetime
 import os
 
 basedir = os.path.abspath(os.path.dirname(__file__))
@@ -31,6 +32,12 @@ class Config:
     SECRET_KEY = MOTUZ_FLASK_SECRET_KEY
     JWT_SECRET_KEY = MOTUZ_FLASK_SECRET_KEY
     JWT_IDENTITY_CLAIM = 'identity' # Frontend reads `identity`, and keeps pre-upgrade tokens valid
+    # The frontend refreshes access tokens transparently (middleware/authMiddleware.jsx).
+    # Logout revokes all tokens of the session at once; the short access lifetime limits
+    # a leaked access token of a session that is never logged out. Refresh tokens rotate
+    # on every refresh, so 30 days is 30 days of inactivity.
+    JWT_ACCESS_TOKEN_EXPIRES = datetime.timedelta(minutes=15)
+    JWT_REFRESH_TOKEN_EXPIRES = datetime.timedelta(days=30)
     CELERY_BROKER_URL = 'amqp://'
 
     DATABASE_PARAMS = ''
