@@ -320,3 +320,27 @@ export const deleteCloudConnection = (data) => {
         }
     }
 };
+
+
+// "Sign in with Microsoft" for OneDrive (see backend managers/oauth_manager.py).
+// Components await the dispatched action; start/finish/flow results are not kept in the store.
+export const ONEDRIVE_SIGNIN_REQUEST = '@@api/ONEDRIVE_SIGNIN_REQUEST';
+export const ONEDRIVE_SIGNIN_SUCCESS = '@@api/ONEDRIVE_SIGNIN_SUCCESS';
+export const ONEDRIVE_SIGNIN_FAILURE = '@@api/ONEDRIVE_SIGNIN_FAILURE';
+
+const onedriveSignin = (endpoint, method, body, types) => ({
+    [RSAA]: {
+        endpoint,
+        method,
+        body: body === undefined ? undefined : JSON.stringify(body),
+        headers: withAuth({ 'Content-Type': 'application/json' }),
+        types: types || [ ONEDRIVE_SIGNIN_REQUEST, ONEDRIVE_SIGNIN_SUCCESS, ONEDRIVE_SIGNIN_FAILURE ],
+    }
+});
+
+export const startOnedriveSignin = () => onedriveSignin('/api/oauth/onedrive/start/', 'POST', {});
+export const finishOnedriveSignin = (redirectUrl) => onedriveSignin('/api/oauth/onedrive/finish/', 'POST', {redirect_url: redirectUrl});
+export const retrieveOnedriveSignin = (state) => onedriveSignin(`/api/oauth/onedrive/flows/${encodeURIComponent(state)}/`, 'GET');
+// Success is a regular CREATE_CLOUD_CONNECTION_SUCCESS: adds the connection and closes the dialog
+export const connectOnedrive = (data) => onedriveSignin('/api/oauth/onedrive/connect/', 'POST', data,
+    [ ONEDRIVE_SIGNIN_REQUEST, CREATE_CLOUD_CONNECTION_SUCCESS, ONEDRIVE_SIGNIN_FAILURE ]);

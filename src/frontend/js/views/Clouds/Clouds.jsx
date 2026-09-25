@@ -53,6 +53,9 @@ class Clouds extends React.Component {
 
     componentDidMount() {
         this.props.onMount();
+        if (new URLSearchParams(window.location.search).get('oauth_state')) {
+            this.props.onShowNewConnectionDialog(); // Continue an automatic Microsoft sign-in
+        }
     }
 }
 

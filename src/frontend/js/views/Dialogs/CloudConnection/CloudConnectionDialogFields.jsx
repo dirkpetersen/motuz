@@ -1,3 +1,4 @@
+import OnedriveSignIn from 'views/Dialogs/CloudConnection/OnedriveSignIn.jsx';
 import React from 'react';
 import classnames from 'classnames';
 
@@ -652,10 +653,28 @@ class CloudConnectionDialogFields extends React.Component {
     }
 
     _renderOnedriveSection() {
+        const manualFields = this._renderOnedriveManualFields();
+        if (this.props.isSanitized) { // Editing an existing connection
+            return manualFields;
+        }
+        return (
+            <React.Fragment>
+                <OnedriveSignIn />
+                <details>
+                    <summary className='text-primary h5 mt-2 mb-3'>
+                        Advanced: paste a token from rclone instead
+                    </summary>
+                    {manualFields}
+                </details>
+            </React.Fragment>
+        )
+    }
+
+    _renderOnedriveManualFields() {
         return (
             <React.Fragment>
                 <details open={!this.props.isSanitized}>
-                    <summary className='text-primary h5 mt-2 mb-2'>
+                    <summary className='text-primary h6 mt-2 mb-2'>
                         How to get these values
                     </summary>
 

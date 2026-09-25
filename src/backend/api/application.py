@@ -88,5 +88,8 @@ def register_api(app):
     from .views.system_views import api as system_ns
     api.add_namespace(system_ns)
 
+    from .views.oauth_views import api as oauth_ns
+    api.add_namespace(oauth_ns)
+
     app.register_blueprint(bp)
 

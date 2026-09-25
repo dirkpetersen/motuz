@@ -30,6 +30,7 @@ from sqlalchemy import update
 
 from ..application import db
 from ..models import CloudConnection
+from . import oauth_manager
 
 
 # Connection type -> (token column, config key of the upstream token URL)
@@ -108,6 +109,13 @@ def handle_token_request(form, authorization):
         upstream_form.setdefault('client_id', authorization.username)
         if authorization.password:
             upstream_form.setdefault('client_secret', authorization.password)
+    if cloud_connection.type == 'onedrive' and oauth_manager.uses_own_app():
+        # Tokens from "Sign in with Microsoft" belong to Motuz's app registration, while
+        # rclone only knows its own client; its secret is never handed to rclone
+        upstream_form['client_id'], client_secret = oauth_manager.client_credentials()
+        upstream_form.pop('client_secret', None)
+        if client_secret:
+            upstream_form['client_secret'] = client_secret
 
     status, body = _post_form(current_app.config[token_url_key], upstream_form)
     if status != 200 or not body.get('access_token'):

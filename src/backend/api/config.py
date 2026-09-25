@@ -45,6 +45,16 @@ class Config:
     # Upstream token endpoints the broker refreshes against
     ONEDRIVE_TOKEN_URL = os.environ.get('MOTUZ_ONEDRIVE_TOKEN_URL', 'https://login.microsoftonline.com/common/oauth2/v2.0/token')
 
+    # "Sign in with Microsoft" (managers/oauth_manager.py). Defaults to rclone's public
+    # OneDrive app, whose only redirect URI is http://localhost:53682/: the user then pastes
+    # the address the browser was redirected to. With an own app registration whose redirect
+    # URI is https://<motuz host>/api/oauth/onedrive/callback the flow completes by itself.
+    ONEDRIVE_CLIENT_ID = os.environ.get('MOTUZ_ONEDRIVE_CLIENT_ID')
+    ONEDRIVE_CLIENT_SECRET = os.environ.get('MOTUZ_ONEDRIVE_CLIENT_SECRET')
+    ONEDRIVE_REDIRECT_URI = os.environ.get('MOTUZ_ONEDRIVE_REDIRECT_URI', 'http://localhost:53682/')
+    ONEDRIVE_AUTH_URL = os.environ.get('MOTUZ_ONEDRIVE_AUTH_URL', 'https://login.microsoftonline.com/common/oauth2/v2.0/authorize')
+    GRAPH_URL = os.environ.get('MOTUZ_GRAPH_URL', 'https://graph.microsoft.com/v1.0')
+
     DEBUG = False
     # https://flask-sqlalchemy.palletsprojects.com/en/2.x/signals/
     SQLALCHEMY_TRACK_MODIFICATIONS = False
