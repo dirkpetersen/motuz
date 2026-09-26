@@ -1,21 +1,25 @@
 #!/usr/bin/env bash
 # Motuz end-to-end tests: builds the images, starts the production-like stack of
 # test/e2e/compose.yml (Traefik on :80/:443, host networking, test users alice/bob),
-# a fake Microsoft identity platform + Graph (fake_ms.py on 127.0.0.1:5999), runs the
-# suites in order and tears everything down again, also when something fails.
+# a fake Microsoft identity platform + Graph and fake Google sign-in + Drive API
+# (fake_ms.py on 127.0.0.1:5999), runs the suites in order and tears everything down
+# again, also when something fails.
 #
 # Usage: test/e2e/run.sh [--keep] [--no-build] [suite ...]
 #        test/e2e/run.sh --down        (tear down a stack left by --keep)
 #   --keep      leave the stack and the fake server running for debugging
 #   --no-build  use the existing fredhutch/motuz_* images instead of bin/prod/build.sh
-#   suite       any of: e2e broker oauth-paste traefik credentials ui oauth-callback
+#   suite       any of: e2e broker oauth-paste traefik credentials ui oauth-callback ui-callback
 #               (default: all; they always run in this order on a fresh database;
-#               ui also runs credentials, whose files in alice's home it uses)
+#               ui also runs credentials, whose files in alice's home it uses;
+#               oauth-callback and ui-callback switch the app to an own OneDrive app)
 #
 # Environment:
 #   MOTUZ_E2E_UI=auto|require|skip   UI suite (playwright): auto runs it when node and a
 #                                    chromium for playwright are available (default)
 #   MOTUZ_E2E_CHROMIUM               chromium executable for playwright (optional)
+#   MOTUZ_E2E_SCREENSHOTS            directory for screenshots of the connection dialog
+#                                    states taken by the UI suites (optional)
 #   MOTUZ_E2E_AWS_PROFILE, MOTUZ_E2E_AWS_BUCKET, MOTUZ_E2E_AWS_REGION
 #                                    credentials suite against real S3 (see cred_test.py);
 #                                    without them those checks are skipped
@@ -32,7 +36,7 @@ export MOTUZ_E2E_LOGS="${MOTUZ_E2E_LOGS:-$HERE/logs}"
 WORK="$MOTUZ_E2E_WORK"
 LOGS="$MOTUZ_E2E_LOGS"
 BASE=https://localhost
-ALL_SUITES="e2e broker oauth-paste traefik credentials ui oauth-callback"
+ALL_SUITES="e2e broker oauth-paste traefik credentials ui oauth-callback ui-callback"
 OWN_APP_CLIENT_ID=motuz-own-app  # expected by oauth_test.py (PHASE=callback)
 UI_MODE="${MOTUZ_E2E_UI:-auto}"
 
@@ -84,13 +88,13 @@ stop_fake() {
         rm -f "$FAKE_PID_FILE"
     fi
 }
-start_fake() { # expected client secret; a fresh fake for every suite (refresh tokens restart at REAL-1)
+start_fake() { # expected OneDrive client secret; a fresh fake for every suite (refresh tokens restart at REAL-1)
     stop_fake
     mkdir -p "$WORK/fake"
     : > "$WORK/fake/requests.jsonl"
     rm -f "$WORK/fake/mode.txt"
     (umask 077 && printf '%s' "$1" > "$WORK/fake/secret")
-    python3 "$HERE/fake_ms.py" "$1" 5999 >>"$LOGS/fake_ms.log" 2>&1 &
+    python3 "$HERE/fake_ms.py" "$1" 5999 "$GDRIVE_SECRET" >>"$LOGS/fake_ms.log" 2>&1 &
     echo $! > "$FAKE_PID_FILE"
     for _ in $(seq 50); do
         python3 -c 'import socket; socket.create_connection(("127.0.0.1", 5999), 0.2).close()' 2>/dev/null && return 0
@@ -183,12 +187,29 @@ run_suite() { # name, command...
     record "$name" "$line  ($((SECONDS - t0))s)" "$([ "$rc" = 0 ] && echo 0 || echo 1)"
 }
 
-configure_own_app() { # switches the app to an own app registration ("callback" redirect)
+OWN_APP=0
+configure_own_app() { # switches the app to an own app registration ("callback" redirect), once
+    [ "$OWN_APP" = 0 ] || return 0
+    OWN_APP=1
+    log "switching to an own OneDrive app registration"
     OWN_SECRET="S3cr3t~own+app/=&%-$(openssl rand -hex 6)"
     (umask 077 && printf '%s' "$OWN_SECRET" > "$WORK/secrets/MOTUZ_ONEDRIVE_CLIENT_SECRET")
     write_env "$OWN_APP_CLIENT_ID" "$BASE/api/oauth/onedrive/callback"
     dc up -d --force-recreate app celery || die "could not restart app and celery"
     wait_healthy
+}
+
+run_ui() { # suite name, PHASE of ui_test.mjs, OneDrive client secret for the fake
+    if [ "$UI_MODE" = skip ]; then
+        record "$1" "SKIPPED (MOTUZ_E2E_UI=skip)" 0
+    elif UI_WHY="" && ui_ready; then
+        start_fake "$3"
+        run_suite "$1" env PHASE="$2" node ui/ui_test.mjs
+    elif [ "$UI_MODE" = require ]; then
+        record "$1" "FAILED: $UI_WHY (MOTUZ_E2E_UI=require)" 1
+    else
+        record "$1" "SKIPPED: $UI_WHY" 0
+    fi
 }
 
 # ------------------------------------------------------------------ main
@@ -243,12 +264,23 @@ fi
 OBSCURED=$(awk '/^ONEDRIVE = /{found=1} found && /rclone_obscured_client_secret=/{match($0, /\x27[^\x27]+\x27/); print substr($0, RSTART+1, RLENGTH-2); exit}' "$REPO/src/backend/api/managers/oauth_manager.py")
 RCLONE_SECRET=$(docker run --rm --entrypoint rclone fredhutch/motuz_app:latest reveal "$OBSCURED") \
     && [ -n "$RCLONE_SECRET" ] || die "could not reveal rclone's OneDrive client secret"
+# ... and its Google Drive client secret (fake_ms.py checks it in the Google code exchange)
+OBSCURED=$(awk '/^GDRIVE = /{found=1} found && /rclone_obscured_client_secret=/{match($0, /\x27[^\x27]+\x27/); print substr($0, RSTART+1, RLENGTH-2); exit}' "$REPO/src/backend/api/managers/oauth_manager.py")
+GDRIVE_SECRET=$(docker run --rm --entrypoint rclone fredhutch/motuz_app:latest reveal "$OBSCURED") \
+    && [ -n "$GDRIVE_SECRET" ] || die "could not reveal rclone's Google Drive client secret"
 
 log "initializing the database"
 STACK_STARTED=1
 dc run --rm database_init || die "database initialization failed"
 
 log "starting the stack"
+# database_init does not always shut PostgreSQL down cleanly; the app's migrations fail
+# while the database is still recovering, so start the app once it accepts connections
+dc up -d database || die "could not start the database"
+for _ in $(seq 60); do
+    dc exec -T database pg_isready -q -h 127.0.0.1 && break
+    sleep 1
+done
 dc up -d database rabbitmq app celery traefik azurite || die "could not start the stack"
 wait_healthy
 echo "stack is up: $BASE"
@@ -261,22 +293,14 @@ for suite in $SUITES; do
         oauth-paste) start_fake "$RCLONE_SECRET"; run_suite oauth-paste env PHASE=paste python3 -u oauth_test.py ;;
         traefik) run_suite traefik bash traefik_test.sh ;;
         credentials) run_suite credentials python3 -u cred_test.py ;;
-        ui)
-            if [ "$UI_MODE" = skip ]; then
-                record ui "SKIPPED (MOTUZ_E2E_UI=skip)" 0
-            elif UI_WHY="" && ui_ready; then
-                start_fake "$RCLONE_SECRET"
-                run_suite ui node ui/ui_test.mjs
-            elif [ "$UI_MODE" = require ]; then
-                record ui "FAILED: $UI_WHY (MOTUZ_E2E_UI=require)" 1
-            else
-                record ui "SKIPPED: $UI_WHY" 0
-            fi ;;
+        ui) run_ui ui paste "$RCLONE_SECRET" ;;
         oauth-callback)
-            log "switching to an own OneDrive app registration"
             configure_own_app
             start_fake "$OWN_SECRET"
             run_suite oauth-callback env PHASE=callback python3 -u oauth_test.py ;;
+        ui-callback)
+            configure_own_app
+            run_ui ui-callback callback "$OWN_SECRET" ;;
     esac
 done
 

@@ -37,8 +37,7 @@ export default (state=initialState, action) => {
     case api.CREATE_COPY_JOB_FAILURE:
     case api.STOP_COPY_JOB_FAILURE:
     case api.LIST_CLOUD_CONNECTIONS_FAILURE:
-    case api.CREATE_CLOUD_CONNECTION_FAILURE:
-    case api.UPDATE_CLOUD_CONNECTION_FAILURE:
+    // CREATE/UPDATE_CLOUD_CONNECTION_FAILURE: shown in the connection dialog (cloudErrorMessage)
     case api.DELETE_CLOUD_CONNECTION_FAILURE:
     case api.MAKE_DIRECTORY_FAILURE:
     {

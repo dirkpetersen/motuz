@@ -125,8 +125,10 @@ class TestGdriveDiscovery(AppContextTest):
                 (200, {'drives': [{'id': '0BBB', 'name': 'Core'}]}),
             ]),
         ])
+        info = {}
         with mock.patch.object(oauth_manager, '_request', request):
-            drives = oauth_manager._discover_gdrive('tok')
+            drives = oauth_manager._discover_gdrive('tok', info)
+        self.assertEqual(info, {'account': 'alice@example.org'})
         self.assertEqual(drives, [
             {'id': 'root', 'name': 'My Drive (alice@example.org)', 'drive_type': 'my_drive'},
             {'id': '0AAA', 'name': 'Shared drive: Lab', 'drive_type': 'shared_drive'},
@@ -140,9 +142,24 @@ class TestGdriveDiscovery(AppContextTest):
             (api + '/about', (200, {'user': {}})),
             (api + '/drives', (403, {'error': {'message': 'nope'}})),
         ])
+        info = {}
         with mock.patch.object(oauth_manager, '_request', request):
-            drives = oauth_manager._discover_gdrive('tok')
+            drives = oauth_manager._discover_gdrive('tok', info)
         self.assertEqual(drives, [{'id': 'root', 'name': 'My Drive', 'drive_type': 'my_drive'}])
+        self.assertEqual(info, {})
+
+    def test_flow_result_account(self):
+        flow = mock.Mock(state='s', drives='{"drives": [{"id": "root", "name": "My Drive", "drive_type": "my_drive"}], "account": "a@b.org"}')
+        self.assertEqual(oauth_manager._flow_result(flow), {
+            'state': 's',
+            'drives': [{'id': 'root', 'name': 'My Drive', 'drive_type': 'my_drive'}],
+            'default_drive_id': 'root',
+            'account': 'a@b.org',
+        })
+        # Flows stored before the account was recorded
+        flow.drives = '[{"id": "root", "name": "My Drive", "drive_type": "my_drive"}]'
+        self.assertIsNone(oauth_manager._flow_result(flow)['account'])
+        self.assertEqual(oauth_manager._flow_result(flow)['default_drive_id'], 'root')
 
     def test_drive_api_disabled(self):
         request, _ = self.fake_request([

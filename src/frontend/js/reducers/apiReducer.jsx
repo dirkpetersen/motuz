@@ -5,6 +5,9 @@ import * as dialog from 'actions/dialogActions.jsx';
 const initialState = {
     clouds: [],
     cloudErrors: {},
+    // Plain-language reason why creating, updating or testing a connection failed; the
+    // connection dialogs show it above their buttons
+    cloudErrorMessage: null,
     jobs: [],
     jobPages: 1,
     hashsumJobs: [],
@@ -175,6 +178,7 @@ export default (state=initialState, action) => {
         return {
             ...state,
             cloudErrors: initialState.cloudErrors,
+            cloudErrorMessage: null,
         }
     }
     case api.CREATE_CLOUD_CONNECTION_SUCCESS: {
@@ -187,12 +191,14 @@ export default (state=initialState, action) => {
                 newCloudConnection,
             ],
             cloudErrors: initialState.cloudErrors,
+            cloudErrorMessage: null,
         }
     }
     case api.CREATE_CLOUD_CONNECTION_FAILURE: {
         return {
             ...state,
             cloudErrors: responseErrors(action),
+            cloudErrorMessage: responseMessage(action, 'The connection could not be created.'),
         }
     }
 
@@ -200,6 +206,7 @@ export default (state=initialState, action) => {
         return {
             ...state,
             cloudErrors: initialState.cloudErrors,
+            cloudErrorMessage: null,
         }
     }
     case api.UPDATE_CLOUD_CONNECTION_SUCCESS: {
@@ -219,6 +226,7 @@ export default (state=initialState, action) => {
         return {
             ...state,
             cloudErrors: responseErrors(action),
+            cloudErrorMessage: responseMessage(action, 'The changes could not be saved.'),
         }
     }
 
@@ -230,6 +238,7 @@ export default (state=initialState, action) => {
                 success: null,
             },
             cloudErrors: initialState.cloudErrors,
+            cloudErrorMessage: null,
         }
     }
     case api.VERIFY_CLOUD_CONNECTION_SUCCESS: {
@@ -252,6 +261,7 @@ export default (state=initialState, action) => {
                 success: false,
             },
             cloudErrors: responseErrors(action),
+            cloudErrorMessage: responseMessage(action, 'The connection could not be tested.'),
         }
     }
     case dialog.HIDE_NEW_CLOUD_CONNECTION_DIALOG:
@@ -263,6 +273,7 @@ export default (state=initialState, action) => {
             ...state,
             cloudConnectionVerification: initialState.cloudConnectionVerification,
             cloudErrors: initialState.cloudErrors,
+            cloudErrorMessage: null,
         }
     }
 
@@ -307,4 +318,16 @@ export default (state=initialState, action) => {
  */
 function responseErrors(action) {
     return ((action.payload && action.payload.response) || {}).errors || {};
+}
+
+// One sentence for the dialogs: field errors are shown next to their fields
+function responseMessage(action, fallback) {
+    const response = (action.payload && action.payload.response) || {};
+    if (response.errors && Object.keys(response.errors).length > 0) {
+        return 'Please correct the highlighted fields.';
+    }
+    if (typeof response.message === 'string' && response.message) {
+        return response.message;
+    }
+    return fallback + ' Please try again.';
 }

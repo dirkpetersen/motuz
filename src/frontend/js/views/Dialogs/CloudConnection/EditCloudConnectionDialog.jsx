@@ -2,7 +2,7 @@ import React from 'react';
 import { Modal, Button } from 'react-bootstrap'
 
 import CloudConnectionDialogFields from 'views/Dialogs/CloudConnection/CloudConnectionDialogFields.jsx';
-import VerifyStatusButton from 'views/Dialogs/CloudConnection/VerifyStatusButton.jsx'
+import VerifyStatusButton, { DialogError, dialogErrorMessage } from 'views/Dialogs/CloudConnection/VerifyStatusButton.jsx'
 import serializeForm from 'utils/serializeForm.jsx';
 import Icon from 'components/Icon.jsx'
 
@@ -45,12 +45,13 @@ class EditCloudConnectionDialog extends React.Component {
                         />
                     </Modal.Body>
                     <Modal.Footer>
-                        <Button variant="outline-danger mr-auto" onClick={() => this.handleDelete()}>
-                            Delete Connection
+                        <DialogError message={dialogErrorMessage(null, this.props.errorMessage, this.props.cloudConnectionVerification)} />
+                        <Button variant="outline-danger" onClick={() => this.handleDelete()}>
+                            Delete
                         </Button>
                         <div className="mr-auto">
-                            <Button variant="info" onClick={() => this.handleVerify()}>
-                                Verify Connection
+                            <Button variant="outline-secondary" onClick={() => this.handleVerify()}>
+                                Test connection
                             </Button>
                             <VerifyStatusButton {...this.props.cloudConnectionVerification} />
                         </div>
@@ -58,7 +59,7 @@ class EditCloudConnectionDialog extends React.Component {
                             Cancel
                         </Button>
                         <Button variant="primary" type="submit">
-                            Update Connection
+                            Save changes
                         </Button>
                     </Modal.Footer>
                 </form>
@@ -116,6 +117,7 @@ EditCloudConnectionDialog.defaultProps = {
         success: null,
     },
     errors: {},
+    errorMessage: null,
     onClose: () => {},
     onSubmit: (data) => {},
     onDelete: (data) => {},
@@ -130,6 +132,7 @@ const mapStateToProps = state => ({
     data: state.dialog.editCloudConnectionDialogData,
     cloudConnectionVerification: state.api.cloudConnectionVerification,
     errors: state.api.cloudErrors,
+    errorMessage: state.api.cloudErrorMessage,
 });
 
 const mapDispatchToProps = dispatch => ({

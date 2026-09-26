@@ -20,7 +20,7 @@ class OauthFlow(db.Model):
 
     # Set once the authorization code was exchanged
     token = db.Column(db.String, nullable=True)
-    drives = db.Column(db.String, nullable=True) # JSON list of discovered drives
+    drives = db.Column(db.String, nullable=True) # JSON {drives: [...], account} (older flows: the list only)
 
     created_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
 

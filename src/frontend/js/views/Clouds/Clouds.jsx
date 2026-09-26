@@ -2,6 +2,7 @@ import React from 'react';
 
 import Navbar from 'components/Navbar.jsx'
 import CloudRow from 'views/Clouds/CloudRow.jsx'
+import { oauthProviderFromUrl } from 'views/Dialogs/CloudConnection/OauthSignIn.jsx';
 
 const headers = [
     "id",
@@ -53,8 +54,9 @@ class Clouds extends React.Component {
 
     componentDidMount() {
         this.props.onMount();
-        if (new URLSearchParams(window.location.search).get('oauth_state')) {
-            this.props.onShowNewConnectionDialog(); // Continue an automatic Microsoft sign-in
+        if (oauthProviderFromUrl()) {
+            // Continue an automatic "Sign in with Microsoft/Google", or show why it failed
+            this.props.onShowNewConnectionDialog();
         }
     }
 }
