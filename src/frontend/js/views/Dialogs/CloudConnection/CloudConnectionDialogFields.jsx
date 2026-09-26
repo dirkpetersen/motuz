@@ -41,7 +41,7 @@ const CONNECTION_TYPES = [
         value: 'onedrive',
     },
     {
-        label: 'Google Drive (beta)',
+        label: 'Google Drive',
         value: 'drive',
     },
 ]

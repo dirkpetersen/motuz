@@ -15,6 +15,10 @@ class NewCloudConnectionDialog extends React.Component {
         this.formRef = React.createRef();
         // "Sign in with Microsoft" creates the connection with its own button
         this.state = {signIn: false};
+        // Back from an automatic "Sign in with Microsoft/Google": read once, because the
+        // sign-in panel removes ?oauth_state from the address right after mounting and the
+        // dialog re-renders later (e.g. when the drives arrive)
+        this.oauthConnectionType = oauthConnectionTypeFromUrl();
     }
 
     render() {
@@ -46,8 +50,7 @@ class NewCloudConnectionDialog extends React.Component {
                     <Modal.Body>
                         <CloudConnectionDialogFields
                             data={{
-                                // Back from an automatic "Sign in with Microsoft/Google"
-                                type: oauthConnectionTypeFromUrl(),
+                                type: this.oauthConnectionType,
                                 s3_region: 'us-west-2',
                                 sftp_port: '22',
                             }}
