@@ -559,6 +559,31 @@ secret keeps them working. The client secret is used only by the `app`
 container.
 
 
+### Privacy policy and terms
+
+Motuz serves a privacy policy at `https://<host>/privacy` and terms of service
+at `https://<host>/terms`: plain HTML without login or JavaScript
+(`src/backend/api/views/legal_views.py`, templates in
+`src/backend/api/templates/legal/`). The login page and the page shown without
+JavaScript (`src/frontend/index.html`) describe the app and link to both.
+Google's consent-screen branding (*Google Auth Platform* > *Branding*) needs
+exactly these: the home page `https://<host>/`, the privacy policy link and the
+terms of service link, all on a domain you have verified in Google Search
+Console.
+
+Set who runs the installation in `.env` (all optional; without them the pages
+refer to "the administrator of this Motuz installation"):
+```bash
+MOTUZ_OPERATOR_NAME=Example Research Institute
+MOTUZ_CONTACT_EMAIL=motuz-admin@example.org
+MOTUZ_OPERATOR_URL=https://www.example.org/
+```
+The text describes what Motuz itself does. Review it with your institution
+(e.g. log retention, backups, who handles data protection requests), edit the
+templates if needed, and change `EFFECTIVE_DATE` in `legal_views.py` whenever
+the text changes.
+
+
 ### Using a custom database
 
 The [.env](/.env) file provides a set of default variables that can be overwritten with environment variables. This can be leveraged to use a custom database.

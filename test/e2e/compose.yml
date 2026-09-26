@@ -21,6 +21,10 @@ x-env: &env
     # Own-app mode (oauth-callback phase); empty = rclone's public app
     MOTUZ_ONEDRIVE_CLIENT_ID: ${OD_CLIENT_ID:-}
     MOTUZ_ONEDRIVE_REDIRECT_URI: ${OD_REDIRECT_URI:-}
+    # /privacy and /terms (traefik_test.sh checks that the values are escaped)
+    MOTUZ_OPERATOR_NAME: "E2E Lab <R&D>"
+    MOTUZ_CONTACT_EMAIL: "motuz-admin@example.org"
+    MOTUZ_OPERATOR_URL: "https://example.org/?a=1&b=2"
 
 secrets:
     MOTUZ_DATABASE_PASSWORD:

@@ -57,6 +57,10 @@ for (const path of ['/home/alice/ui-src/sub', '/home/alice/ui-dst']) {
 await flow('login', async () => {
     await page.goto(BASE + '/', { waitUntil: 'domcontentloaded' });
     await page.waitForSelector('input[name=username]');
+    check('login page describes Motuz', (await page.textContent('.login-about')).includes('large data transfers'));
+    check('login page links to privacy policy and terms',
+        await page.locator('.login-footer a[href="/privacy"]').count() === 1
+        && await page.locator('.login-footer a[href="/terms"]').count() === 1);
     await page.fill('input[name=username]', 'alice');
     await page.fill('input[name=password]', 'wrong');
     await page.keyboard.press('Enter');
@@ -70,6 +74,9 @@ await flow('login', async () => {
     check('logged in: file browser shows /home/alice', body.includes('/home/alice'));
     check('both panes list the home directory', await page.locator('.grid-files').count() === 2
         && await page.locator('.grid-files').nth(1).getByText('ui-dst', { exact: true }).count() === 1);
+    check('app footer links to privacy policy and terms',
+        await page.locator('#zone-status-bar a[href="/privacy"]').isVisible()
+        && await page.locator('#zone-status-bar a[href="/terms"]').isVisible());
 });
 
 await flow('drag-and-drop copy', async () => {

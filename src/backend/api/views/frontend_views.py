@@ -9,6 +9,8 @@ so the Python side only picks the file and the cache headers:
 - index.html is never stored, so a deploy is picked up on the next page load
 - any other path gets index.html for react-router (e.g. /clouds), except the
   backend prefixes, which keep returning a real 404
+- /privacy and /terms are server-side pages (views/legal_views.py); their rules win
+  over the catch-all, which only redirects /privacy/ and 404s paths below them
 
 In development webpack-dev-server serves the frontend and FRONTEND_DIR usually does
 not exist, so these routes return 404.
@@ -17,6 +19,8 @@ import os
 
 from flask import Blueprint, abort, current_app, redirect, send_from_directory
 from werkzeug.security import safe_join
+
+from .legal_views import LEGAL_PAGES
 
 
 # Cache lifetime (seconds) of the top-level asset folders of the build
@@ -27,7 +31,7 @@ ASSET_MAX_AGE = {
 }
 
 # Paths below these are never answered with index.html
-BACKEND_PREFIXES = ('api', 'swaggerui', 'internal')
+BACKEND_PREFIXES = ('api', 'swaggerui', 'internal') + LEGAL_PAGES
 
 bp = Blueprint('frontend', __name__)
 
@@ -44,6 +48,8 @@ def asset(folder, filename):
 def index(path):
     if path == 'api':
         return redirect('/api/', 308) # Swagger UI, as before this route existed
+    if path.rstrip('/') in LEGAL_PAGES:
+        return redirect('/' + path.rstrip('/'), 308) # /privacy/ -> /privacy
     if path.split('/', 1)[0] in BACKEND_PREFIXES:
         abort(404)
     root = current_app.config['FRONTEND_DIR']
