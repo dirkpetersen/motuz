@@ -81,6 +81,8 @@ class Login extends React.Component {
                     <footer className="login-footer text-muted">
                         <p className="mb-1">&copy; 2019 Fred Hutchinson Cancer Research Center</p>
                         <nav>
+                            <a href="/about">About Motuz</a>
+                            <span aria-hidden="true"> &middot; </span>
                             <a href="/privacy">Privacy Policy</a>
                             <span aria-hidden="true"> &middot; </span>
                             <a href="/terms">Terms of Service</a>

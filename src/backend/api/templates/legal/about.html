@@ -1,0 +1,50 @@
+{% extends "legal/base.html" %}
+{%- from "legal/_macros.html" import operator_name, contact with context -%}
+{% block title %}About{% endblock %}
+{% block description %}Motuz is a web interface for large data transfers between on-premise storage and cloud storage (S3, Azure, Google Drive, OneDrive and more), built on rclone.{% endblock %}
+{% block content %}
+<h1>Motuz</h1>
+<p><strong>A web interface for large data transfers between on-premise storage and the cloud.</strong></p>
+
+<p>Motuz lets researchers and staff move their own data between the storage systems they
+already have access to: the file systems of this site and cloud storage such as Amazon S3,
+Azure Blob Storage, Google Cloud Storage, OpenStack Swift, <strong>Google Drive</strong>,
+Microsoft OneDrive and SharePoint, Dropbox, SFTP and WebDAV. It is operated by
+{% if operator.name %}{{ operator_name() }}{% else %}the administrator of this installation{% endif %}
+and runs the open-source tool <a href="https://rclone.org/">rclone</a> on the server to do the actual work.</p>
+
+<p><a href="/">Sign in to Motuz</a> with your account of this site.</p>
+
+<h2>What you can do with Motuz</h2>
+<ul>
+    <li><strong>Browse</strong> your folders on this site and in your cloud storage side by side, in two panes.</li>
+    <li><strong>Copy</strong> files and folders between them, by selecting them or dragging them from one pane to the other.
+    Transfers run on the server, so they continue when you close the browser, and you can follow their progress or stop them.</li>
+    <li><strong>Verify</strong> transfers with integrity checks that compare checksums of source and destination.</li>
+    <li><strong>Connect</strong> cloud storage once: sign in with Google or Microsoft, or use credentials from your home directory,
+    and use the connection for all later transfers.</li>
+</ul>
+
+<h2>Why Motuz asks for access to your Google Drive</h2>
+<p>When you choose <em>Sign in with Google</em>, Motuz requests the Google Drive scope
+<code>https://www.googleapis.com/auth/drive</code>. Motuz uses it only to do what you ask for:</p>
+<ul>
+    <li>to <strong>list</strong> the files and folders of your My Drive or a shared drive when you open it in a pane,</li>
+    <li>to <strong>read</strong> files you copy from Google Drive to another location and to <strong>write</strong> files you copy
+    into Google Drive, and to create the folders you create there,</li>
+    <li>to compute <strong>checksums</strong> when you start an integrity check.</li>
+</ul>
+<p>Narrower scopes, which only cover files that Motuz itself created or you opened with it, cannot give access to
+the existing folders you want to transfer, which is why the full Drive scope is needed. Motuz does not access your
+Drive in the background, does not scan, analyze, sell or share your data, does not use it for advertising or to
+train AI/ML models, and only sends files to the destination you choose. The OAuth token is stored on this server
+only, is never shown in the browser, and is deleted when you delete the connection. You can also revoke access at any
+time at <a href="https://myaccount.google.com/permissions">myaccount.google.com/permissions</a>.</p>
+<p>Motuz's use and transfer of information received from Google APIs adheres to the
+<a href="https://developers.google.com/terms/api-services-user-data-policy">Google API Services User Data Policy</a>,
+including the Limited Use requirements. Details are in the <a href="/privacy">Privacy Policy</a>.</p>
+
+<h2>Contact</h2>
+<p>Questions about this installation: {{ contact() }}.
+See also the <a href="/privacy">Privacy Policy</a> and the <a href="/terms">Terms of Service</a>.</p>
+{% endblock %}

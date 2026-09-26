@@ -16,7 +16,7 @@ from flask import Blueprint, current_app, render_template
 EFFECTIVE_DATE = '2026-09-25'
 
 # Top-level paths served here; frontend_views never answers them with the SPA
-LEGAL_PAGES = ('privacy', 'terms')
+LEGAL_PAGES = ('about', 'privacy', 'terms')
 
 # Legal text changes only with a deploy or a configuration change
 CACHE_CONTROL = 'public, max-age=3600'
@@ -56,6 +56,12 @@ def _render(template):
     response.headers['Cache-Control'] = CACHE_CONTROL
     response.headers['Content-Security-Policy'] = CONTENT_SECURITY_POLICY
     return response
+
+
+@bp.route('/about')
+def about():
+    """Public homepage for reviewers (e.g. Google's OAuth verification): the app itself is behind a login"""
+    return _render('legal/about.html')
 
 
 @bp.route('/privacy')

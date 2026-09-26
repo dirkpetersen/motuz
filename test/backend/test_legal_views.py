@@ -184,3 +184,15 @@ class OperatorConfigTestCase(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class TestAboutPage(unittest.TestCase):
+
+    def test_about_is_public_and_explains_google_data_use(self):
+        from api.application import app
+        client = app.test_client()
+        response = client.get('/about')
+        self.assertEqual(response.status_code, 200)
+        html = response.get_data(as_text=True)
+        for text in ('https://www.googleapis.com/auth/drive', 'Limited Use', 'href="/privacy"', 'href="/terms"', 'Sign in to Motuz'):
+            self.assertIn(text, html)

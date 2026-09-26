@@ -19,7 +19,7 @@ module.exports = merge(common, {
         allowedHosts: process.env.MOTUZ_HOST ? 'all' : 'auto',
         proxy: [{
             // /privacy and /terms are server-side pages (views/legal_views.py)
-            context: ['/api', '/swaggerui', '/privacy', '/terms'],
+            context: ['/api', '/swaggerui', '/about', '/privacy', '/terms'],
             target: 'http://localhost:5000/',
         }],
     },
