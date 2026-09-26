@@ -10,9 +10,9 @@ import Clouds from 'views/Clouds/Clouds.jsx'
 import App from 'views/App/App.jsx'
 import Alerts from 'views/Alerts/Alerts.jsx'
 
-import 'style.css'
 import 'bootstrap/dist/css/bootstrap.min.css';
 import 'react-toggle/style.css'
+import 'style.css' // after Bootstrap, so that its rules win at equal specificity
 
 import 'favicon.ico';
 

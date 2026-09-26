@@ -32,8 +32,8 @@ class MkdirDialog extends React.Component {
                                     name="connection_id"
                                     value={host.id}
                                 />
-                                <div className="row form-group">
-                                    <div className="col-4 text-right">
+                                <div className="row mb-3">
+                                    <div className="col-4 text-end">
                                         <b>Path</b>
                                     </div>
                                     <div className="col-7">
@@ -42,8 +42,8 @@ class MkdirDialog extends React.Component {
                                     <input type="hidden" name="path_prefix" value={path}/>
                                     <div className="col-1"></div>
                                 </div>
-                                <div className="row form-group">
-                                    <div className="col-4 text-right">
+                                <div className="row mb-3">
+                                    <div className="col-4 text-end">
                                         <b>Directory Name</b>
                                     </div>
                                     <div className="col-7">

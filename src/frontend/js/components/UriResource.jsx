@@ -37,13 +37,9 @@ class UriResource extends React.PureComponent {
             <React.Fragment>
                 <OverlayTrigger
                     placement="left"
-                    shouldUpdatePosition={true}
                     delay={{ show: this.state.tooltipHoverDelay, hide: 100 }}
                     overlay={props => (
-                        <Tooltip
-                            {...props }
-                            show={props.show.toString()}
-                        >
+                        <Tooltip {...props}>
                             {this.state.tooltipText}
                         </Tooltip>
                     )}

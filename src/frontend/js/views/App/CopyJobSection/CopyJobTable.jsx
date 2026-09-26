@@ -164,11 +164,11 @@ class CopyJobTable extends React.Component {
         return (
             <>
                 {pages > 1 && (
-                    <Pagination size="sm" className='justify-content-end mr-3'>
+                    <Pagination size="sm" className='justify-content-end me-3'>
                         {React.Children.toArray(pageItems)}
                     </Pagination>
                 )}
-                <Table striped hover size="sm" className='text-left'>
+                <Table striped hover size="sm" className='text-start'>
                     <thead>
                         <tr>{tableHeaders}</tr>
                     </thead>

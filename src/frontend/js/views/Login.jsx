@@ -27,10 +27,10 @@ class Login extends React.Component {
                             width={102}
                             height={122}
                         />
-                        <h1 className="h1 mb-5 font-weight-normal">Motuz</h1>
+                        <h1 className="h1 mb-5 fw-normal">Motuz</h1>
 
-                        <div className='form-group'>
-                            <label htmlFor="inputEmail" className="sr-only">Username</label>
+                        <div className='mb-3'>
+                            <label htmlFor="inputEmail" className="visually-hidden">Username</label>
                             <input
                                 name='username'
                                 type="text"
@@ -45,8 +45,8 @@ class Login extends React.Component {
                                 autoComplete="off"
                             />
                         </div>
-                        <div className="form-group">
-                            <label htmlFor="inputPassword" className="sr-only">Password</label>
+                        <div className="mb-3">
+                            <label htmlFor="inputPassword" className="visually-hidden">Password</label>
                             <input
                                 name='password'
                                 type="password"
@@ -66,8 +66,8 @@ class Login extends React.Component {
                                 Checking Credentials...
                             </span>
                         </div>
-                        <div className="form-group">
-                            <button className="btn btn-lg btn-primary btn-block" type="submit">Sign in</button>
+                        <div className="mb-3">
+                            <button className="btn btn-lg btn-primary w-100" type="submit">Sign in</button>
                         </div>
                     </form>
                     <p className="login-about text-muted">

@@ -5,7 +5,7 @@ export default class FormItem extends React.PureComponent {
         const { id, label, name, type, small, placeholder } = this.props;
 
         return (
-            <div className="form-group">
+            <div className="mb-3">
                 <label
                     htmlFor={id}
                 >

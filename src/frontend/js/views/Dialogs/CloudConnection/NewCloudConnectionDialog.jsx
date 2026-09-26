@@ -54,7 +54,7 @@ class NewCloudConnectionDialog extends React.Component {
                             <a
                                 target="_blank"
                                 href="https://sciwiki.fredhutch.org/compdemos/motuz/#add-a-new-cloud-connection-to-motuz"
-                                className='ml-2'
+                                className='ms-2'
                             >
                                 <Icon name='question' verticalAlign='middle'></Icon>
                             </a>
@@ -100,7 +100,7 @@ class NewCloudConnectionDialog extends React.Component {
         return (
             <Modal.Footer>
                 <DialogError message={this.state.error} />
-                {!ready && <span className="mr-auto text-muted footer-hint">Sign in first</span>}
+                {!ready && <span className="me-auto text-muted footer-hint">Sign in first</span>}
                 <Button variant="secondary" onClick={() => this.handleClose()}>
                     Cancel
                 </Button>
@@ -116,7 +116,7 @@ class NewCloudConnectionDialog extends React.Component {
         return (
             <Modal.Footer>
                 <DialogError message={dialogErrorMessage(null, this.props.errorMessage, verification)} />
-                <div className="mr-auto">
+                <div className="me-auto">
                     <Button variant="outline-secondary" onClick={() => this.handleVerify()}>
                         Test connection
                     </Button>

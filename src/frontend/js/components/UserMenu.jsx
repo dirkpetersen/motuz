@@ -7,13 +7,13 @@ import Icon from 'components/Icon.jsx'
 class UserMenu extends React.PureComponent {
     render() {
         return (
-            <NavDropdown alignRight className='w-200' direction='left' title={this.props.username}>
+            <NavDropdown align='end' title={this.props.username}>
                 <Link to='#' onClick={(e) => this.onSettingsClick(e)} className='dropdown-item'>
-                    <Icon name='gear' className='mr-2'/>
+                    <Icon name='gear' className='me-2'/>
                     <span>Settings</span>
                 </Link>
                 <Link to="/logout" className='dropdown-item'>
-                    <Icon name='sign-out' className='mr-2'/>
+                    <Icon name='sign-out' className='me-2'/>
                     Logout
                 </Link>
             </NavDropdown>

@@ -56,7 +56,7 @@ class EditCopyJobDialog extends React.Component {
                     </Modal.Header>
                     <Modal.Body>
                         <div className="container">
-                            <div className="form-group">
+                            <div className="mb-3">
                                 <div className="text-center">
                                     <b className={`text-${color}`}>{executionTime}</b>
                                 </div>
@@ -70,11 +70,11 @@ class EditCopyJobDialog extends React.Component {
 
                             <h5 className="text-primary mb-2">Details</h5>
 
-                            <div className="row form-group">
-                                <div className="col-4 text-right">
+                            <div className="row mb-3">
+                                <div className="col-4 text-end">
                                     <b>Source</b>
                                 </div>
-                                <div className="col-7 text-left">
+                                <div className="col-7 text-start">
                                     <UriResource
                                         protocol={data.src_cloud_type}
                                         path={data.src_resource_path}
@@ -83,11 +83,11 @@ class EditCopyJobDialog extends React.Component {
                                 </div>
                                 <div className="col-1"></div>
                             </div>
-                            <div className="row form-group">
-                                <div className="col-4 text-right">
+                            <div className="row mb-3">
+                                <div className="col-4 text-end">
                                     <b>Destination</b>
                                 </div>
-                                <div className="col-7 text-left">
+                                <div className="col-7 text-start">
                                     <UriResource
                                         protocol={data.dst_cloud_type}
                                         path={data.dst_resource_path}
@@ -117,7 +117,7 @@ class EditCopyJobDialog extends React.Component {
                                     Check Integrity
                                 </Button>
                                 {checkIntegrityDisabled && (
-                                    <div className="text-left pl-1">
+                                    <div className="text-start ps-1">
                                         Integrity check not needed for S3 destinations
                                     </div>
                                 )}
@@ -128,7 +128,7 @@ class EditCopyJobDialog extends React.Component {
                                 Retry
                             </Button>
                         )}
-                        <Button className="ml-auto" variant="secondary" onClick={() => this.handleClose()}>
+                        <Button className="ms-auto" variant="secondary" onClick={() => this.handleClose()}>
                             Close
                         </Button>
                     </Modal.Footer>
@@ -158,7 +158,7 @@ class EditCopyJobDialog extends React.Component {
         return (
             <React.Fragment>
                 <h5 className="text-primary mb-2">Output</h5>
-                <div className="form-group">
+                <div className="mb-3">
                     <pre className='copy-job-blob'><code>
                         {data.progress_text}
                     </code></pre>
@@ -175,7 +175,7 @@ class EditCopyJobDialog extends React.Component {
         return (
             <React.Fragment>
                 <h5 className="text-primary mb-2">Errors</h5>
-                <div className="form-group">
+                <div className="mb-3">
                     <pre className='copy-job-blob'><code>
                         {data.progress_error_text}
                     </code></pre>

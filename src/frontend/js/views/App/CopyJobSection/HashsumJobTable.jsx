@@ -114,7 +114,7 @@ class HashsumJobTable extends React.Component {
         })
 
         return (
-            <table className='table table-sm table-striped table-hover text-left'>
+            <table className='table table-sm table-striped table-hover text-start'>
                 <thead>
                     <tr>{tableHeaders}</tr>
                 </thead>

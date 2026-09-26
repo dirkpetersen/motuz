@@ -37,17 +37,17 @@ class PaneFile extends React.Component {
                 >
                     <Icon
                         name={type === 'dir' ? 'file-directory' : 'file'}
-                        className='mr-2 octicon'
+                        className='me-2'
                     />
                     <span>{name}</span>
                 </div>
                 <div
                     className={classnames({
-                        'text-right': true,
+                        'text-end': true,
                         'grid-file-row': true,
                         'active': this.props.active,
                         'drop-target': this.props.dropTarget,
-                        'pr-2': true,
+                        'pe-2': true,
                     })}
                     {...rowProps}
                 >
