@@ -18,7 +18,8 @@ module.exports = merge(common, {
         // Only accept other Host headers when explicitly listening on another interface
         allowedHosts: process.env.MOTUZ_HOST ? 'all' : 'auto',
         proxy: [{
-            context: ['/api', '/swaggerui'],
+            // /privacy and /terms are server-side pages (views/legal_views.py)
+            context: ['/api', '/swaggerui', '/privacy', '/terms'],
             target: 'http://localhost:5000/',
         }],
     },

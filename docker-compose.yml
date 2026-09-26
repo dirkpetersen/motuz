@@ -24,6 +24,13 @@ x-variables:
         # the MOTUZ_GDRIVE_CLIENT_SECRET docker secret.
         MOTUZ_GDRIVE_CLIENT_ID: ${MOTUZ_GDRIVE_CLIENT_ID:-}
         MOTUZ_GDRIVE_REDIRECT_URI: ${MOTUZ_GDRIVE_REDIRECT_URI:-}
+    - &operator-environment
+        # Who runs this installation, shown on the public /privacy and /terms pages
+        # (README, "Privacy policy and terms"). Empty: "the administrator of this Motuz
+        # installation".
+        MOTUZ_OPERATOR_NAME: ${MOTUZ_OPERATOR_NAME:-}
+        MOTUZ_CONTACT_EMAIL: ${MOTUZ_CONTACT_EMAIL:-}
+        MOTUZ_OPERATOR_URL: ${MOTUZ_OPERATOR_URL:-}
     - &shared-volumes
         volumes:
             # Using system users for authentication
@@ -106,7 +113,7 @@ services:
         network_mode: host
         <<: *shared-volumes
         environment:
-            <<: [*database-environment, *smtp-environment, *oauth-environment]
+            <<: [*database-environment, *smtp-environment, *oauth-environment, *operator-environment]
         secrets:
             - MOTUZ_DATABASE_PASSWORD
             - MOTUZ_FLASK_SECRET_KEY
@@ -123,7 +130,7 @@ services:
         network_mode: host
         <<: *shared-volumes
         environment:
-            <<: [*database-environment, *smtp-environment, *oauth-environment]
+            <<: [*database-environment, *smtp-environment, *oauth-environment, *operator-environment]
         secrets:
             - MOTUZ_DATABASE_PASSWORD
             - MOTUZ_FLASK_SECRET_KEY

@@ -1,0 +1,80 @@
+{% extends "legal/base.html" %}
+{%- from "legal/_macros.html" import operator_name, contact with context -%}
+{% block title %}Terms of Service{% endblock %}
+{% block description %}Terms of use of this Motuz installation, a self-hosted tool for research data transfers between on-premise and cloud storage.{% endblock %}
+{% block content %}
+<h1>Terms of Service</h1>
+<p class="meta">Effective date: {{ effective_date }}</p>
+
+<p>Motuz is a web interface for large data transfers between on-premise storage and cloud
+storage (Amazon S3, Azure Blob Storage, Google Cloud Storage, Google Drive, Microsoft
+OneDrive and SharePoint, Dropbox, SFTP, WebDAV and others). It uses the open-source tool
+<a href="https://rclone.org/">rclone</a> to copy and verify files. This installation is
+provided to its users by its operator{% if operator.name %}, {{ operator_name() }}{% endif %}
+(the "operator"). By signing in you agree
+to these terms. How your data is handled is described in the
+<a href="/privacy">Privacy Policy</a>.</p>
+
+<h2>1. Who may use Motuz</h2>
+<p>Motuz is available only to people who have an account on the systems of the operator.
+You sign in with that account, and you may not share it or let others use your session.</p>
+
+<h2>2. Acceptable use</h2>
+<ul>
+    <li>Use Motuz only to transfer and verify data you are authorized to access, copy and
+    store, between storage systems you are authorized to use.</li>
+    <li>Do not use Motuz to break the law, to infringe the rights of others, to get around
+    access controls, or to disrupt the service or the storage systems it connects to (for
+    example by deliberately overloading them).</li>
+    <li>Follow the rules of your institution and of the storage providers you connect,
+    including data protection, data classification, export control and research data
+    management policies and the terms of your cloud accounts.</li>
+</ul>
+
+<h2>3. Your responsibility for your data</h2>
+<p>You are responsible for the data you transfer: for having the right to transfer it, for
+choosing appropriate destinations for its sensitivity (for example for protected health or
+personal data), and for any costs your transfers cause at cloud providers. Check your
+results: Motuz offers integrity checks, but you remain responsible for keeping copies of
+data you cannot afford to lose. Transfers can overwrite files at the destination.</p>
+
+<h2>4. Credentials and third-party accounts</h2>
+<p>When you add a connection you allow Motuz to use its credentials or OAuth tokens on your
+behalf, only for the actions you start. Your use of Google, Microsoft and other providers
+remains subject to their terms. You can remove this access at any time by deleting the
+connection and by revoking it with the provider.</p>
+
+<h2>5. No warranty</h2>
+<p>Motuz is open-source software provided "as is", without warranty of any kind, express or
+implied, including warranties of merchantability, fitness for a particular purpose and
+non-infringement. The operator does not guarantee that transfers complete, are free of
+errors, or that the service is secure against every threat.</p>
+
+<h2>6. Limitation of liability</h2>
+<p>To the extent permitted by law, neither the operator nor the authors of Motuz are liable
+for any loss of data, costs, lost profits, or indirect, incidental or consequential damages
+arising from the use of or the inability to use Motuz. Nothing in these terms limits
+liability that cannot be limited by law.</p>
+
+<h2>7. Availability</h2>
+<p>Motuz is provided on a best-effort basis. It can be unavailable, for example for
+maintenance or updates, and running transfers may then be interrupted and need to be
+started again. There is no guaranteed level of service unless the operator agrees to one
+separately. Features and supported providers may change.</p>
+
+<h2>8. Suspension and termination</h2>
+<p>The operator may suspend or disable accounts, stop running transfers, or remove
+connections, in particular when these terms or institutional policies are violated, when
+needed to protect the service or other users, or when your account on the operator's
+systems ends. You can stop using Motuz at any time; delete your connections to remove your
+stored credentials.</p>
+
+<h2>9. Changes to these terms</h2>
+<p>The operator may change these terms. The current version is always published on this
+page with its effective date. If you continue to use Motuz after a change, you accept the
+new terms.</p>
+
+<h2>10. Contact</h2>
+<p>{% if operator.name %}Operator: {{ operator_name() }}<br>
+{% endif %}Contact: {{ contact() }}</p>
+{% endblock %}

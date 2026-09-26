@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Traefik checks against the running e2e stack (:80/:443): TLS versions and ciphers, the
 # HTTP -> HTTPS redirect, security headers and caching on every kind of path, SPA and
-# Swagger routing, /internal (token broker) not reachable from outside, loopback-only
+# Swagger routing, the public /privacy and /terms pages, /internal (token broker) not reachable from outside, loopback-only
 # backend ports. Needs curl, openssl and ss. The slow timeout checks (responses after
 # 240s/660s) are not part of this suite.
 set -u
@@ -30,7 +30,7 @@ check 'HTTP /internal redirects only' bash -c "curl -s -o /dev/null -w '%{http_c
 JS=$(curl -sk https://localhost/ | grep -oE '/js/[A-Za-z0-9_.-]+\.js' | head -1)
 echo "    bundle: $JS"
 check 'index references a /js bundle' test -n "$JS"
-for path in / /clouds /api/system/info/ "$JS" /img/logo.png /api/ /swaggerui/swagger-ui-bundle.js /api/nope; do
+for path in / /clouds /api/system/info/ "$JS" /img/logo.png /api/ /swaggerui/swagger-ui-bundle.js /api/nope /privacy /terms; do
     H=$(hdr "https://localhost$path")
     check "security headers on $path" bash -c "echo '$H' | grep -qi '^strict-transport-security: max-age=31536000' && echo '$H' | grep -qi '^x-frame-options: DENY' && echo '$H' | grep -qi '^x-content-type-options: nosniff' && echo '$H' | grep -qi '^referrer-policy: same-origin'"
 done
@@ -52,6 +52,34 @@ check '/api -> /api/' bash -c "curl -sk -o /dev/null -w '%{http_code} %{redirect
 check 'trailing slash redirect stays https' bash -c "curl -sk -o /dev/null -w '%{redirect_url}' https://localhost/api/connections | grep -q '^https://localhost/api/connections/'"
 check 'unknown /api path is a 404, not the SPA' bash -c "[ \"\$(curl -sk -o /dev/null -w '%{http_code}' https://localhost/api/nope)\" = 404 ]"
 check 'no Traefik dashboard/API' bash -c "! curl -sk https://localhost/dashboard/ | grep -qi traefik && ! curl -sk https://localhost/api/rawdata | grep -q routers && ! curl -s -m 2 http://127.0.0.1:8080/api/rawdata | grep -q routers"
+
+# --- public privacy policy and terms (no login, no JavaScript)
+for path in /privacy /terms; do
+    H=$(hdr "https://localhost$path")
+    curl -sk "https://localhost$path" > "$BODY"
+    check "$path 200 without login" bash -c "echo '$H' | grep -q '^HTTP/[0-9.]* 200'"
+    check "$path is HTML" bash -c "echo '$H' | grep -qi '^content-type: text/html; charset=utf-8'"
+    check "$path cached 1 hour" bash -c "echo '$H' | grep -qi '^cache-control: public, max-age=3600'"
+    check "$path CSP without scripts" bash -c "echo \"\$0\" | grep -qi \"^content-security-policy: default-src 'none';\"" "$H"
+    check "$path is not the SPA" bash -c "! grep -q '<script' '$BODY' && ! grep -qF '$JS' '$BODY'"
+    check "$path links home" grep -q 'href="/"' "$BODY"
+    check "$path links privacy and terms" bash -c 'grep -q "href=\"/privacy\"" "$0" && grep -q "href=\"/terms\"" "$0"' "$BODY"
+    check "$path shows the escaped operator" bash -c 'grep -qF "E2E Lab &lt;R&amp;D&gt;" "$0" && ! grep -qF "<R&D>" "$0"' "$BODY"
+    check "$path links the operator and contact" bash -c 'grep -qF "href=\"https://example.org/?a=1&amp;b=2\"" "$0" && grep -qF "href=\"mailto:motuz-admin@example.org\"" "$0"' "$BODY"
+    R=$(curl -s -o /dev/null -w '%{http_code} %{redirect_url}' "http://localhost$path")
+    check "HTTP -> HTTPS redirect $path" bash -c "[[ '$R' =~ ^(301|308)\ https://localhost$path$ ]]"
+    check "$path/ -> $path" bash -c "curl -sk -o /dev/null -w '%{http_code} %{redirect_url}' https://localhost$path/ | grep -q '^308 https://localhost$path$'"
+    check "$path/x is a 404, not the SPA" bash -c "[ \"\$(curl -sk -o /dev/null -w '%{http_code}' https://localhost$path/x)\" = 404 ]"
+done
+curl -sk https://localhost/privacy > "$BODY"
+check '/privacy: Drive scope and Limited Use' bash -c 'grep -qF "https://www.googleapis.com/auth/drive" "$0" && grep -q "Limited Use requirements" "$0" && grep -qF "https://developers.google.com/terms/api-services-user-data-policy" "$0"' "$BODY"
+check '/privacy: Microsoft and revocation' bash -c 'grep -q "Files.ReadWrite.All" "$0" && grep -qF "https://myaccount.google.com/permissions" "$0"' "$BODY"
+curl -sk https://localhost/terms > "$BODY"
+check '/terms: warranty, liability, termination' bash -c 'grep -q "No warranty" "$0" && grep -q "Limitation of liability" "$0" && grep -q "Suspension and termination" "$0"' "$BODY"
+curl -sk https://localhost/ > "$BODY"
+check '/ without JavaScript describes Motuz' bash -c 'grep -q "<noscript>" "$0" && grep -q "large data transfers between on-premise storage" "$0"' "$BODY"
+check '/ without JavaScript links privacy and terms' bash -c 'grep -qE "href=\"?/privacy" "$0" && grep -qE "href=\"?/terms" "$0"' "$BODY"
+check '/ has a meta description' bash -c 'grep -qE "<meta name=\"?description\"? content=\"Motuz is a web interface" "$0"' "$BODY"
 
 # --- /internal (token broker)
 for path in /internal/oauth/token //internal/oauth/token /./internal/oauth/token /x/../internal/oauth/token /%69nternal/oauth/token /internal%2Foauth%2Ftoken /internal/oauth/token/ '/internal/oauth/token?a=b'; do

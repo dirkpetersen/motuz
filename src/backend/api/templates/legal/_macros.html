@@ -1,0 +1,17 @@
+{#- Operator and contact wording of the public pages; import "with context" -#}
+{%- macro operator_name() -%}
+{%- if operator.name -%}
+{%- if operator.url %}<a href="{{ operator.url }}">{{ operator.name }}</a>{% else %}{{ operator.name }}{% endif -%}
+{%- else -%}
+the administrator of this Motuz installation
+{%- endif -%}
+{%- endmacro -%}
+{%- macro contact() -%}
+{%- if operator.email and operator.email_is_address -%}
+<a href="mailto:{{ operator.email }}">{{ operator.email }}</a>
+{%- elif operator.email -%}
+{{ operator.email }}
+{%- else -%}
+the administrator of this Motuz installation
+{%- endif -%}
+{%- endmacro -%}

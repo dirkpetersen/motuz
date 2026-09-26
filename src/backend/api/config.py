@@ -85,6 +85,13 @@ class Config:
     GDRIVE_AUTH_URL = os.environ.get('MOTUZ_GDRIVE_AUTH_URL', 'https://accounts.google.com/o/oauth2/v2/auth')
     GDRIVE_API_URL = os.environ.get('MOTUZ_GDRIVE_API_URL', 'https://www.googleapis.com/drive/v3')
 
+    # Who runs this installation, shown on the public /privacy and /terms pages
+    # (views/legal_views.py). Unset: the pages refer to "the administrator of this
+    # Motuz installation". Only http(s) URLs are linked.
+    OPERATOR_NAME = _optional_env('MOTUZ_OPERATOR_NAME')
+    CONTACT_EMAIL = _optional_env('MOTUZ_CONTACT_EMAIL')
+    OPERATOR_URL = _optional_env('MOTUZ_OPERATOR_URL')
+
     # Built frontend (`npm run build`), served by views/frontend_views.py. The app image
     # puts it at /app/build, which is also <repository>/build in development.
     FRONTEND_DIR = os.environ.get('MOTUZ_FRONTEND_DIR', os.path.abspath(os.path.join(basedir, '..', '..', '..', 'build')))

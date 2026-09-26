@@ -51,6 +51,11 @@ def create_app(config_name='dev'):
     if 'internal' not in app.blueprints:
         app.register_blueprint(internal_bp)
 
+    # Public privacy policy and terms (no login, no JavaScript)
+    from .views.legal_views import bp as legal_bp
+    if 'legal' not in app.blueprints:
+        app.register_blueprint(legal_bp)
+
     # Werkzeug prefers rules with more static parts, so the frontend's catch-all route
     # only gets paths no other rule matches (trailing-slash redirects are kept)
     from .views.frontend_views import bp as frontend_bp

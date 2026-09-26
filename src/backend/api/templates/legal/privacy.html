@@ -1,0 +1,185 @@
+{% extends "legal/base.html" %}
+{%- from "legal/_macros.html" import operator_name, contact with context -%}
+{% block title %}Privacy Policy{% endblock %}
+{% block description %}How this Motuz installation processes, stores and protects your data, including data from Google Drive and Microsoft OneDrive.{% endblock %}
+{% block content %}
+<h1>Privacy Policy</h1>
+<p class="meta">Effective date: {{ effective_date }}</p>
+
+<p>Motuz is a web interface for large data transfers between on-premise storage
+(the file systems of this site) and cloud storage such as Amazon S3, Azure Blob Storage,
+Google Cloud Storage, OpenStack Swift, Google Drive, Microsoft OneDrive and SharePoint,
+Dropbox, SFTP and WebDAV servers. Motuz uses the open-source tool <a href="https://rclone.org/">rclone</a>
+to list, copy and verify files. It is used by researchers and staff to move their own
+data between the storage systems they already have access to.</p>
+
+<p>This policy is provided by the operator of this Motuz installation{% if operator.name %},
+{{ operator_name() }}{% endif %} (the "operator", "we"). It describes what data this
+installation processes, why, how long it is kept and how it is protected. Questions:
+contact {{ contact() }}.</p>
+
+<h2>1. Data we process</h2>
+<h3>Your account</h3>
+<ul>
+    <li>Your <strong>login name</strong> (the Unix / directory user name of this site). Your
+    password is checked at sign-in by the server's operating system (PAM, e.g. against your
+    institution's directory) and is <strong>never stored</strong> by Motuz.</li>
+    <li>Login tokens: after sign-in the browser receives short-lived tokens that contain your
+    login name. When you sign out, the server records their identifiers as revoked until
+    they would have expired.</li>
+</ul>
+<h3>Cloud connections</h3>
+<ul>
+    <li>The settings of each connection you create: name, type, bucket or container,
+    region, endpoint, account or user name and similar options.</li>
+    <li>The <strong>credentials</strong> of a connection: access keys, secret keys, passwords,
+    SAS URLs, service account keys and <strong>OAuth access and refresh tokens</strong> (Google
+    Drive, OneDrive, Dropbox). They are stored on the server in the Motuz database and are
+    <strong>never shown again in the browser</strong>: the API accepts them but never returns them.</li>
+    <li>Connections created from credentials in your home directory (AWS profiles, rclone
+    remotes, Azure CLI logins) store only the profile name; the keys are read from your own
+    files, as your user, each time they are used.</li>
+</ul>
+<h3>Transfers and integrity checks (jobs)</h3>
+<ul>
+    <li>Source and destination connection and paths, the description you enter, the times
+    a job started and ended, its progress (bytes and files transferred), status, error
+    messages and rclone's output.</li>
+    <li>For integrity checks: the names and checksums of the files that differ between
+    source and destination.</li>
+    <li>The email address you enter for a completion notification, if any.</li>
+    <li>File listings you look at in the file browser (names, sizes, dates) are fetched from
+    the storage when you open a folder and are not stored.</li>
+</ul>
+<h3>Server logs</h3>
+<ul>
+    <li>The web server and the application log requests and operations: your IP address,
+    time, requested address and result, and may include your browser's user agent.
+    Application logs record the operations Motuz runs (for example the rclone commands of
+    your jobs) with credentials masked.</li>
+</ul>
+<p>Motuz does not process the <em>contents</em> of your files other than to copy them to
+the destination you choose and to compute checksums for integrity checks.</p>
+
+<h2>2. Google user data (Google Drive)</h2>
+<p>When you create a Google Drive connection with <strong>Sign in with Google</strong>,
+Google asks you to grant Motuz access with the scope
+<code>https://www.googleapis.com/auth/drive</code> (see, edit, create and delete your
+Google Drive files). Motuz receives:</p>
+<ul>
+    <li>an OAuth access token and refresh token for your Google account;</li>
+    <li>during sign-in only, your Google account's name and email address and the names of
+    the shared drives you are a member of, so that you can choose which drive the
+    connection uses.</li>
+</ul>
+<p><strong>How Motuz uses Google user data.</strong> Motuz uses this access only to provide
+the functions you ask for, and only when you ask for them:</p>
+<ul>
+    <li>it <strong>lists</strong> files and folders when you browse the Google Drive connection;</li>
+    <li>it <strong>reads</strong> files when you start a transfer from Google Drive, and
+    <strong>creates and writes</strong> files and folders when you start a transfer to Google Drive
+    (including creating a folder you ask for);</li>
+    <li>it reads checksums and file contents when you start an <strong>integrity check</strong>.</li>
+</ul>
+<p>A transfer you started keeps running in the background until it finishes or you stop
+it. Motuz does <strong>not</strong> scan, index, analyze or monitor your Google Drive on its own,
+and does not access it at any other time.</p>
+<p><strong>Sharing and use restrictions.</strong> Google user data is not sold, is not used for
+advertising, and is not transferred to anyone except to the storage destination that you
+choose for a transfer (which is the purpose of the transfer) or where required by law.
+It is <strong>not used to develop, improve or train generalized artificial intelligence or
+machine learning models</strong>. People at the operator do not read your Google user data,
+except with your explicit agreement for specific files (for example when you ask for
+help), when necessary for security purposes such as investigating abuse, or to comply
+with applicable law.</p>
+<p>Motuz's use and transfer to any other app of information received from Google APIs will
+adhere to the <a href="https://developers.google.com/terms/api-services-user-data-policy">Google
+API Services User Data Policy</a>, including the Limited Use requirements.</p>
+<p><strong>Storage.</strong> The tokens are stored in the Motuz database on the operator's server.
+The refresh token never leaves the server: the rclone processes that run your transfers
+only receive short-lived access tokens. The account name, email address and drive names
+from sign-in are discarded after at most 15 minutes, when the sign-in is completed or
+abandoned. The connection keeps only the identifier of the drive you chose.</p>
+<p><strong>Removing access.</strong> Delete the connection in Motuz (Connections page): this
+deletes the stored tokens. You can also revoke Motuz's access at any time at
+<a href="https://myaccount.google.com/permissions">myaccount.google.com/permissions</a>;
+the connection then stops working.</p>
+
+<h2>3. Microsoft user data (OneDrive and SharePoint)</h2>
+<p>When you create a OneDrive connection with <strong>Sign in with Microsoft</strong>, Microsoft
+asks you to grant Motuz delegated Microsoft Graph permissions to read and write your files
+(<code>Files.ReadWrite.All</code>), to read the SharePoint sites you follow
+(<code>Sites.Read.All</code>) and to keep this access (<code>offline_access</code>); depending on
+the app registration also to read your basic profile (<code>User.Read</code>). Motuz receives
+OAuth access and refresh tokens and, during sign-in, the names of your drives and of the
+SharePoint sites and document libraries you can choose from.</p>
+<p>The same rules as for Google apply: Motuz lists, reads and writes files and folders
+<strong>only</strong> when you browse a OneDrive connection or start a transfer or integrity
+check; it does no automated scanning; Microsoft user data is not sold, not used for
+advertising, not transferred to anyone except the storage destination you choose, and not
+used to train AI or machine learning models. Tokens are stored on the server as described
+above and are deleted when you delete the connection. You can revoke access in your
+Microsoft account: <a href="https://myapps.microsoft.com">myapps.microsoft.com</a> for work or
+school accounts, <a href="https://account.live.com/consent/Manage">account.live.com/consent/Manage</a>
+for personal accounts.</p>
+
+<h2>4. Other storage providers</h2>
+<p>Credentials for other providers (for example S3 keys or SFTP passwords) are used only to
+list and transfer files as you request, in the same way, and are never shared.</p>
+
+<h2>5. Where data goes</h2>
+<p>Motuz runs on servers of the operator. Your files travel only between the storage
+systems you select for a transfer. Motuz does not send your data, usage information or
+credentials to the authors of the Motuz software, to analytics services or to any other
+third party. The operator's email server sends the notifications you request.</p>
+
+<h2>6. Retention</h2>
+<ul>
+    <li>Connection settings, credentials and OAuth tokens: until you delete the connection
+    (or the operator removes it, e.g. when your account is closed). Deleting a connection
+    deletes its stored credentials and tokens.</li>
+    <li>Unfinished Google or Microsoft sign-ins: deleted after 15 minutes.</li>
+    <li>Job records: kept so that you can see your transfer history, until the operator
+    deletes them.</li>
+    <li>Records of revoked login tokens: until the tokens would have expired.</li>
+    <li>Server logs: rotated and deleted after a limited time, according to the operator's
+    log retention settings.</li>
+    <li>Database backups, if the operator makes them, follow the operator's backup
+    retention policy.</li>
+</ul>
+
+<h2>7. Security</h2>
+<ul>
+    <li>All connections to Motuz use HTTPS (TLS 1.2 or newer).</li>
+    <li>Credentials and tokens are write-only in the API and are never sent back to the
+    browser; they are masked in logs.</li>
+    <li>Every connection and job belongs to one user; other users can neither see nor use
+    them.</li>
+    <li>File system operations and transfers run as <strong>your own user account</strong> on the
+    server, so the operating system enforces your file permissions.</li>
+    <li>OAuth refresh tokens stay on the server; login tokens are short-lived and are revoked
+    when you sign out.</li>
+</ul>
+
+<h2>8. Cookies and local storage</h2>
+<p>Motuz does not use tracking or advertising cookies, analytics or third-party scripts.
+After you sign in, your browser's local storage keeps your login tokens and a few display
+settings, so that you stay signed in across tabs; the login tokens are removed when you
+sign out.</p>
+
+<h2>9. Your choices and rights</h2>
+<p>You can view, change and delete your connections and see your jobs in Motuz at any time.
+To ask for access to or deletion of other data about you (for example job records or
+logs), or with any other question about this policy, contact {{ contact() }}. Depending on
+where you are, you may have further rights under data protection law; the operator
+handles such requests.</p>
+
+<h2>10. Changes</h2>
+<p>If this policy changes, the new version is published on this page with a new effective
+date. For significant changes to how Google or Microsoft user data is used, you will be
+asked for consent again where required.</p>
+
+<h2>11. Contact</h2>
+<p>{% if operator.name %}Operator: {{ operator_name() }}<br>
+{% endif %}Contact: {{ contact() }}</p>
+{% endblock %}
