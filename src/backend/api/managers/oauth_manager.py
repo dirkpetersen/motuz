@@ -223,11 +223,24 @@ def _google_error(body, status):
     return body.get('error_description') or error or status
 
 
+def _google_transient(status, body):
+    """Rate limits and server errors, as opposed to configuration errors"""
+    if status == 429 or status >= 500:
+        return True
+    text = json.dumps(body).lower()
+    return status == 403 and any(word in text for word in ('ratelimitexceeded', 'quota exceeded', 'userratelimitexceeded'))
+
+
 def _discover_gdrive(access_token):
     """The user's My Drive plus the shared drives they are a member of"""
     api = current_app.config['GDRIVE_API_URL']
 
     status, body = _request('GET', api + '/about?fields=user(displayName,emailAddress)', access_token=access_token)
+    if status != 200 and _google_transient(status, body):
+        # Rate limited (rclone's shared client is almost always over quota) or a Google
+        # outage: the sign-in itself worked, so keep the token and offer My Drive
+        logging.warning("Google Drive discovery skipped: {} {}".format(status, _google_error(body, status)))
+        return [{'id': 'root', 'name': 'My Drive', 'drive_type': 'my_drive'}]
     if status != 200:
         # e.g. the Drive API is not enabled in the own client's Google Cloud project
         raise HTTP_400_BAD_REQUEST('Signed in, but Google Drive cannot be accessed: {}'.format(_google_error(body, status)))

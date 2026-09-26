@@ -133,3 +133,16 @@ class TestSubprocessEnv(unittest.TestCase):
         self.assertFalse([key for key in env if key.startswith('MOTUZ_')])
         self.assertEqual(env['PATH'], '/bin')
         self.assertEqual(env['RCLONE_CONFIG_SRC_TYPE'], 'onedrive')
+
+
+class TestGoogleTransient(unittest.TestCase):
+
+    def test_classification(self):
+        from api.managers.oauth_manager import _google_transient
+        quota = {'error': {'code': 403, 'message': "Quota exceeded for quota metric 'Queries'", 'errors': [{'reason': 'rateLimitExceeded'}]}}
+        not_enabled = {'error': {'code': 403, 'message': 'Google Drive API has not been used in project 1 before or it is disabled', 'errors': [{'reason': 'accessNotConfigured'}]}}
+        self.assertTrue(_google_transient(403, quota))
+        self.assertTrue(_google_transient(429, {}))
+        self.assertTrue(_google_transient(503, {}))
+        self.assertFalse(_google_transient(403, not_enabled))
+        self.assertFalse(_google_transient(401, {}))
