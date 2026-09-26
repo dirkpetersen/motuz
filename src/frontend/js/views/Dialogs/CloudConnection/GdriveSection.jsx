@@ -1,54 +1,21 @@
 import React from 'react';
 
-import OauthSignIn from 'views/Dialogs/CloudConnection/OauthSignIn.jsx';
-
 // rclone's public Drive app (oauth_manager.GDRIVE.rclone_client_id)
 const RCLONE_GDRIVE_CLIENT_ID = '202264815644.apps.googleusercontent.com';
 
 
-// Google Drive part of CloudConnectionDialogFields: "Sign in with Google", or a token
-// pasted from `rclone config`. `Field` is the dialog's CloudConnectionField.
+// Google Drive fields for a token pasted from `rclone config`: "Advanced: paste a token"
+// of a new connection, and the drive and token of an existing one. Signing in is
+// OauthSignIn.jsx. `Field` is the dialog's CloudConnectionField.
 class GdriveSection extends React.Component {
     render() {
-        const manualFields = this.renderManualFields();
-        if (this.props.isSanitized) { // Editing an existing connection
-            // The token broker refreshes the token with the OAuth client that issued it
-            const clientId = this.props.data.gdrive_client_id;
-            const app = !clientId || clientId === RCLONE_GDRIVE_CLIENT_ID
-                ? "rclone's app"
-                : `Motuz app (${clientId})`;
-            return (
-                <React.Fragment>
-                    <p className='text-muted'>
-                        Signed in through: {app}. Pasting a new token from rclone switches
-                        this connection to rclone's app.
-                    </p>
-                    {manualFields}
-                </React.Fragment>
-            );
-        }
-        return (
-            <React.Fragment>
-                <OauthSignIn provider='gdrive' />
-                <details>
-                    <summary className='text-primary h5 mt-2 mb-3'>
-                        Advanced: paste a token from rclone instead
-                    </summary>
-                    {manualFields}
-                </details>
-            </React.Fragment>
-        );
-    }
-
-    renderManualFields() {
         const {data, errors, verifySuccess, isSanitized, Field} = this.props;
         return (
             <React.Fragment>
-                <details open={!isSanitized}>
-                    <summary className='text-primary h6 mt-2 mb-2'>
+                <details className='mb-3'>
+                    <summary className='text-primary mb-2'>
                         How to get these values
                     </summary>
-
                     <ol>
                         <li className='mb-1'>
                             On your own computer (it needs a web browser), install
@@ -95,6 +62,23 @@ class GdriveSection extends React.Component {
                 </details>
 
                 <Field
+                    label='Token'
+                    input={{
+                        name: 'gdrive_token',
+                        defaultValue: data.gdrive_token,
+                        // When editing, the stored token is kept unless a new one is pasted
+                        required: !isSanitized,
+                        type: 'password',
+                        placeholder: isSanitized
+                            ? 'Leave empty to keep the stored token'
+                            : '{"access_token":"ya29...","refresh_token":"1//...",...}',
+                    }}
+                    error={errors.gdrive_token}
+                    isValid={verifySuccess}
+                    isSanitized={isSanitized}
+                />
+
+                <Field
                     label='Shared Drive ID'
                     input={{
                         name: 'gdrive_team_drive',
@@ -116,28 +100,12 @@ class GdriveSection extends React.Component {
                     isValid={verifySuccess}
                 />
 
-                <h5 className='text-primary mt-5 mb-2'>Credentials</h5>
-
-                <Field
-                    label='Token'
-                    input={{
-                        name: 'gdrive_token',
-                        defaultValue: data.gdrive_token,
-                        // When editing, the stored token is kept unless a new one is pasted
-                        required: !isSanitized,
-                        type: 'password',
-                        placeholder: isSanitized
-                            ? 'Leave empty to keep the stored token'
-                            : '{"access_token":"ya29...","refresh_token":"1//...",...}',
-                    }}
-                    error={errors.gdrive_token}
-                    isValid={verifySuccess}
-                    isSanitized={isSanitized}
-                />
             </React.Fragment>
         );
     }
 }
+
+GdriveSection.RCLONE_CLIENT_ID = RCLONE_GDRIVE_CLIENT_ID;
 
 GdriveSection.defaultProps = {
     data: {},

@@ -1,4 +1,4 @@
-import OnedriveSignIn from 'views/Dialogs/CloudConnection/OnedriveSignIn.jsx';
+import OauthSignIn, { oauthProviderForType } from 'views/Dialogs/CloudConnection/OauthSignIn.jsx';
 import GdriveSection from 'views/Dialogs/CloudConnection/GdriveSection.jsx';
 import LocalCredentialPicker, { describeProfile, profileKey } from 'views/Dialogs/CloudConnection/LocalCredentialPicker.jsx';
 import React from 'react';
@@ -9,7 +9,7 @@ const RCLONE_ONEDRIVE_CLIENT_ID = 'b15665d9-eda6-4092-8539-0eec376afd59';
 
 const CONNECTION_TYPES = [
     {
-        label: 'Amazon Simple Storage Service (s3)',
+        label: 'Amazon S3 (or S3 compatible)',
         value: 's3',
     },
     {
@@ -17,7 +17,7 @@ const CONNECTION_TYPES = [
         value: 'azureblob',
     },
     {
-        label: 'Google Cloud Bucket',
+        label: 'Google Cloud Storage',
         value: 'google cloud storage',
     },
     {
@@ -37,7 +37,7 @@ const CONNECTION_TYPES = [
         value: 'dropbox',
     },
     {
-        label: 'Microsoft OneDrive (beta)',
+        label: 'Microsoft OneDrive / SharePoint (beta)',
         value: 'onedrive',
     },
     {
@@ -48,22 +48,22 @@ const CONNECTION_TYPES = [
 
 const S3_CONNECTION_TYPES = [
     {
-        label: 'Access Key Credentials',
+        label: 'Access key',
         value: 'key'
     },
     {
-        label: 'Temporary Security Credentials (STS)',
+        label: 'Temporary credentials (STS session token)',
         value: 'sts'
     }
 ]
 
 const AZURE_CONNECTION_TYPES = [
     {
-        label: 'Account & Key',
+        label: 'Storage account and key',
         value: 'key',
     },
     {
-        label: 'Shared Access Signature (SAS)',
+        label: 'Shared Access Signature (SAS) URL',
         value: 'sas',
     },
 ]
@@ -74,11 +74,29 @@ const SFTP_CONNECTION_TYPES = [
         value: 'password',
     },
     {
-        label: 'SSH Private Key',
+        label: 'SSH private key',
         value: 'key',
     },
 ]
 
+// Subtype of a type when the connection does not have one yet
+const DEFAULT_SUBTYPES = {
+    s3: 'key',
+    azureblob: 'key',
+    sftp: 'password',
+}
+
+
+/**
+ * The fields of the New and Edit Cloud Connection dialogs, top to bottom: Type,
+ * Connection Name, the type's own part (sign-in, credentials found in the home
+ * directory, or credentials) and its advanced options, collapsed.
+ *
+ * For OneDrive and Google Drive a new connection is made by signing in (OauthSignIn):
+ * onModeChange tells the dialog which provider's sign-in is shown (or null), and
+ * onOauthChange / onOauthError what the sign-in reports, so that the dialog's footer
+ * button creates the connection.
+ */
 class CloudConnectionDialogFields extends React.Component {
     constructor(props) {
         super(props);
@@ -86,14 +104,12 @@ class CloudConnectionDialogFields extends React.Component {
     }
 
     render() {
-        const { data, errors } = this.props;
-        const type = this.state.type || this.props.data.type || 's3';
-        const subtype = this.state.subtype || this.props.data.subtype;
+        const { data } = this.props;
+        const type = this._type();
+        const subtype = this.state.subtype || data.subtype || DEFAULT_SUBTYPES[type];
 
         return (
             <div className="container">
-                <h5 className="text-primary mb-2">Basic</h5>
-
                 <input type="hidden" name='id' value={data.id}/>
 
                 <div className="row form-group required">
@@ -124,6 +140,7 @@ class CloudConnectionDialogFields extends React.Component {
                         value: this._name(),
                         onChange: event => this.setState({name: event.target.value}),
                         required: true,
+                        placeholder: 'Your name for this connection',
                     }}
                     error={this.props.errors.name}
                     isValid={this.props.verifySuccess}
@@ -135,37 +152,52 @@ class CloudConnectionDialogFields extends React.Component {
                 {type === 'google cloud storage' && this._renderGCPSection()}
                 {type === 'sftp' && this._renderSFTPSection(subtype)}
                 {type === 'dropbox' && this._renderDropboxSection()}
-                {type === 'onedrive' && this._renderOnedriveSection()}
-                {type === 'drive' && this._renderGdriveSection()}
+                {type === 'onedrive' && this._renderOauthSection('onedrive', this._renderOnedriveManualFields())}
+                {type === 'drive' && this._renderOauthSection('gdrive', this._renderGdriveManualFields())}
                 {type === 'webdav' && this._renderWebdavSection()}
             </div>
         );
     }
 
     componentDidMount() {
-        this._reportSignIn();
+        this._reportMode();
     }
 
     componentDidUpdate() {
-        this._reportSignIn();
+        this._reportMode();
+    }
+
+    _type() {
+        return this.state.type || this.props.data.type || 's3';
     }
 
     _name() {
         return this.state.name === null ? (this.props.data.name || '') : this.state.name;
     }
 
-    // True while a new OneDrive connection is made with "Sign in with Microsoft", which has its
-    // own button, so the dialog hides its Verify/Create buttons (they need the pasted token)
-    _isSignIn() {
-        const type = this.state.type || this.props.data.type || 's3';
-        return type === 'onedrive' && !this.props.isSanitized && !this.state.onedriveManual;
+    // A name suggested by the sign-in (the chosen drive) replaces the Connection Name
+    // until the user types their own
+    _suggestName(name) {
+        const current = this._name().trim();
+        if (!current || current === this.state.autoName) {
+            this.setState({name, autoName: name});
+        }
     }
 
-    _reportSignIn() {
-        const signIn = this._isSignIn();
-        if (signIn !== this._reportedSignIn) {
-            this._reportedSignIn = signIn;
-            this.props.onSignInChange(signIn);
+    // The provider whose "Sign in" makes the new connection, or null when the dialog
+    // creates it from the fields (other types, editing, "Advanced: paste a token")
+    _signInProvider() {
+        if (this.props.isSanitized || this.state.oauthManual) {
+            return null;
+        }
+        return oauthProviderForType(this._type()) || null;
+    }
+
+    _reportMode() {
+        const provider = this._signInProvider();
+        if (provider !== this._reportedProvider) {
+            this._reportedProvider = provider;
+            this.props.onModeChange(provider);
         }
     }
 
@@ -214,20 +246,58 @@ class CloudConnectionDialogFields extends React.Component {
         );
     }
 
+    _renderSubtypeSelect(label, options, subtype) {
+        return (
+            <div className="row form-group required">
+                <div className="col-4 text-right control-label">
+                    <b className='form-label'>{label}</b>
+                </div>
+                <div className="col-8">
+                    <select
+                        className="form-control"
+                        name="subtype"
+                        value={subtype}
+                        onChange={(event => this.setState({subtype: event.target.value}))}
+                    >
+                        {options.map(d => (
+                            <option
+                                key={d.value}
+                                value={d.value}
+                            >{d.label}</option>
+                        ))}
+                    </select>
+                </div>
+            </div>
+        );
+    }
+
+    _renderAdvanced(children, label='Advanced options') {
+        return (
+            <details className='mt-3 advanced-options'>
+                <summary className='text-muted mb-3'>{label}</summary>
+                {children}
+            </details>
+        );
+    }
+
     _renderS3Section(subtype) {
         const profile = this._profile();
         const pickedRegion = this.state.profile && this.state.profile.region;
         return (
             <React.Fragment>
                 {this._renderProfilePicker('s3')}
-                {profile && this._renderProfileInputs(profile)}
+                {profile
+                    ? this._renderProfileInputs(profile)
+                    : this._renderS3Credentials(subtype)
+                }
                 <CloudConnectionField
-                    label='Bucket Name'
+                    label='Bucket'
                     input={{
                         name: 'bucket',
                         defaultValue: this.props.data.bucket,
                         title: "Must be a valid AWS S3 bucket name (or left blank)",
                         pattern: "^(?=^.{3,63}$)(?!xn--)([a-z0-9](?:[a-z0-9-]*)[a-z0-9])$",
+                        placeholder: 'Optional, e.g. my-lab-bucket (empty: all your buckets)',
                     }}
                     error={this.props.errors.bucket}
                     isValid={this.props.verifySuccess}
@@ -239,41 +309,39 @@ class CloudConnectionDialogFields extends React.Component {
                         name: 's3_region',
                         defaultValue: pickedRegion || this.props.data.s3_region,
                         title: "Must be a valid AWS region",
+                        placeholder: 'e.g. us-west-2',
                         // this regex works in python but not js, and it's not futureproof....
                         // pattern: "^(us(-gov)?|ap|ca|cn|eu|sa)-(central|(north|south)?(east|west)?)-\d$",
                     }}
                     error={this.props.errors.s3_region}
                     isValid={this.props.verifySuccess}
                 />
-                <CloudConnectionField
-                    label='KMS Encryption key ARN'
-                    input={{
-                        name: 'kms_encryption_key_arn',
-                        defaultValue: this.props.data.kms_encryption_key_arn,
-                        title: "If you are not sure what this is, leave it blank.\nIf you run into errors, search for\n`motuz KMS` on sciwiki.fredhutch.org,\nand email `scicomp` if you still have issues.",
-                    }}
-                    error={this.props.errors.kms_encryption_key_arn}
-                    isValid={this.props.verifySuccess}
-                />
 
-                {!profile && this._renderS3Credentials(subtype)}
-
-                <details>
-                    <summary className='text-primary h5 mt-5 mb-2'>
-                        S3 Compatible Storage
-                    </summary>
-
-                    <CloudConnectionField
-                        label='Endpoint URL'
-                        input={{
-                            name: 's3_endpoint',
-                            defaultValue: this.props.data.s3_endpoint,
-                        }}
-                        error={this.props.errors.s3_endpoint}
-                        isValid={this.props.verifySuccess}
-                    />
-                </details>
-
+                {this._renderAdvanced(
+                    <React.Fragment>
+                        <CloudConnectionField
+                            label='KMS Encryption Key ARN'
+                            input={{
+                                name: 'kms_encryption_key_arn',
+                                defaultValue: this.props.data.kms_encryption_key_arn,
+                                placeholder: 'Leave empty unless your bucket requires one',
+                                title: "If you are not sure what this is, leave it blank.\nIf you run into errors, search for\n`motuz KMS` on sciwiki.fredhutch.org,\nand email `scicomp` if you still have issues.",
+                            }}
+                            error={this.props.errors.kms_encryption_key_arn}
+                            isValid={this.props.verifySuccess}
+                        />
+                        <CloudConnectionField
+                            label='Endpoint URL'
+                            input={{
+                                name: 's3_endpoint',
+                                defaultValue: this.props.data.s3_endpoint,
+                                placeholder: 'Only for S3 compatible storage (not AWS)',
+                            }}
+                            error={this.props.errors.s3_endpoint}
+                            isValid={this.props.verifySuccess}
+                        />
+                    </React.Fragment>
+                )}
             </React.Fragment>
         )
     }
@@ -281,28 +349,7 @@ class CloudConnectionDialogFields extends React.Component {
     _renderS3Credentials(subtype) {
         return (
             <React.Fragment>
-                <div className="row form-group required">
-                    <div className="col-4 text-right control-label">
-                        <b className='form-label'>S3 Connection Type</b>
-                    </div>
-                    <div className="col-8">
-                        <select
-                            className="form-control"
-                            name="subtype"
-                            value={subtype}
-                            onChange={(event => this.setState({subtype: event.target.value}))}
-                        >
-                            {S3_CONNECTION_TYPES.map(d => (
-                                <option
-                                    key={d.value}
-                                    value={d.value}
-                                >{d.label}</option>
-                            ))}
-                        </select>
-                    </div>
-                </div>
-
-                <h5 className='text-primary mt-5 mb-2'>Credentials</h5>
+                {this._renderSubtypeSelect('Key Type', S3_CONNECTION_TYPES, subtype)}
 
                 <CloudConnectionField
                     label='Access Key ID'
@@ -372,20 +419,25 @@ class CloudConnectionDialogFields extends React.Component {
         )
     }
 
+    _renderAzureContainer() {
+        return (
+            <CloudConnectionField
+                label='Container'
+                input={{
+                    name: 'bucket',
+                    defaultValue: this.props.data.bucket,
+                    placeholder: 'Optional, e.g. mycontainer (empty: all containers)',
+                }}
+                error={this.props.errors.bucket}
+                isValid={this.props.verifySuccess}
+            />
+        );
+    }
+
     _renderAzureProfileSubsection(profile) {
         return (
             <React.Fragment>
                 {this._renderProfileInputs(profile)}
-                <CloudConnectionField
-                    label='Bucket Name'
-                    input={{
-                        name: 'bucket',
-                        defaultValue: this.props.data.bucket,
-                        placeholder: 'container',
-                    }}
-                    error={this.props.errors.bucket}
-                    isValid={this.props.verifySuccess}
-                />
                 {profile.source === 'azure-cli' &&
                     // An Azure CLI login is an identity, not a storage account
                     <CloudConnectionField
@@ -402,6 +454,7 @@ class CloudConnectionDialogFields extends React.Component {
                         isValid={this.props.verifySuccess}
                     />
                 }
+                {this._renderAzureContainer()}
             </React.Fragment>
         )
     }
@@ -409,27 +462,7 @@ class CloudConnectionDialogFields extends React.Component {
     _renderAzureManualSubsection(subtype) {
         return (
             <React.Fragment>
-                <div className="row form-group required">
-                    <div className="col-4 text-right control-label">
-                        <b className='form-label'>Azure Connection Type</b>
-                    </div>
-                    <div className="col-8">
-                        <select
-                            className="form-control"
-                            name="subtype"
-                            value={subtype}
-                            onChange={(event => this.setState({subtype: event.target.value}))}
-                        >
-                            {AZURE_CONNECTION_TYPES.map(d => (
-                                <option
-                                    key={d.value}
-                                    value={d.value}
-                                >{d.label}</option>
-                            ))}
-                        </select>
-                    </div>
-                </div>
-
+                {this._renderSubtypeSelect('Authentication', AZURE_CONNECTION_TYPES, subtype)}
                 {subtype === 'key' && this._renderAzureKeySubsection()}
                 {subtype === 'sas' && this._renderAzureSasSubsection()}
             </React.Fragment>
@@ -440,30 +473,19 @@ class CloudConnectionDialogFields extends React.Component {
         return (
             <React.Fragment>
                 <CloudConnectionField
-                    label='Bucket Name'
-                    input={{
-                        name: 'bucket',
-                        defaultValue: this.props.data.bucket,
-                    }}
-                    error={this.props.errors.bucket}
-                    isValid={this.props.verifySuccess}
-                />
-
-                <h5 className='text-primary mt-5 mb-2'>Credentials</h5>
-
-                <CloudConnectionField
-                    label='Account'
+                    label='Storage Account'
                     input={{
                         name: 'azure_account',
                         defaultValue: this.props.data.azure_account,
                         required: true,
+                        placeholder: 'mystorageaccount',
                     }}
                     error={this.props.errors.azure_account}
                     isValid={this.props.verifySuccess}
                 />
 
                 <CloudConnectionField
-                    label='Key'
+                    label='Account Key'
                     input={{
                         name: 'azure_key',
                         defaultValue: this.props.data.azure_key,
@@ -474,6 +496,8 @@ class CloudConnectionDialogFields extends React.Component {
                     isValid={this.props.verifySuccess}
                     isSanitized={this.props.isSanitized}
                 />
+
+                {this._renderAzureContainer()}
             </React.Fragment>
         )
     }
@@ -481,10 +505,11 @@ class CloudConnectionDialogFields extends React.Component {
     _renderAzureSasSubsection() {
         return (
             <CloudConnectionField
-                label='Shared Access Signature (SAS) URL'
+                label='SAS URL'
                 input={{
                     name: 'azure_sas_url',
                     defaultValue: this.props.data.azure_sas_url,
+                    placeholder: this.props.isSanitized ? '**********' : 'https://account.blob.core.windows.net/container?sv=...',
                 }}
                 error={this.props.errors.azure_sas_url}
                 isValid={this.props.verifySuccess}
@@ -496,16 +521,6 @@ class CloudConnectionDialogFields extends React.Component {
     _renderSwiftSection() {
         return (
             <React.Fragment>
-                <CloudConnectionField
-                    label='Bucket Name'
-                    input={{
-                        name: 'bucket',
-                        defaultValue: this.props.data.bucket,
-                    }}
-                    error={this.props.errors.bucket}
-                    isValid={this.props.verifySuccess}
-                />
-
                 <CloudConnectionField
                     label='Auth URL'
                     input={{
@@ -525,8 +540,6 @@ class CloudConnectionDialogFields extends React.Component {
                     error={this.props.errors.swift_tenant}
                     isValid={this.props.verifySuccess}
                 />
-
-                <h5 className='text-primary mt-5 mb-2'>Credentials</h5>
 
                 <CloudConnectionField
                     label='User'
@@ -551,6 +564,17 @@ class CloudConnectionDialogFields extends React.Component {
                     isValid={this.props.verifySuccess}
                     isSanitized={this.props.isSanitized}
                 />
+
+                <CloudConnectionField
+                    label='Container'
+                    input={{
+                        name: 'bucket',
+                        defaultValue: this.props.data.bucket,
+                        placeholder: 'Optional (empty: all containers)',
+                    }}
+                    error={this.props.errors.bucket}
+                    isValid={this.props.verifySuccess}
+                />
             </React.Fragment>
         )
     }
@@ -558,17 +582,6 @@ class CloudConnectionDialogFields extends React.Component {
     _renderGCPSection() {
         return (
             <React.Fragment>
-                <CloudConnectionField
-                    label='Bucket Name'
-                    input={{
-                        name: 'bucket',
-                        defaultValue: this.props.data.bucket,
-                        required: true,
-                    }}
-                    error={this.props.errors.bucket}
-                    isValid={this.props.verifySuccess}
-                />
-
                 <CloudConnectionField
                     label='Project Number'
                     input={{
@@ -579,8 +592,6 @@ class CloudConnectionDialogFields extends React.Component {
                     error={this.props.errors.gcp_project_number}
                     isValid={this.props.verifySuccess}
                 />
-
-                <h5 className='text-primary mt-5 mb-2'>Credentials</h5>
 
                 <CloudConnectionField
                     label='Client ID'
@@ -604,6 +615,17 @@ class CloudConnectionDialogFields extends React.Component {
                     error={this.props.errors.gcp_service_account_credentials}
                     isValid={this.props.verifySuccess}
                     isSanitized={this.props.isSanitized}
+                />
+
+                <CloudConnectionField
+                    label='Bucket'
+                    input={{
+                        name: 'bucket',
+                        defaultValue: this.props.data.bucket,
+                        required: true,
+                    }}
+                    error={this.props.errors.bucket}
+                    isValid={this.props.verifySuccess}
                 />
 
                 <input
@@ -630,6 +652,7 @@ class CloudConnectionDialogFields extends React.Component {
                         name: 'sftp_host',
                         defaultValue: this.props.data.sftp_host,
                         required: true,
+                        placeholder: 'e.g. sftp.example.org',
                     }}
                     error={this.props.errors.sftp_host}
                     isValid={this.props.verifySuccess}
@@ -647,19 +670,6 @@ class CloudConnectionDialogFields extends React.Component {
                 />
 
                 <CloudConnectionField
-                    label='Initial Path'
-                    input={{
-                        name: 'bucket',
-                        defaultValue: this.props.data.bucket,
-                        placeholder: '/',
-                    }}
-                    error={this.props.errors.bucket}
-                    isValid={this.props.verifySuccess}
-                />
-
-                <h5 className='text-primary mt-5 mb-2'>Credentials</h5>
-
-                <CloudConnectionField
                     label='Username'
                     input={{
                         name: 'sftp_user',
@@ -670,69 +680,56 @@ class CloudConnectionDialogFields extends React.Component {
                     isValid={this.props.verifySuccess}
                 />
 
-                <div className="row form-group">
-                    <div className="col-4 text-right control-label">
-                        <b className='form-label'>Connection Protocol</b>
-                    </div>
-                    <div className="col-8">
-                        <select
-                            className="form-control"
-                            name="subtype"
-                            value={subtype}
-                            onChange={(event => this.setState({subtype: event.target.value}))}
-                        >
-                            {SFTP_CONNECTION_TYPES.map(d => (
-                                <option
-                                    key={d.value}
-                                    value={d.value}
-                                >{d.label}</option>
-                            ))}
-                        </select>
-                    </div>
-                </div>
+                {this._renderSubtypeSelect('Authentication', SFTP_CONNECTION_TYPES, subtype)}
 
                 {subtype === 'password' && this._renderSFTPPasswordSubsection()}
                 {subtype === 'key' && this._renderSFTPKeySubsection()}
 
-
+                <CloudConnectionField
+                    label='Initial Path'
+                    input={{
+                        name: 'bucket',
+                        defaultValue: this.props.data.bucket,
+                        placeholder: 'Optional, e.g. /data (empty: /)',
+                    }}
+                    error={this.props.errors.bucket}
+                    isValid={this.props.verifySuccess}
+                />
             </React.Fragment>
         )
     }
 
     _renderSFTPPasswordSubsection() {
         return (
-            <React.Fragment>
-                <CloudConnectionField
-                    label='Password'
-                    input={{
-                        name: 'sftp_pass',
-                        defaultValue: this.props.data.sftp_pass,
-                        type: 'password',
-                        required: true,
-                    }}
-                    error={this.props.errors.sftp_pass}
-                    isValid={this.props.verifySuccess}
-                    isSanitized={this.props.isSanitized}
-                />
-            </React.Fragment>
+            <CloudConnectionField
+                label='Password'
+                input={{
+                    name: 'sftp_pass',
+                    defaultValue: this.props.data.sftp_pass,
+                    type: 'password',
+                    required: true,
+                }}
+                error={this.props.errors.sftp_pass}
+                isValid={this.props.verifySuccess}
+                isSanitized={this.props.isSanitized}
+            />
         )
     }
 
     _renderSFTPKeySubsection() {
         return (
-            <React.Fragment>
-                <CloudConnectionField
-                    label='SSH Private Key Path'
-                    input={{
-                        name: 'sftp_key_file',
-                        defaultValue: this.props.data.sftp_key_file,
-                        required: true,
-                    }}
-                    error={this.props.errors.sftp_key_file}
-                    isValid={this.props.verifySuccess}
-                    isSanitized={this.props.isSanitized}
-                />
-            </React.Fragment>
+            <CloudConnectionField
+                label='SSH Private Key Path'
+                input={{
+                    name: 'sftp_key_file',
+                    defaultValue: this.props.data.sftp_key_file,
+                    required: true,
+                    placeholder: 'e.g. /home/you/.ssh/id_ed25519',
+                }}
+                error={this.props.errors.sftp_key_file}
+                isValid={this.props.verifySuccess}
+                isSanitized={this.props.isSanitized}
+            />
         )
     }
 
@@ -740,8 +737,6 @@ class CloudConnectionDialogFields extends React.Component {
     _renderDropboxSection() {
         return (
             <React.Fragment>
-                <h5 className='text-primary mt-5 mb-2'>Credentials</h5>
-
                 <CloudConnectionField
                     label='Token'
                     input={{
@@ -749,94 +744,109 @@ class CloudConnectionDialogFields extends React.Component {
                         defaultValue: this.props.data.dropbox_token,
                         required: true,
                         type: 'password',
+                        placeholder: this.props.isSanitized ? '**********' : '{"access_token":"...","token_type":"bearer",...}',
                     }}
                     error={this.props.errors.dropbox_token}
                     isValid={this.props.verifySuccess}
                     isSanitized={this.props.isSanitized}
                 />
 
-
-                <details>
-                    <summary className='text-primary h5 mt-5 mb-2'>
-                        Instructions
-                    </summary>
-
-                    <ul>
+                {this._renderAdvanced(
+                    <ol>
                         <li className='mb-1'>
-                            Open a terminal
+                            On your own computer, install
+                            {' '}<a href='https://rclone.org/install/' target='_blank' rel='noopener noreferrer'>rclone</a>{' '}
+                            and run
+                            <pre className='mb-1'>rclone authorize "dropbox"</pre>
                         </li>
                         <li className='mb-1'>
-                            Paste the following command
+                            Allow rclone to access your Dropbox in the browser.
                         </li>
                         <li className='mb-1'>
+                            Paste the token rclone prints into <i>Token</i> above. It looks like
                             <pre className='mb-1'>
-                                rclone authorize "dropbox"
+                                {"{"}"access_token":"HdysS-asd...dt3","token_type":"bearer","expiry":"0001-01-01T00:00:00Z"{"}"}
                             </pre>
                         </li>
-                        <li className='mb-1'>
-                            Authorize rclone on Dropbox
-                        </li>
-                        <li className='mb-1'>
-                            Copy the token and paste it in the box above. The token should be of the form
-                        </li>
-                        <li className='mb-1'>
-                            <pre>
-                                {"{"}"access_token":"HdysS-asdAKDJSLAKDJASDKAJWEKADJSALDKajsldkjwdoiasjdiasdasdas_dt3","token_type":"bearer","expiry":"0001-01-01T00:00:00Z"{"}"}
-                            </pre>
-                        </li>
-                    </ul>
-                </details>
+                    </ol>,
+                    'How to get a token'
+                )}
             </React.Fragment>
         )
     }
 
-    _renderOnedriveSection() {
-        const manualFields = this._renderOnedriveManualFields();
-        if (this.props.isSanitized) { // Editing an existing connection
-            // The token broker refreshes the token with the app registration that issued it
-            const clientId = this.props.data.onedrive_client_id;
-            const app = !clientId || clientId === RCLONE_ONEDRIVE_CLIENT_ID
-                ? "rclone's app"
-                : `Motuz app (${clientId})`;
-            return (
-                <React.Fragment>
-                    <p className='text-muted'>
-                        Signed in through: {app}. Pasting a new token from rclone switches
-                        this connection to rclone's app.
-                    </p>
-                    {manualFields}
-                </React.Fragment>
-            );
+    // OneDrive and Google Drive. New connection: "Sign in with ...", or (collapsed) the
+    // token pasted from `rclone config`. Editing: the pasted-token fields, collapsed.
+    _renderOauthSection(provider, manualFields) {
+        if (this.props.isSanitized) {
+            return this._renderOauthEdit(provider, manualFields);
         }
+        const manual = this.state.oauthManual;
         return (
             <React.Fragment>
-                <OnedriveSignIn
-                    name={this._name()}
-                    onNameChange={name => this.setState({name})}
-                />
+                {/* Hidden, not removed, while pasting a token: closing Advanced returns to the sign-in */}
+                <div className={manual ? 'd-none' : ''}>
+                    <OauthSignIn
+                        key={provider}
+                        provider={provider}
+                        onChange={this.props.onOauthChange}
+                        onError={this.props.onOauthError}
+                        onSuggestName={name => this._suggestName(name)}
+                    />
+                </div>
                 <details
-                    open={this.state.onedriveManual}
+                    className='mt-3 oauth-manual'
+                    open={manual}
                     onToggle={event => {
-                        // React also passes on the toggle of the nested "How to get these values"
-                        if (event.target === event.currentTarget) {
-                            this.setState({onedriveManual: event.target.open});
+                        // React also passes on the toggle of a nested <details>
+                        if (event.target === event.currentTarget && event.target.open !== manual) {
+                            this.setState({oauthManual: event.target.open});
                         }
                     }}
                 >
-                    <summary className='text-primary h5 mt-2 mb-3'>
-                        Advanced: paste a token from rclone instead
+                    <summary className='text-muted mb-3'>
+                        {manual
+                            ? 'Advanced: paste a token from rclone (close to sign in instead)'
+                            : 'Advanced: paste a token from rclone instead of signing in'}
                     </summary>
-                    {manualFields}
+                    {/* Only while open: its required fields must not block the sign-in */}
+                    {manual && manualFields}
                 </details>
             </React.Fragment>
-        )
+        );
+    }
+
+    _renderOauthEdit(provider, manualFields) {
+        const data = this.props.data;
+        const clientId = provider === 'onedrive' ? data.onedrive_client_id : data.gdrive_client_id;
+        const rcloneClientId = provider === 'onedrive' ? RCLONE_ONEDRIVE_CLIENT_ID : GdriveSection.RCLONE_CLIENT_ID;
+        // The token broker refreshes the token with the app that issued it
+        const app = !clientId || clientId === rcloneClientId ? "rclone's app" : `Motuz app (${clientId})`;
+        const service = provider === 'onedrive' ? 'Microsoft' : 'Google';
+        return (
+            <React.Fragment>
+                <p className='text-muted'>
+                    To use another {service} account or drive, create a new connection and sign in again.
+                </p>
+                {this._renderAdvanced(
+                    <React.Fragment>
+                        <p className='text-muted small'>
+                            Signed in through: {app}. Pasting a new token from rclone switches
+                            this connection to rclone's app.
+                        </p>
+                        {manualFields}
+                    </React.Fragment>,
+                    'Advanced: drive and token'
+                )}
+            </React.Fragment>
+        );
     }
 
     _renderOnedriveManualFields() {
         return (
             <React.Fragment>
-                <details open={!this.props.isSanitized}>
-                    <summary className='text-primary h6 mt-2 mb-2'>
+                <details className='mb-3'>
+                    <summary className='text-primary mb-2'>
                         How to get these values
                     </summary>
 
@@ -902,8 +912,6 @@ class CloudConnectionDialogFields extends React.Component {
                     </select>
                 </CloudConnectionField>
 
-                <h5 className='text-primary mt-5 mb-2'>Credentials</h5>
-
                 <CloudConnectionField
                     label='Token'
                     input={{
@@ -924,7 +932,7 @@ class CloudConnectionDialogFields extends React.Component {
         )
     }
 
-    _renderGdriveSection() {
+    _renderGdriveManualFields() {
         return (
             <GdriveSection
                 data={this.props.data}
@@ -940,17 +948,16 @@ class CloudConnectionDialogFields extends React.Component {
         return (
             <React.Fragment>
                 <CloudConnectionField
-                    label='Url'
+                    label='URL'
                     input={{
                         name: 'webdav_url',
                         defaultValue: this.props.data.webdav_url,
                         required: true,
+                        placeholder: 'https://webdav.example.org/remote.php/webdav/',
                     }}
                     error={this.props.errors.webdav_url}
                     isValid={this.props.verifySuccess}
                 />
-
-                <h5 className='text-primary mt-5 mb-2'>Credentials</h5>
 
                 <CloudConnectionField
                     label='Username'
@@ -980,24 +987,27 @@ class CloudConnectionDialogFields extends React.Component {
     }
 
     onTypeChange(type) {
-        let {subtype} = this.state
-        if (type === 'sftp') {
-            subtype = 'password'
-        } else if (type === 'azureblob') {
-            subtype = 'key'
-        } else if (type === 's3') {
-            subtype = 'key'
-        }
-
-        this.setState({type, subtype, profile: null})
+        const name = this._name();
+        this.setState({
+            type,
+            subtype: DEFAULT_SUBTYPES[type] || '',
+            profile: null,
+            oauthManual: false,
+            // A drive name suggested by a sign-in does not fit another type
+            name: name && name === this.state.autoName ? '' : this.state.name,
+            autoName: null,
+        })
     }
 
 }
 
 CloudConnectionDialogFields.defaultProps = {
-    onSignInChange: (signIn) => {},
+    onModeChange: (provider) => {},
+    onOauthChange: (signIn) => {},
+    onOauthError: (message) => {},
     verifySuccess: false,
     data: {},
+    errors: {},
     isSanitized: false,
 }
 
@@ -1006,7 +1016,8 @@ CloudConnectionDialogFields.initialState = {
     subtype: '',
     profile: null, // picked from LocalCredentialPicker
     name: null, // Connection Name as edited, null = data.name
-    onedriveManual: false, // "Advanced: paste a token" is open
+    autoName: null, // the name the sign-in suggested (the chosen drive)
+    oauthManual: false, // OneDrive / Google Drive: "Advanced: paste a token" is open
 }
 
 
@@ -1021,7 +1032,7 @@ class CloudConnectionField extends React.PureComponent {
         } = this.props;
 
         return (
-            <div className={`row form-group ${input.required && 'required'}`}>
+            <div className={`row form-group ${input.required ? 'required' : ''}`}>
                 <div className="col-4 text-right control-label">
                     <b className='form-label'>{label}</b>
                 </div>
@@ -1036,6 +1047,7 @@ class CloudConnectionField extends React.PureComponent {
                             })}
                             autoComplete='off'
                             placeholder={isSanitized ? '**********' : null}
+                            aria-label={label}
                             {...this.props.input}
                         />
                     )}

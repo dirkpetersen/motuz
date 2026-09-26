@@ -68,7 +68,8 @@ class Provider:
     exchange_sends_scope: bool
     # Scope the token must have been granted (None: not checked)
     required_scope: typing.Optional[str]
-    # (access_token) -> list of {'id', 'name', 'drive_type'}
+    # (access_token, info) -> list of {'id', 'name', 'drive_type'}; sets info['account']
+    # to the signed-in account (e-mail address or name) when the provider reports it
     discover: typing.Callable
     # (drive, flow) -> dict of CloudConnection columns
     connection_fields: typing.Callable
@@ -131,10 +132,11 @@ class Provider:
 # ---------------------------------------------------------------------------------------
 # Microsoft OneDrive
 
-def _discover_onedrive(access_token):
+def _discover_onedrive(access_token, info=None):
     """OneDrive(s) of the user plus the document libraries of SharePoint sites they follow"""
     graph = current_app.config['GRAPH_URL']
     drives = {}
+    info = {} if info is None else info
 
     def add(drive, site=None):
         if not drive.get('id') or drive['id'] in drives:
@@ -154,6 +156,9 @@ def _discover_onedrive(access_token):
     status, body = _request('GET', graph + '/me/drive', access_token=access_token)
     if status == 200:
         add(body)
+        owner = (body.get('owner') or {}).get('user') or {}
+        if owner.get('email') or owner.get('displayName'):
+            info['account'] = owner.get('email') or owner.get('displayName')
     status, body = _request('GET', graph + '/me/drives', access_token=access_token)
     for drive in body.get('value', []) if status == 200 else []:
         add(drive)
@@ -231,9 +236,10 @@ def _google_transient(status, body):
     return status == 403 and any(word in text for word in ('ratelimitexceeded', 'quota exceeded', 'userratelimitexceeded'))
 
 
-def _discover_gdrive(access_token):
+def _discover_gdrive(access_token, info=None):
     """The user's My Drive plus the shared drives they are a member of"""
     api = current_app.config['GDRIVE_API_URL']
+    info = {} if info is None else info
 
     status, body = _request('GET', api + '/about?fields=user(displayName,emailAddress)', access_token=access_token)
     if status != 200 and _google_transient(status, body):
@@ -246,6 +252,8 @@ def _discover_gdrive(access_token):
         raise HTTP_400_BAD_REQUEST('Signed in, but Google Drive cannot be accessed: {}'.format(_google_error(body, status)))
     user = body.get('user') or {}
     who = user.get('emailAddress') or user.get('displayName')
+    if who:
+        info['account'] = who
     drives = [{
         'id': 'root',
         'name': 'My Drive ({})'.format(who) if who else 'My Drive',
@@ -453,7 +461,7 @@ def connect(provider_name, data):
     if flow is None or flow.owner != owner or flow.token is None:
         raise HTTP_400_BAD_REQUEST('This sign-in has expired. Please start again.')
 
-    drives = json.loads(flow.drives or '[]')
+    drives, _ = _flow_drives(flow)
     drive = next((d for d in drives if d['id'] == data.get('drive_id')), None)
     if drive is None:
         raise HTTP_400_BAD_REQUEST('Please choose one of the listed drives')
@@ -511,16 +519,27 @@ def _complete_flow(p, flow, params):
     }
 
     flow.token = json.dumps(token)
-    flow.drives = json.dumps(p.discover(body['access_token']))
+    info = {}
+    drives = p.discover(body['access_token'], info)
+    flow.drives = json.dumps({'drives': drives, 'account': info.get('account')})
     db.session.commit()
 
 
+def _flow_drives(flow):
+    """(drives, account) of a completed flow. Flows of older versions stored the list only."""
+    stored = json.loads(flow.drives or '[]')
+    if isinstance(stored, dict):
+        return stored.get('drives') or [], stored.get('account')
+    return stored, None
+
+
 def _flow_result(flow):
-    drives = json.loads(flow.drives or '[]')
+    drives, account = _flow_drives(flow)
     return {
         'state': flow.state,
         'drives': drives,
         'default_drive_id': drives[0]['id'] if drives else None,
+        'account': account,
     }
 
 

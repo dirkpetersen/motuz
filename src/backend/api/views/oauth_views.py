@@ -26,6 +26,7 @@ flow_dto = api.model('oauth-flow', {
     'state': fields.String(),
     'drives': fields.List(fields.Nested(drive_dto)),
     'default_drive_id': fields.String(),
+    'account': fields.String(example='jane@example.org', description='The signed-in account, if the provider reports it'),
 })
 
 finish_dto = api.model('oauth-finish', {

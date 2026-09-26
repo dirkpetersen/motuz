@@ -2,7 +2,8 @@
 # networking, Traefik on :80/:443, uWSGI on 127.0.0.1:5000/5001) with test users instead
 # of the host's /etc, OneDrive/Graph pointed at fake_ms.py on 127.0.0.1:5999, and Azurite
 # for Azure Blob. MOTUZ_DOCKER_ROOT (secrets, certs) and the OD_* settings come from
-# test/e2e/.env, which run.sh generates (never committed).
+# test/e2e/.env, which run.sh generates (never committed). Google sign-in and the Drive API
+# also go to fake_ms.py.
 name: motuz_e2e
 
 x-env: &env
@@ -18,6 +19,10 @@ x-env: &env
     MOTUZ_ONEDRIVE_TOKEN_URL: http://127.0.0.1:5999/token
     MOTUZ_ONEDRIVE_AUTH_URL: http://127.0.0.1:5999/authorize
     MOTUZ_GRAPH_URL: http://127.0.0.1:5999/graph
+    # Google sign-in and Drive API, also fake_ms.py (rclone's public Drive app)
+    MOTUZ_GDRIVE_AUTH_URL: http://127.0.0.1:5999/google/authorize
+    MOTUZ_GDRIVE_TOKEN_URL: http://127.0.0.1:5999/google/token
+    MOTUZ_GDRIVE_API_URL: http://127.0.0.1:5999/google/drive/v3
     # Own-app mode (oauth-callback phase); empty = rclone's public app
     MOTUZ_ONEDRIVE_CLIENT_ID: ${OD_CLIENT_ID:-}
     MOTUZ_ONEDRIVE_REDIRECT_URI: ${OD_REDIRECT_URI:-}

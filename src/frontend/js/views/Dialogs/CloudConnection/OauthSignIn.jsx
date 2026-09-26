@@ -2,14 +2,26 @@ import React from 'react';
 import { Button } from 'react-bootstrap'
 
 
-// "Sign in with ..." for a provider of the backend's oauth_manager.PROVIDERS. The same
-// steps as OnedriveSignIn.jsx, with the provider's texts; OneDrive can move onto this
-// component too.
+// "Sign in with Microsoft/Google" for the providers of the backend's
+// oauth_manager.PROVIDERS. One component for all of them: only the texts differ.
 export const OAUTH_PROVIDERS = {
+    onedrive: {
+        name: 'onedrive',
+        connectionType: 'onedrive',
+        signInLabel: 'Sign in with Microsoft',
+        intro: 'Motuz signs in to your OneDrive or SharePoint for you. Nothing needs to be installed on your computer.',
+        account: 'your university account',
+        // rclone's public OneDrive app
+        loopback: 'localhost:53682',
+        placeholder: 'http://localhost:53682/?code=...&state=...',
+        warnings: null,
+        showDriveType: true,
+        defaultName: 'OneDrive',
+    },
     gdrive: {
         name: 'gdrive',
         connectionType: 'drive',
-        title: 'Sign in with Google',
+        signInLabel: 'Sign in with Google',
         intro: 'Motuz signs in to your Google Drive for you. Nothing needs to be installed on your computer.',
         account: 'your Google account',
         // rclone's public Drive app (oauthutil.RedirectURL)
@@ -22,19 +34,28 @@ export const OAUTH_PROVIDERS = {
                 ask your Google Workspace administrator.
             </li>
         ),
-        drivesLabel: 'Drive',
         showDriveType: false,
-        createLabel: 'Create Google Drive connection',
         defaultName: 'Google Drive',
     },
 }
 
+// Provider name ('onedrive', 'gdrive') of a connection type, or undefined
+export const oauthProviderForType = type => {
+    const provider = Object.values(OAUTH_PROVIDERS).find(p => p.connectionType === type);
+    return provider ? provider.name : undefined;
+};
 
-// Set by the backend after an automatic (callback) sign-in: ?oauth_state=...&oauth_provider=...
+const CALLBACK_ERRORS = {
+    expired: 'The sign-in took too long or was already used. Please sign in again.',
+    failed: 'The sign-in did not work. Please sign in again.',
+};
+
+// Set by the backend after an automatic (callback) sign-in:
+// /clouds?oauth_state=...&oauth_provider=... or ?oauth_error=expired|failed&oauth_provider=...
 // OneDrive's callback has no oauth_provider.
 export const oauthProviderFromUrl = () => {
     const params = new URLSearchParams(window.location.search);
-    if (!params.get('oauth_state')) {
+    if (!params.get('oauth_state') && !params.get('oauth_error')) {
         return null;
     }
     return params.get('oauth_provider') || 'onedrive';
@@ -50,19 +71,25 @@ export const oauthConnectionTypeFromUrl = () => {
 };
 
 
+/**
+ * The sign-in part of the New Cloud Connection dialog: a "Sign in" button, then (paste
+ * mode) the address to paste, then the account and a Drive select. It has no name field
+ * and no create button: the dialog's Connection Name and its footer button create the
+ * connection with what this component reports through onChange.
+ */
 class OauthSignIn extends React.Component {
     constructor(props) {
         super(props);
         this.state = {
             step: 'start', // start -> paste -> choose
             redirectMode: 'paste',
+            authorizeUrl: null,
             redirectUrl: '',
             flowState: null,
+            account: null,
             drives: [],
             driveId: '',
-            name: '',
             busy: false,
-            error: null,
         };
     }
 
@@ -71,24 +98,41 @@ class OauthSignIn extends React.Component {
     }
 
     componentDidMount() {
-        if (oauthProviderFromUrl() === this.props.provider) {
-            const flowState = new URLSearchParams(window.location.search).get('oauth_state');
-            window.history.replaceState(null, '', window.location.pathname);
-            this.call(this.props.onRetrieve(this.props.provider, flowState), payload => this.showDrives(payload));
+        if (oauthProviderFromUrl() !== this.props.provider) {
+            return;
+        }
+        const params = new URLSearchParams(window.location.search);
+        window.history.replaceState(null, '', window.location.pathname);
+        if (params.get('oauth_state')) {
+            this.call(this.props.onRetrieve(this.props.provider, params.get('oauth_state')), payload => this.showDrives(payload));
+        } else {
+            this.props.onError(CALLBACK_ERRORS[params.get('oauth_error')] || CALLBACK_ERRORS.failed);
         }
     }
 
+    componentWillUnmount() {
+        this.props.onChange(null);
+    }
+
     render() {
-        const {step, busy, error} = this.state;
+        const {step} = this.state;
         return (
-            <div className='card mb-4'>
-                <div className='card-body'>
-                    <h5 className='card-title text-primary'>{this.provider().title}</h5>
-                    {step === 'start' && this.renderStart()}
-                    {step === 'paste' && this.renderPaste()}
-                    {step === 'choose' && this.renderChoose()}
-                    {busy && <div className='text-muted mt-2'>Working...</div>}
-                    {error && <div className='alert alert-danger mt-3 mb-0'>{error}</div>}
+            <div className='oauth-sign-in'>
+                {step === 'start' && this.renderStart()}
+                {step === 'paste' && this.renderPaste()}
+                {step === 'choose' && this.renderChoose()}
+            </div>
+        );
+    }
+
+    renderRow(label, content, required=true) {
+        return (
+            <div className={`row form-group ${required ? 'required' : ''}`}>
+                <div className='col-4 text-right control-label'>
+                    <b className='form-label'>{label}</b>
+                </div>
+                <div className='col-8'>
+                    {content}
                 </div>
             </div>
         );
@@ -96,14 +140,15 @@ class OauthSignIn extends React.Component {
 
     renderStart() {
         const provider = this.provider();
-        return (
+        return this.renderRow('Account', (
             <React.Fragment>
-                <p className='card-text'>{provider.intro}</p>
                 <Button variant='primary' disabled={this.state.busy} onClick={() => this.handleStart()}>
-                    {provider.title}
+                    {provider.signInLabel}
                 </Button>
+                {this.renderBusy()}
+                <small className='form-text text-muted'>{provider.intro}</small>
             </React.Fragment>
-        );
+        ));
     }
 
     renderPaste() {
@@ -114,19 +159,20 @@ class OauthSignIn extends React.Component {
             </React.Fragment>
         );
         if (this.state.redirectMode === 'callback') {
-            return (
+            return this.renderRow('Account', (
                 <React.Fragment>
-                    <p className='card-text'>
+                    <p className='mb-1 pt-2'>
                         Sign in with {provider.account} in the tab that just opened {openAgain}.
                         Motuz continues in that tab afterwards.
                     </p>
-                    <ul className='pl-3'>{provider.warnings}</ul>
+                    {provider.warnings && <ul className='pl-3 small'>{provider.warnings}</ul>}
+                    {this.renderStartOver()}
                 </React.Fragment>
-            );
+            ));
         }
-        return (
+        return this.renderRow('Account', (
             <React.Fragment>
-                <ol className='pl-3'>
+                <ol className='pl-3 pt-2 mb-2'>
                     <li className='mb-1'>
                         Sign in with {provider.account} in the tab that just opened {openAgain}.
                     </li>
@@ -141,37 +187,44 @@ class OauthSignIn extends React.Component {
                 </ol>
                 <textarea
                     className='form-control mb-2'
+                    aria-label='Address from the sign-in tab'
                     rows={3}
                     placeholder={provider.placeholder}
                     value={this.state.redirectUrl}
                     onChange={event => this.setState({redirectUrl: event.target.value})}
                 />
                 <Button
-                    variant='primary'
+                    variant='outline-primary'
                     disabled={this.state.busy || !this.state.redirectUrl.trim()}
                     onClick={() => this.handleFinish()}
                 >
                     Continue
                 </Button>
-                <Button variant='link' onClick={() => this.setState({step: 'start', error: null})}>
-                    Start over
-                </Button>
+                {this.renderStartOver()}
+                {this.renderBusy()}
             </React.Fragment>
-        );
+        ));
     }
 
     renderChoose() {
         const provider = this.provider();
-        const {drives, driveId, name} = this.state;
+        const {drives, driveId, account} = this.state;
         return (
             <React.Fragment>
-                <p className='card-text text-success'>Signed in. Choose the drive for this connection:</p>
-                <div className='form-group'>
-                    <label><b>{provider.drivesLabel}</b></label>
+                {this.renderRow('Account', (
+                    <div className='pt-2 oauth-account'>
+                        <span className='text-success'>
+                            {account ? <React.Fragment>Signed in as <b>{account}</b></React.Fragment> : 'Signed in'}
+                        </span>
+                        {this.renderStartOver('Use another account')}
+                    </div>
+                ))}
+                {this.renderRow('Drive', (
                     <select
                         className='form-control'
+                        aria-label='Drive'
                         value={driveId}
-                        onChange={event => this.handleDriveChange(event.target.value)}
+                        onChange={event => this.selectDrive(event.target.value)}
                     >
                         {drives.map(drive => (
                             <option key={drive.id} value={drive.id}>
@@ -179,24 +232,27 @@ class OauthSignIn extends React.Component {
                             </option>
                         ))}
                     </select>
-                </div>
-                <div className='form-group'>
-                    <label><b>Connection name</b></label>
-                    <input
-                        className='form-control'
-                        value={name}
-                        onChange={event => this.setState({name: event.target.value})}
-                    />
-                </div>
-                <Button
-                    variant='success'
-                    disabled={this.state.busy || !driveId}
-                    onClick={() => this.handleConnect()}
-                >
-                    {provider.createLabel}
-                </Button>
+                ))}
             </React.Fragment>
         );
+    }
+
+    renderStartOver(label='Start over') {
+        return (
+            <Button variant='link' size='sm' onClick={() => this.startOver()}>
+                {label}
+            </Button>
+        );
+    }
+
+    renderBusy() {
+        return this.state.busy ? <span className='text-muted ml-2'>Working...</span> : null;
+    }
+
+    startOver() {
+        this.setState({step: 'start', redirectUrl: '', flowState: null, drives: [], driveId: '', account: null});
+        this.props.onChange(null);
+        this.props.onError(null);
     }
 
     handleStart() {
@@ -220,43 +276,37 @@ class OauthSignIn extends React.Component {
         this.call(this.props.onFinish(this.props.provider, this.state.redirectUrl.trim()), payload => this.showDrives(payload));
     }
 
-    handleDriveChange(driveId) {
-        // The name follows the chosen drive unless the user typed one
-        const {drives, name} = this.state;
-        const previous = drives.find(d => d.id === this.state.driveId);
-        const next = drives.find(d => d.id === driveId);
-        const nameUnchanged = !name || (previous && name === previous.name);
-        this.setState({driveId, name: nameUnchanged && next ? next.name : name});
-    }
-
-    handleConnect() {
-        const {flowState, driveId, name} = this.state;
-        this.call(this.props.onConnect(this.props.provider, {state: flowState, drive_id: driveId, name}), () => {});
-    }
-
     showDrives(payload) {
         const drives = payload.drives || [];
         const driveId = payload.default_drive_id || (drives[0] && drives[0].id) || '';
-        const drive = drives.find(d => d.id === driveId);
         this.setState({
             step: 'choose',
             flowState: payload.state,
+            account: payload.account || null,
             drives,
-            driveId,
-            name: drive ? drive.name : this.provider().defaultName,
-        });
+        }, () => this.selectDrive(driveId));
+    }
+
+    driveName(driveId) {
+        const drive = this.state.drives.find(d => d.id === driveId);
+        return drive ? drive.name : this.provider().defaultName;
+    }
+
+    selectDrive(driveId) {
+        this.setState({driveId});
+        // The dialog's Connection Name follows the drive until the user types one
+        this.props.onSuggestName(this.driveName(driveId));
+        this.props.onChange(driveId ? {provider: this.props.provider, state: this.state.flowState, driveId} : null);
     }
 
     call(promise, onSuccess, onFailure=() => {}) {
-        this.setState({busy: true, error: null});
+        this.setState({busy: true});
+        this.props.onError(null);
         Promise.resolve(promise).then(action => {
             this.setState({busy: false});
-            if (!action) {
-                this.setState({error: 'Your Motuz session was refreshed, please try again.'});
-                onFailure();
-            } else if (action.error) {
-                const response = (action.payload && action.payload.response) || {};
-                this.setState({error: response.message || (action.payload && action.payload.message) || 'Request failed'});
+            const message = oauthErrorMessage(action);
+            if (message) {
+                this.props.onError(message);
                 onFailure();
             } else {
                 onSuccess(action.payload);
@@ -265,22 +315,35 @@ class OauthSignIn extends React.Component {
     }
 }
 
+// Plain-language error of a dispatched sign-in action, or null if it succeeded
+export const oauthErrorMessage = action => {
+    if (!action) {
+        return 'Your Motuz session was refreshed. Please try again.';
+    }
+    if (!action.error) {
+        return null;
+    }
+    const response = (action.payload && action.payload.response) || {};
+    return response.message || 'Motuz could not reach the server. Please try again.';
+};
+
 OauthSignIn.defaultProps = {
-    provider: 'gdrive',
+    provider: 'onedrive',
+    onChange: (signIn) => {}, // {provider, state, driveId} once a drive is chosen, else null
+    onSuggestName: (name) => {},
+    onError: (message) => {},
     onStart: (provider) => {},
     onFinish: (provider, redirectUrl) => {},
     onRetrieve: (provider, state) => {},
-    onConnect: (provider, data) => {},
 }
 
 import {connect} from 'react-redux';
-import {startOauthSignin, finishOauthSignin, retrieveOauthSignin, connectOauth} from 'actions/apiActions.jsx';
+import {startOauthSignin, finishOauthSignin, retrieveOauthSignin} from 'actions/apiActions.jsx';
 
 const mapDispatchToProps = dispatch => ({
     onStart: (provider) => dispatch(startOauthSignin(provider)),
     onFinish: (provider, redirectUrl) => dispatch(finishOauthSignin(provider, redirectUrl)),
     onRetrieve: (provider, state) => dispatch(retrieveOauthSignin(provider, state)),
-    onConnect: (provider, data) => dispatch(connectOauth(provider, data)),
 });
 
 export default connect(null, mapDispatchToProps)(OauthSignIn);

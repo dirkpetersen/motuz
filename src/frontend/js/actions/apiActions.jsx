@@ -338,41 +338,26 @@ export const listLocalCredentials = (type) => ({
 });
 
 
-// "Sign in with Microsoft" for OneDrive (see backend managers/oauth_manager.py).
-// Components await the dispatched action; start/finish/flow results are not kept in the store.
-export const ONEDRIVE_SIGNIN_REQUEST = '@@api/ONEDRIVE_SIGNIN_REQUEST';
-export const ONEDRIVE_SIGNIN_SUCCESS = '@@api/ONEDRIVE_SIGNIN_SUCCESS';
-export const ONEDRIVE_SIGNIN_FAILURE = '@@api/ONEDRIVE_SIGNIN_FAILURE';
-
-const onedriveSignin = (endpoint, method, body, types) => ({
-    [RSAA]: {
-        endpoint,
-        method,
-        body: body === undefined ? undefined : JSON.stringify(body),
-        headers: withAuth({ 'Content-Type': 'application/json' }),
-        types: types || [ ONEDRIVE_SIGNIN_REQUEST, ONEDRIVE_SIGNIN_SUCCESS, ONEDRIVE_SIGNIN_FAILURE ],
-    }
-});
-
-export const startOnedriveSignin = () => onedriveSignin('/api/oauth/onedrive/start/', 'POST', {});
-export const finishOnedriveSignin = (redirectUrl) => onedriveSignin('/api/oauth/onedrive/finish/', 'POST', {redirect_url: redirectUrl});
-export const retrieveOnedriveSignin = (state) => onedriveSignin(`/api/oauth/onedrive/flows/${encodeURIComponent(state)}/`, 'GET');
-// Success is a regular CREATE_CLOUD_CONNECTION_SUCCESS: adds the connection and closes the dialog
-export const connectOnedrive = (data) => onedriveSignin('/api/oauth/onedrive/connect/', 'POST', data,
-    [ ONEDRIVE_SIGNIN_REQUEST, CREATE_CLOUD_CONNECTION_SUCCESS, ONEDRIVE_SIGNIN_FAILURE ]);
-
-
-// The same sign-in for any provider of backend oauth_manager.PROVIDERS ('onedrive', 'gdrive'),
-// used by views/Dialogs/CloudConnection/OauthSignIn.jsx
+// "Sign in with Microsoft/Google" for the providers of backend oauth_manager.PROVIDERS
+// ('onedrive', 'gdrive'), used by views/Dialogs/CloudConnection/OauthSignIn.jsx and the
+// New Cloud Connection dialog. Components await the dispatched action; start/finish/flow
+// results are not kept in the store.
 export const OAUTH_SIGNIN_REQUEST = '@@api/OAUTH_SIGNIN_REQUEST';
 export const OAUTH_SIGNIN_SUCCESS = '@@api/OAUTH_SIGNIN_SUCCESS';
 export const OAUTH_SIGNIN_FAILURE = '@@api/OAUTH_SIGNIN_FAILURE';
 
-const oauthPath = (provider, path) => `/api/oauth/${encodeURIComponent(provider)}/${path}`;
-const oauthSignin = (provider, path, method, body, success=OAUTH_SIGNIN_SUCCESS) => onedriveSignin(
-    oauthPath(provider, path), method, body, [ OAUTH_SIGNIN_REQUEST, success, OAUTH_SIGNIN_FAILURE ]);
+const oauthSignin = (provider, path, method, body, success=OAUTH_SIGNIN_SUCCESS) => ({
+    [RSAA]: {
+        endpoint: `/api/oauth/${encodeURIComponent(provider)}/${path}`,
+        method,
+        body: body === undefined ? undefined : JSON.stringify(body),
+        headers: withAuth({ 'Content-Type': 'application/json' }),
+        types: [ OAUTH_SIGNIN_REQUEST, success, OAUTH_SIGNIN_FAILURE ],
+    }
+});
 
 export const startOauthSignin = (provider) => oauthSignin(provider, 'start/', 'POST', {});
 export const finishOauthSignin = (provider, redirectUrl) => oauthSignin(provider, 'finish/', 'POST', {redirect_url: redirectUrl});
 export const retrieveOauthSignin = (provider, state) => oauthSignin(provider, `flows/${encodeURIComponent(state)}/`, 'GET');
+// Success is a regular CREATE_CLOUD_CONNECTION_SUCCESS: adds the connection and closes the dialog
 export const connectOauth = (provider, data) => oauthSignin(provider, 'connect/', 'POST', data, CREATE_CLOUD_CONNECTION_SUCCESS);
