@@ -30,6 +30,10 @@ x-env: &env
     MOTUZ_OPERATOR_NAME: "E2E Lab <R&D>"
     MOTUZ_CONTACT_EMAIL: "motuz-admin@example.org"
     MOTUZ_OPERATOR_URL: "https://example.org/?a=1&b=2"
+    # Remote workers (suite `worker` switches local jobs to the pool onprem); a short
+    # lease so that the suite sees a killed worker's job fail quickly
+    MOTUZ_LOCAL_JOB_POOL: ${LOCAL_JOB_POOL:-}
+    MOTUZ_WORKER_LEASE_SECONDS: "20"
 
 secrets:
     MOTUZ_DATABASE_PASSWORD:
@@ -45,6 +49,13 @@ volumes:
     homes:
     postgres:
     traefik_acme:
+
+networks:
+    # The remote worker's network (suite `worker`): no route anywhere; the proxy is the
+    # only way out, and it tunnels only to motuz.test:443 (Traefik on the host)
+    worker_isolated:
+        internal: true
+    proxy_egress: {}
 
 services:
     database_init:
@@ -95,6 +106,40 @@ services:
             service: traefik
         volumes:
             - traefik_acme:/etc/traefik/acme
+
+    proxy:
+        # HTTP CONNECT proxy between the isolated worker network and the stack: allows
+        # only CONNECT motuz.test:443, where motuz.test is the host (Traefik on :443)
+        image: fredhutch/motuz_app:latest
+        profiles: [worker]
+        networks: [worker_isolated, proxy_egress]
+        extra_hosts: ["motuz.test:host-gateway"]
+        volumes: [./connect_proxy.py:/connect_proxy.py:ro]
+        entrypoint: ["python3", "-u", "/connect_proxy.py", "3128", "motuz.test:443"]
+
+    worker:
+        # A remote worker (motuz-worker as an unprivileged `motuz` account) that reaches
+        # nothing but https://motuz.test through the proxy; alice and bob with the
+        # shared homes, like an on-prem worker with the same mounts and users
+        image: fredhutch/motuz_app:latest
+        profiles: [worker]
+        networks: [worker_isolated]
+        depends_on: [proxy]
+        environment:
+            MOTUZ_CENTRAL_URL: https://motuz.test
+            HTTPS_PROXY: http://proxy:3128
+            MOTUZ_WORKER_POOL: onprem
+            MOTUZ_REQUIRED_PATHS: /home
+            MOTUZ_CA_BUNDLE: /var/lib/motuz/.config/motuz-worker/ca.pem
+            MOTUZ_WORKER_CREDENTIAL_FILE: /var/lib/motuz/.config/motuz-worker/credential
+            MOTUZ_WORKER_ONCE_WAIT: "60"
+        volumes:
+            - ./users.sh:/users.sh:ro
+            - ./worker_entry.sh:/worker_entry.sh:ro
+            - homes:/home
+            - ${MOTUZ_DOCKER_ROOT:?run test/e2e/run.sh}/worker:/run/motuz-worker:ro
+        entrypoint: ["/worker_entry.sh"]
+        command: []
 
     azurite:
         # Azure Blob emulator for the credentials suite (rclone remote in alice's home)
