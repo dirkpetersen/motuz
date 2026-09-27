@@ -47,6 +47,35 @@ class SystemFilesHome(Resource):
             api.abort(500, str(e))
 
 
+view_dto = api.model('system-file-view', {
+    'path': fields.String(example='/home/alice/notes.txt'),
+    'content': fields.String(description='The text, at most the first 1 MiB'),
+    'truncated': fields.Boolean(description='True if the file is larger than what is returned'),
+    'size': fields.Integer(description='Size of the whole file in bytes'),
+    'encoding': fields.String(example='utf-8'),
+})
+
+
+@api.route('/files/view/')
+class SystemFilesView(Resource):
+    @api.expect(dto, validate=True)
+    @api.marshal_with(view_dto, code=200)
+    @api.response(403, 'The user cannot read the file')
+    @api.response(404, 'No such file (or connection)')
+    @api.response(415, 'Not a text file')
+    def post(self):
+        """
+        The first 1 MiB of a text file, read as the logged-in user (read-only viewer).
+        """
+        try:
+            return system_manager.view(request.json), 200
+        except HTTP_EXCEPTION as e:
+            api.abort(e.code, e.payload)
+        except Exception as e:
+            logging.exception(e, exc_info=True)
+            api.abort(500, str(e))
+
+
 @api.route('/files/mkdir/')
 class SystemFilesMkdir(Resource):
     @api.expect(dto, validate=True)

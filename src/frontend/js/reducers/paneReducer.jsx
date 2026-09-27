@@ -12,6 +12,8 @@ import {
     setCurrentFiles,
 } from 'managers/paneManager.jsx';
 import constants from 'constants.jsx';
+import { REHYDRATE } from 'redux-persist';
+import { DEFAULT_SORT, normalizeSort, sortFiles, resortWithSelection } from 'utils/fileSort.js';
 
 
 const INITIAL_PANE = {
@@ -21,8 +23,6 @@ const INITIAL_PANE = {
         type: 'file',
     },
     path: '/',
-    sortingColumn: 'name',
-    sortingAsc: true,
     fileFocusIndex: 0,
     fileMultiFocusIndexes: {0: true},
     history: [],
@@ -39,14 +39,57 @@ const initialState = {
         left: [INITIAL_PANE],
         right: [INITIAL_PANE],
     },
+    // state.files[side] is always in the displayed (sorted) order, so the selection
+    // indexes (fileFocusIndex, fileMultiFocusIndexes) refer to what the user sees.
     files: {
         left: [],
         right: [],
+    },
+    // Sort of each pane, a copy of settings.paneSort (persisted there, restored on REHYDRATE)
+    sort: {
+        left: DEFAULT_SORT,
+        right: DEFAULT_SORT,
     },
 };
 
 export default (state=initialState, action) => {
     switch(action.type) {
+    case REHYDRATE: {
+        const paneSort = action.payload && action.payload.settings && action.payload.settings.paneSort;
+        if (!paneSort) {
+            return state;
+        }
+        return {
+            ...state,
+            sort: {
+                left: normalizeSort(paneSort.left),
+                right: normalizeSort(paneSort.right),
+            },
+        }
+    }
+    case pane.SORT_CHANGE: {
+        const {side, sort} = action.payload;
+        const currPane = getCurrentPane(state, side);
+        const {files, fileFocusIndex, fileMultiFocusIndexes} = resortWithSelection(
+            getCurrentFiles(state, side), sort, currPane.fileFocusIndex, currPane.fileMultiFocusIndexes);
+        return {
+            ...state,
+            sort: {
+                ...state.sort,
+                [side]: normalizeSort(sort),
+            },
+            panes: {
+                ...setCurrentPane(state, {
+                    ...currPane,
+                    fileFocusIndex,
+                    fileMultiFocusIndexes,
+                }, side)
+            },
+            files: {
+                ...setCurrentFiles(state, files, side),
+            },
+        }
+    }
     case pane.SIDE_FOCUS: {
         return {
             ...state,
@@ -213,7 +256,7 @@ export default (state=initialState, action) => {
         files = fileManager.filterFiles(files, {
             showHiddenFiles: settings.showHiddenFiles,
         })
-        files = fileManager.sortFiles(files);
+        files = sortFiles(files, state.sort[side]);
 
         if (path !== '/') {
             files.unshift({
@@ -268,7 +311,6 @@ export default (state=initialState, action) => {
         files = fileManager.filterFiles(files, {
             showHiddenFiles: data.settings.showHiddenFiles,
         })
-        files = fileManager.sortFiles(files);
 
         if (path !== '/') {
             files.unshift({
@@ -293,8 +335,9 @@ export default (state=initialState, action) => {
                 }],
             },
             files: {
-                left: files,
-                right: files.slice(), // Avoid accidenal state mutations
+                // Each pane in its own sort (new arrays: no shared state)
+                left: sortFiles(files, state.sort.left),
+                right: sortFiles(files, state.sort.right),
             },
         }
     }
@@ -316,7 +359,10 @@ export default (state=initialState, action) => {
 
 
     case auth.LOGOUT_REQUEST: {
-        return initialState;
+        return {
+            ...initialState,
+            sort: state.sort, // a setting, like settings.paneSort
+        };
     }
 
     default:

@@ -8,6 +8,7 @@ import NewCloudConnectionDialog from 'views/Dialogs/CloudConnection/NewCloudConn
 import EditCloudConnectionDialog from 'views/Dialogs/CloudConnection/EditCloudConnectionDialog.jsx';
 import MkdirDialog from 'views/Dialogs/MkdirDialog.jsx';
 import SettingsDialog from 'views/Dialogs/SettingsDialog.jsx';
+import FileViewerDialog from 'views/Dialogs/FileViewerDialog.jsx';
 
 class Dialogs extends React.PureComponent {
     constructor(props) {
@@ -25,6 +26,7 @@ class Dialogs extends React.PureComponent {
                 {this.props.dialogs.displayEditCloudConnectionDialog && <EditCloudConnectionDialog />}
                 {this.props.dialogs.displayMkdirDialog && <MkdirDialog />}
                 {this.props.dialogs.displaySettingsDialog && <SettingsDialog />}
+                {this.props.dialogs.displayFileViewerDialog && <FileViewerDialog />}
             </React.Fragment>
         );
     }

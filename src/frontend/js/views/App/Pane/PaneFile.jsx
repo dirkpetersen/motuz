@@ -3,6 +3,7 @@ import classnames from 'classnames';
 
 import Icon from 'components/Icon.jsx'
 import formatBytes from 'utils/formatBytes.jsx'
+import {formatAge, formatLocalDateTime, UNKNOWN} from 'utils/fileAge.js'
 
 
 class PaneFile extends React.Component {
@@ -11,10 +12,10 @@ class PaneFile extends React.Component {
     }
 
     render() {
-        const {type, name, size, useSiUnits} = this.props;
+        const {type, name, size, modified, now, useSiUnits} = this.props;
 
-        // Both grid cells of the row share the handlers, so the row can be
-        // clicked, dragged and dropped onto from either cell.
+        // All grid cells of the row share the handlers, so the row can be
+        // clicked, dragged and dropped onto from any cell.
         const rowProps = {
             'data-file-index': this.props.index,
             draggable: this.props.draggable,
@@ -23,37 +24,48 @@ class PaneFile extends React.Component {
             onMouseDown: event => this.props.onMouseDown(event),
             onDragStart: event => this.props.onDragStart(event),
         }
+        const cellClasses = extra => classnames({
+            'grid-file-row': true,
+            'active': this.props.active,
+            'drop-target': this.props.dropTarget,
+            ...extra,
+        })
+
+        // Placeholder rows (Loading..., ERROR) have no type, '..' no time
+        const isPlaceholder = !type
+        let sizeText = ''
+        if (type === 'dir') {
+            sizeText = 'Folder'
+        } else if (!isPlaceholder) {
+            sizeText = typeof size === 'number' ? formatBytes(size, useSiUnits) : UNKNOWN
+        }
+        const hasAge = !isPlaceholder && name !== '..'
 
         return (
             <React.Fragment>
                 <div
-                    className={classnames({
-                        'grid-file-row': true,
-                        'active': this.props.active,
-                        'drop-target': this.props.dropTarget,
-                    })}
-                    style={{paddingLeft: "10px"}}
+                    className={cellClasses({'grid-file-name': true})}
+                    title={this.props.title || undefined}
                     {...rowProps}
                 >
-                    <Icon
+                    {!isPlaceholder && <Icon
                         name={type === 'dir' ? 'file-directory' : 'file'}
                         className='me-2'
-                    />
+                    />}
                     <span>{name}</span>
                 </div>
                 <div
-                    className={classnames({
-                        'text-end': true,
-                        'grid-file-row': true,
-                        'active': this.props.active,
-                        'drop-target': this.props.dropTarget,
-                        'pe-2': true,
-                    })}
+                    className={cellClasses({'grid-file-age': true})}
+                    title={hasAge ? formatLocalDateTime(modified) || 'Modification time unknown' : undefined}
                     {...rowProps}
                 >
-                    <em>
-                        {type === 'dir' ? 'Folder' : formatBytes(size, useSiUnits)}
-                    </em>
+                    {hasAge ? formatAge(modified, now) : ''}
+                </div>
+                <div
+                    className={cellClasses({'grid-file-size': true})}
+                    {...rowProps}
+                >
+                    <em>{sizeText}</em>
                 </div>
             </React.Fragment>
         );
@@ -66,9 +78,12 @@ class PaneFile extends React.Component {
 
 PaneFile.defaultProps = {
     index: 0,
-    type: 'dir',
+    type: '', // none for the placeholder rows
     name: '',
     size: 0,
+    modified: null,
+    now: 0,
+    title: '',
     useSiUnits: false,
     draggable: false,
     dropTarget: false,

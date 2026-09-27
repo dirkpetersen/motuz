@@ -7,6 +7,8 @@ from collections import defaultdict
 
 from .abstract_connection import AbstractConnection, RcloneException, user_process_env
 from . import local_credentials
+from .file_times import rfc3339_to_iso_utc
+from . import file_view
 from .copy_job_queue import CopyJobQueue
 from .hashsum_job_queue import HashsumJobQueue
 
@@ -91,7 +93,7 @@ class RcloneConnection(AbstractConnection):
 
         try:
             result = self._execute(command, credentials)
-            files = json.loads(result)
+            files = _with_modified(json.loads(result))
             return {
                 'files': files,
                 'path': path,
@@ -99,6 +101,61 @@ class RcloneConnection(AbstractConnection):
         except subprocess.CalledProcessError as e:
             raise RcloneException(str(e))
 
+
+
+    def view(self, data, path):
+        """
+        The first MAX_VIEW_BYTES of a text file, read by rclone as the user with the
+        connection's credentials (see file_view). `rclone cat` of a folder would print
+        every file in it, so the path is checked with `lsjson --stat` first.
+        """
+        credentials = self._formatCredentials(data, name='current')
+        user = data.owner
+        remote = 'current:{}'.format(path) # never an option: always prefixed
+        base = [
+            'sudo',
+            '-E',
+            '-u', user,
+            '/usr/local/bin/rclone',
+            '--config=/dev/null',
+            *_rate_limit_flags(credentials),
+        ]
+
+        command = base + ['lsjson', '--stat', remote]
+        self._log_command(command, credentials)
+        stdout = self._run_view_command(command, credentials, path)
+        try:
+            info = json.loads(stdout.decode('utf-8'))
+        except ValueError:
+            raise RcloneException("Could not read '{}'".format(path))
+        if not isinstance(info, dict):
+            raise file_view.NotFoundError("'{}' does not exist".format(path))
+        if info.get('IsDir'):
+            # Bucket storage (S3, Azure, GCS) reports a missing path as a virtual folder
+            raise file_view.ViewError("'{}' is a folder or does not exist".format(path))
+        size = info.get('Size')
+        if not isinstance(size, int) or size < 0:
+            size = None
+
+        command = base + ['cat', '--count', str(file_view.MAX_VIEW_BYTES + 1), remote]
+        self._log_command(command, credentials)
+        content = self._run_view_command(command, credentials, path)
+        try:
+            return file_view.view_result(path, content, size)
+        except file_view.NotTextError:
+            raise file_view.NotTextError("'{}' is not a text file".format(path.rstrip('/').split('/')[-1]))
+
+
+    def _run_view_command(self, command, credentials, path):
+        """stdout of a viewer command (bytes); rclone's error text on failure, never contents"""
+        returncode, stdout, stderr = file_view.run_limited(
+            command, file_view.CLOUD_TIMEOUT, env=user_process_env(credentials))
+        if returncode != 0:
+            message = stderr.decode('utf-8', 'replace').strip()[-1000:]
+            if 'not found' in message.lower():
+                raise file_view.NotFoundError("'{}' does not exist".format(path))
+            raise RcloneException(message or 'rclone failed with exit status {}'.format(returncode))
+        return stdout
 
 
     def mkdir(self, data, path):
@@ -575,6 +632,16 @@ class RcloneConnection(AbstractConnection):
             if len(stderr) == 0:
                 raise
             raise RcloneException(stderr)
+
+
+def _with_modified(files):
+    """
+    rclone lsjson entries plus `modified`: their ModTime (RFC 3339 with any offset)
+    in ISO 8601 UTC, or None if unknown (see file_times)
+    """
+    for entry in files:
+        entry['modified'] = rfc3339_to_iso_utc(entry.get('ModTime'))
+    return files
 
 
 def _drive_tuning(prefix):

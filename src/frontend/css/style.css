@@ -206,12 +206,10 @@ pre {
 
 #zone-left-pane {
     grid-area: leftPane;
-    overflow-y: auto;
 }
 
 #zone-right-pane {
     grid-area: rightPane;
-    overflow-y: auto;
 }
 
 #zone-job-progress {
@@ -238,21 +236,83 @@ pre {
 
 /* Panes */
 
+/* A pane: the column headers stay put, the files below them scroll */
 .zone-pane {
     border: 1px solid #e1e2e3;
     user-select: none;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    --pane-age-width: 7.5rem;
+    --pane-size-width: 6rem;
+    /* Name | Age | Size: the name truncates (ellipsis) before the other two shrink */
+    --pane-columns: minmax(0, 1fr) var(--pane-age-width) var(--pane-size-width);
+}
 
+.pane-header {
+    flex: none;
+    display: grid;
+    grid-template-columns: var(--pane-columns);
+    border-bottom: 1px solid #e1e2e3;
+    background-color: #f8f9fa;
+    /* the same gutter as the files' scrollbar, so the columns line up */
+    overflow: hidden;
+    scrollbar-gutter: stable;
+}
+
+.pane-header-cell {
+    min-width: 0;
+}
+
+.pane-header-age,
+.pane-header-size {
+    text-align: right;
+}
+
+.pane-sort {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    max-width: 100%;
+    border: 0;
+    padding: 1px 0 1px 10px;
+    background: none;
+    font-size: 12px;
+    font-weight: 600;
+    color: #5f6368;
+    white-space: nowrap;
+    cursor: pointer;
+}
+
+.pane-header-age .pane-sort {
+    padding-right: .75rem;
+}
+
+.pane-header-size .pane-sort {
+    padding-right: .5rem;
+}
+
+.pane-sort:hover,
+.pane-sort.active {
+    color: #212529;
+}
+
+.pane-sort:focus-visible {
+    outline: 2px solid #007BFF;
+    outline-offset: -2px;
 }
 
 .grid-files {
+    flex: 1 1 0;
+    min-height: 0; /* The empty space below the files is a drop target too */
     display: grid;
     grid-template-rows: 25px;
     grid-auto-rows: 25px;
-    grid-template-columns: 1fr 100px;
+    grid-template-columns: var(--pane-columns);
     align-content: start;
-    min-height: 100%; /* The empty space below the files is a drop target too */
     overflow-x: hidden;
     overflow-y: auto;
+    scrollbar-gutter: stable;
 }
 
 .grid-file-row {
@@ -261,8 +321,58 @@ pre {
     text-overflow: ellipsis;
 }
 
+.grid-file-age {
+    text-align: right;
+    padding-right: .75rem;
+    font-size: 13px;
+    line-height: 25px;
+    color: #5f6368;
+}
+
+.grid-file-size {
+    text-align: right;
+    padding-right: .5rem;
+}
+
 .grid-file-row.active {
     background-color: #D4E3F2;
+}
+
+/* Read-only file viewer */
+
+.file-viewer-title {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    font-size: 1.1rem;
+}
+
+.file-viewer-name,
+.file-viewer-path {
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+.file-viewer-path {
+    font-size: 12px;
+    font-weight: normal;
+    color: #5f6368;
+}
+
+.file-viewer-content {
+    margin: 0;
+    font-family: SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    font-size: 12.5px;
+    line-height: 1.45;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    tab-size: 4;
+    user-select: text;
+}
+
+.file-viewer-info {
+    font-size: 13px;
 }
 
 /* Drag and drop */
