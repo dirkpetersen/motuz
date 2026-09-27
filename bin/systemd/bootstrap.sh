@@ -47,7 +47,9 @@ if [ -d "$HOME_DIR/motuz/.git" ]; then
     as_account git -C "$HOME_DIR/motuz" pull --ff-only
 else
     log "cloning $REPO_URL${BRANCH:+ ($BRANCH)} to $HOME_DIR/motuz"
-    # A local repository belongs to another user: git's ownership check needs safe.directory
-    as_account git -c safe.directory="$REPO_URL" clone ${BRANCH:+--branch "$BRANCH"} "$REPO_URL" "$HOME_DIR/motuz"
+    # A local repository belongs to another user: git's ownership check (of the work
+    # tree and of its .git) needs safe.directory
+    as_account git -c safe.directory="$REPO_URL" -c safe.directory="$REPO_URL/.git" \
+        clone ${BRANCH:+--branch "$BRANCH"} "$REPO_URL" "$HOME_DIR/motuz"
 fi
 as_account "$HOME_DIR/motuz/bin/systemd/deploy.sh"
