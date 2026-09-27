@@ -282,7 +282,11 @@ export const createCloudConnection = (data) => {
 };
 
 export const verifyCloudConnection = (data) => {
-    delete data.id;
+    // An id (Edit dialog) makes the backend test with the stored secrets and token;
+    // the New dialog's form has an empty one, which the API would reject
+    if (!data.id) {
+        delete data.id;
+    }
 
     return {
         [RSAA]: {

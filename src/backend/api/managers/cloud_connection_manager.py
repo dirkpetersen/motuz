@@ -209,6 +209,9 @@ def verify(data):
     if stored is not None and brokered is not None and brokered[0] in kept_secrets:
         cloud_connection.id = stored.id
         cloud_connection.token_broker_handle = token_broker_manager.ensure_handle(stored)
+        # Server-controlled: which app issued the stored token
+        for column in _TOKEN_CLIENT_COLUMNS.values():
+            setattr(cloud_connection, column, getattr(stored, column))
 
     rclone = RcloneConnection()
     return rclone.verify(cloud_connection)

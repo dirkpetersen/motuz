@@ -307,6 +307,18 @@ if (PHASE === 'paste') {
             && d.enabledPrimary.length === 1 && d.enabledPrimary[0].text === 'Save changes', d.footer);
         check('Edit OneDrive: drive and token collapsed', !d.textInputs.includes('onedrive_token'), d.textInputs);
         await shot('edit-onedrive');
+        // Test connection must test the stored (brokered) token: the request carries the id.
+        // rclone then fails at the real Graph API with the fake token, but never with "empty token".
+        const before = await connection('ui-onedrive');
+        const [verifyRequest, verifyResponse] = await Promise.all([
+            page.waitForRequest(r => r.url().endsWith('/api/connections/verify/')),
+            page.waitForResponse(r => r.url().endsWith('/api/connections/verify/'), { timeout: 60000 }),
+            page.click('.modal-footer button:has-text("Test connection")'),
+        ]);
+        const verifyBody = verifyRequest.postDataJSON() || {};
+        const verifyResult = await verifyResponse.json().catch(() => ({}));
+        check('Edit OneDrive: Test connection sends the connection id', before && verifyBody.id === before.id, verifyBody);
+        check('Edit OneDrive: Test connection uses the stored token', !/empty token/i.test(verifyResult.message || ''), verifyResult);
         await page.fill('input[name=name]', 'ui-onedrive-renamed');
         await page.click('.modal-footer button:has-text("Save changes")');
         await waitForListed('ui-onedrive-renamed');

@@ -509,6 +509,11 @@ class RcloneConnection(AbstractConnection):
                 )
             # The scope the token was issued for (Sign in with Google, `rclone config`)
             credentials['{}_SCOPE'.format(prefix)] = 'drive'
+            # Own Google app: tell rclone its (public) client id, otherwise rclone warns that
+            # its own shared client is being retired. The secret stays with the token broker,
+            # which substitutes it when refreshing.
+            if getattr(data, 'gdrive_client_id', None) and brokered is not None:
+                credentials['{}_CLIENT_ID'.format(prefix)] = data.gdrive_client_id
             _addCredential(
                 '{}_ROOT_FOLDER_ID'.format(prefix),
                 'gdrive_root_folder_id',
