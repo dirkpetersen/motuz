@@ -51,7 +51,7 @@ EOF
 echo "==> export (migrate_from_docker.sh export)"
 "$REPO/bin/systemd/migrate_from_docker.sh" export --out "$WORK/export.tar.gz" --repo "$REPO" \
     --env-file "$E2E/.env" --docker-root "$E2E/.work" \
-    --db-container motuz_e2e-database-1 --app-container motuz_e2e-app-1 > "$LOGS/migration-export.log" 2>&1 \
+    --db-container "${COMPOSE_PROJECT_NAME:-motuz_e2e}-database-1" --app-container "${COMPOSE_PROJECT_NAME:-motuz_e2e}-app-1" > "$LOGS/migration-export.log" 2>&1 \
     || { cat "$LOGS/migration-export.log"; die "export failed"; }
 cat "$LOGS/migration-export.log"
 check "export file is mode 600" '[ "$(stat -c %a "$WORK/export.tar.gz")" = 600 ]'
