@@ -855,6 +855,11 @@ use the Proxmox firewall; let only root@pam edit the container's configuration; 
 Several worker machines (remote or on-prem workers) are not part of this install: they
 come with the HTTPS worker API.
 
+Other distributions: everything distribution specific (packages, the paths of the
+PostgreSQL and Redis binaries, how the distribution's own database service is kept from
+running, the PAM stack, the firewall hint) is in `bin/systemd/distro/<ID>.sh`, chosen by
+`ID` in `/etc/os-release`; only `ubuntu.sh` exists so far.
+
 ### Migrating from the docker install
 
 `bin/systemd/migrate_from_docker.sh` moves the data, the secrets and the settings:
