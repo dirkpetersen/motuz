@@ -20,9 +20,9 @@ ps -eo uid=,pid=,comm=,cgroup= | awk '$1 == 0 && $4 !~ /(system\.slice|init\.sco
 check "no root process in $ACCOUNT's user manager (user@$UID_M.service)" \
     bash -c "! ps -eo uid=,cgroup= | awk '\$1 == 0' | grep -q 'user@$UID_M.service'"
 check "the Motuz services run as $ACCOUNT" bash -c "
-    for c in traefik redis-server postgres uwsgi celery; do
-        ps -eo user=,args= | grep -v grep | grep -q \"^$ACCOUNT .*\$c\" || exit 1
-        ! ps -eo user=,args= | grep -v grep | grep -E '^root ' | grep -qE \"(/usr/local/bin/traefik|redis-server|postgres -D|uwsgi|celery)\" || exit 1
+    for c in traefik '(redis|valkey)-server' postgres uwsgi celery; do
+        ps -eo user=,args= | grep -v grep | grep -qE \"^$ACCOUNT .*\$c\" || exit 1
+        ! ps -eo user=,args= | grep -v grep | grep -E '^root ' | grep -qE \"(/usr/local/bin/traefik|(redis|valkey)-server|postgres -D|uwsgi|celery)\" || exit 1
     done"
 check "the login helper only runs as root on demand (socket activated, no daemon)" \
     bash -c "systemctl is-active --quiet motuz-auth.socket && ! pgrep -f motuz_auth_helper.py"
@@ -49,8 +49,8 @@ ss -ltnpH | awk '{print "      " $4, $6}'
 check "only 80 and 443 listen beyond loopback (besides the VM's sshd on 22)" \
     bash -c "! ss -ltnH | awk '{print \$4}' | grep -vE '^(127\.|\[::1\]|\[::ffff:127\.)' | grep -vE ':(80|443|22)$' | grep -q ."
 check "Traefik ($ACCOUNT) listens on 80 and 443" bash -c "ss -ltnpH | grep -E ':(80|443) ' | grep -c traefik | grep -qx 2"
-check "no UDP listeners of $ACCOUNT" bash -c "! ss -lunpH | grep -qE 'users:.*(redis|postgres|uwsgi|celery|traefik)'"
-check "Redis has no TCP port (unix socket only)" bash -c "! ss -ltnpH | grep -q redis"
+check "no UDP listeners of $ACCOUNT" bash -c "! ss -lunpH | grep -qE 'users:.*(redis|valkey|postgres|uwsgi|celery|traefik)'"
+check "Redis/Valkey has no TCP port (unix socket only)" bash -c "! ss -ltnpH | grep -qE 'redis|valkey'"
 check "~/.config/motuz is 700, secrets.env and broker.env 600" \
     bash -c "[ \$(stat -c %a $HOME_M/.config/motuz) = 700 ] && [ \$(stat -c %a $HOME_M/.config/motuz/secrets.env) = 600 ] && [ \$(stat -c %a $HOME_M/.config/motuz/broker.env) = 600 ]"
 check "the home is not world readable, ~/data/pg is 700" \

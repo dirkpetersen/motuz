@@ -8,8 +8,11 @@
 # the SAME suites as test/e2e/run.sh inside the VM with MOTUZ_E2E_TARGET=systemd, plus
 # `security` (test/e2e/systemd/security_test.sh: processes, sudo, ports, login helper).
 # Logs are copied to test/e2e/logs-systemd; the VM is removed at the end.
+# With --distro=al2027 the machine is an Amazon Linux 2027 container with systemd as PID 1
+# instead (test/e2e/systemd/container.sh, own network namespace, no SELinux; logs in
+# test/e2e/logs-systemd-al2027).
 #
-# Usage: test/e2e/run_systemd.sh [--keep] [--reuse] [suite ...]
+# Usage: test/e2e/run_systemd.sh [--distro=ubuntu|al2027] [--keep] [--reuse] [suite ...]
 #   --keep    leave the VM running (test/e2e/systemd/vm.sh ssh; vm.sh down removes it)
 #   --reuse   use a VM left by --keep: copy the tree, install and deploy again, run suites
 #   suite     any of: e2e broker oauth-paste traefik credentials ui oauth-callback
@@ -33,9 +36,10 @@ SRC=/opt/motuz-src   # the copied working tree in the VM
 INSIDE_ROOT=/root/motuz-e2e
 ACCOUNT=motuz
 
-MODE=host; KEEP=0; REUSE=0; ARGS=()
+MODE=host; KEEP=0; REUSE=0; ARGS=(); DISTRO=ubuntu
 while [ $# -gt 0 ]; do
     case "$1" in
+        --distro=*) DISTRO="${1#*=}" ;;
         --keep) KEEP=1 ;;
         --reuse) REUSE=1 ;;
         --inside) MODE=inside ;;
@@ -50,6 +54,13 @@ done
 # ================================================================== host
 if [ "$MODE" = host ]; then
     LOGS="$HERE/logs-systemd"
+    MACHINE="an Ubuntu 26.04 VM"
+    case "$DISTRO" in
+        ubuntu) ;;
+        al2027) VM="$HERE/systemd/container.sh"; LOGS="$HERE/logs-systemd-al2027"
+                MACHINE="an Amazon Linux 2027 container" ;;
+        *) echo "unknown --distro=$DISTRO (ubuntu, al2027)" >&2; exit 2 ;;
+    esac
     log() { printf '\n\033[1m==> %s\033[0m\n' "$*"; }
     on_exit() {
         local rc=$?
@@ -73,7 +84,7 @@ if [ "$MODE" = host ]; then
     if [ "$REUSE" = 1 ] && "$VM" status | grep -q running; then
         log "reusing the VM"
     else
-        log "starting an Ubuntu 26.04 VM"
+        log "starting $MACHINE"
         "$VM" up || exit 1
     fi
     log "copying the working tree to $SRC"
@@ -192,7 +203,17 @@ EOF
             || die "could not install Azurite (see $LOGS/azurite-npm.log)"
     fi
     if [ "$UI_MODE" != skip ]; then
-        (cd "$HERE/ui" && npm ci --silent --no-audit --no-fund && npx playwright install --with-deps chromium) \
+        # playwright installs chromium's libraries with apt only; on dnf distributions
+        # (Amazon Linux) they come from these packages
+        with_deps=--with-deps
+        if ! command -v apt-get >/dev/null && command -v dnf >/dev/null; then
+            with_deps=""
+            dnf -y -q install nss nspr atk at-spi2-atk at-spi2-core cups-libs libdrm libxkbcommon \
+                libXcomposite libXdamage libXext libXfixes libXrandr libxshmfence mesa-libgbm pango \
+                cairo alsa-lib dbus-libs expat > "$LOGS/ui-deps.log" 2>&1 \
+                || echo "WARNING: chromium's libraries did not install (see $LOGS/ui-deps.log)"
+        fi
+        (cd "$HERE/ui" && npm ci --silent --no-audit --no-fund && npx playwright install $with_deps chromium) \
             > "$LOGS/ui-install.log" 2>&1 || echo "WARNING: playwright/chromium install failed (see $LOGS/ui-install.log)"
     fi
     echo "setup done"
