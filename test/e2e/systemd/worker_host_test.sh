@@ -155,5 +155,28 @@ check "the once-worker ran as a transient user service of motuz" \
 check "no secret in the worker's journal" \
     'worker "! journalctl --no-pager -o cat | grep -qF -e \"$SECRET\" -e \"$TOKEN\""'
 
+# ------------------------------------------------------------------ --run-as (cloud-to-cloud only)
+# Not with --inside: it replaces the sudoers rule that the server on the same host needs
+if [ "$INSIDE" = 0 ]; then
+    out=$(worker "$WORKER_HOME/bin/systemd/install.sh --worker-only --central-url=https://localhost --pool=onprem --credential-file=/root/credential --run-as=motuzjob 2>&1")
+    check "install.sh --worker-only --run-as=motuzjob restarts motuz-worker" '[[ "$out" == *"starting motuz-worker"* ]]' "$(tail -3 <<<"$out")"
+    rule=$(worker "sudo -l -U motuz | sed -n '/may run the following/,\$p' | tail -n +2 | sed 's/^ *//'")
+    check "sudoers: only /usr/local/bin/rclone as motuzjob" \
+        '[[ "$rule" =~ ^\(motuzjob\)\ (SETENV:\ NOPASSWD:|NOPASSWD:\ ?SETENV:)\ /usr/local/bin/rclone$ ]]' "$rule"
+    check "motuzjob: a system account without a shell; MOTUZ_WORKER_RUN_AS in worker.env" \
+        'worker "getent passwd motuzjob | grep -q :/sbin/nologin\$ && grep -qx MOTUZ_WORKER_RUN_AS=\\\"motuzjob\\\" ~motuz/.config/motuz-worker/worker.env"'
+    check "motuz can no longer run anything as alice" 'worker "! runuser -u motuz -- sudo -n -u alice /usr/local/bin/rclone version"'
+    for _ in $(seq 30); do
+        worker "journalctl --no-pager -o cat _SYSTEMD_USER_UNIT=motuz-worker.service --since -2min | grep -q 'signed in as worker $WNAME'" && break
+        sleep 2
+    done
+    JOB3=$(central "python3 /root/api.py POST /api/copy-jobs/ '{\"description\": \"run-as\", \"src_resource_path\": \"/home/alice/whost\", \"dst_resource_path\": \"/home/alice/whost-runas\", \"copy_links\": true}'" \
+        | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')
+    state=$(wait_job "$JOB3")
+    error=$(central "python3 /root/api.py GET /api/copy-jobs/$JOB3" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("progress_error_text") or "")')
+    check "a local job on the --run-as worker fails: cloud-to-cloud only" \
+        '[ "$state" = FAILED ] && [[ "$error" == *"only cloud-to-cloud"* ]]' "$state $error"
+fi
+
 echo; echo "$pass/$((pass + fail)) passed"
 [ "$fail" = 0 ]
