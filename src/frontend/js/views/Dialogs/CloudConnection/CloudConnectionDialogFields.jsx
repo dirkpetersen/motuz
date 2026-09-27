@@ -296,7 +296,7 @@ class CloudConnectionDialogFields extends React.Component {
                         name: 'bucket',
                         defaultValue: this.props.data.bucket,
                         title: "Must be a valid AWS S3 bucket name (or left blank)",
-                        pattern: "^(?=^.{3,63}$)(?!xn--)([a-z0-9](?:[a-z0-9-]*)[a-z0-9])$",
+                        pattern: "(?=.{3,63}$)(?!xn--)[a-z0-9][a-z0-9\\-]*[a-z0-9]",
                         placeholder: 'Optional, e.g. my-lab-bucket (empty: all your buckets)',
                     }}
                     error={this.props.errors.bucket}
@@ -359,7 +359,7 @@ class CloudConnectionDialogFields extends React.Component {
                         title: "Must be a valid AWS Access Key ID (20 characters, usually starts with 'AKIA').",
                         required: true,
                         maxLength: 20,
-                        pattern: "^(?<![A-Z0-9])[A-Z0-9]{20}(?![A-Z0-9])$",
+                        pattern: "[A-Z0-9]{20}",
                         minLength: 20,
 
                     }}
@@ -378,7 +378,7 @@ class CloudConnectionDialogFields extends React.Component {
                         minLength: 40,
                         maxLength: 40,
                         // could probably trim this regex:
-                        pattern: "^(?<![A-Za-z0-9/+=])[A-Za-z0-9/+=]{40}(?![A-Za-z0-9/+=])$"
+                        pattern: "[A-Za-z0-9\\/+=]{40}"
                     }}
                     error={this.props.errors.s3_secret_access_key}
                     isValid={this.props.verifySuccess}
@@ -395,7 +395,7 @@ class CloudConnectionDialogFields extends React.Component {
                             required: true,
                             type: 'password',
                             minLength: 40,
-                            pattern: "^([A-Za-z0-9/+=]*)$"
+                            pattern: "[A-Za-z0-9\\/+=]*"
                         }}
                         error={this.props.errors.s3_session_token}
                         isValid={this.props.verifySuccess}

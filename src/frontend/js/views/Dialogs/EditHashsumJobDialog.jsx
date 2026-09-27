@@ -1,6 +1,6 @@
 import React from 'react';
 import { Modal, Button, ProgressBar } from 'react-bootstrap'
-import Tree, { TreeNode } from 'rc-tree'
+import Tree from 'rc-tree'
 import 'rc-tree/assets/index.css';
 
 import parseTime from 'utils/parseTime.jsx'
@@ -149,9 +149,8 @@ class EditHashsumJobDialog extends React.Component {
                                             selectable={false}
                                             expandedKeys={this.state.expandedKeys}
                                             onExpand={(expandedKeys) => this.setState({expandedKeys})}
-                                        >
-                                            {this._renderNodes(treeLeft)}
-                                        </Tree>
+                                            treeData={this._treeData(treeLeft)}
+                                        />
                                     </div>
                                     <div className="col-6 overflow-hidden">
                                         <Tree
@@ -160,9 +159,8 @@ class EditHashsumJobDialog extends React.Component {
                                             selectable={false}
                                             expandedKeys={this.state.expandedKeys}
                                             onExpand={(expandedKeys) => this.setState({expandedKeys})}
-                                        >
-                                            {this._renderNodes(treeRight)}
-                                        </Tree>
+                                            treeData={this._treeData(treeRight)}
+                                        />
                                     </div>
                                 </div>
                                 <div className="row mt-5">
@@ -241,29 +239,28 @@ class EditHashsumJobDialog extends React.Component {
         );
     }
 
-    _renderNodes(treeData, level=0) {
-        if (!treeData || treeData.length === 0) {
-            return null;
+    // rc-tree's treeData (TreeNode children are deprecated). Both trees use the same
+    // positional keys, so expanding a folder on one side expands it on the other.
+    _treeData(nodes, level=0) {
+        if (!nodes || nodes.length === 0) {
+            return undefined;
         }
 
-        return treeData.map((node, i) => (
-            <TreeNode
-                key={`${level}|${i}`}
-                className={`rc-node-color-${node.type}`}
-                title={
-                    <React.Fragment>
-                        <span
-                            className="rc-tree-left"
-                        >{node.title}</span>
-                        <span
-                            className="rc-tree-right font-monospace"
-                        >{node.hash}</span>
-                    </React.Fragment>
-                }
-            >
-                {this._renderNodes(node.children, level + 1)}
-            </TreeNode>
-        ))
+        return nodes.map((node, i) => ({
+            key: `${level}|${i}`,
+            className: `rc-node-color-${node.type}`,
+            title: (
+                <React.Fragment>
+                    <span
+                        className="rc-tree-left"
+                    >{node.title}</span>
+                    <span
+                        className="rc-tree-right font-monospace"
+                    >{node.hash}</span>
+                </React.Fragment>
+            ),
+            children: this._treeData(node.children, level + 1),
+        }))
     }
 
     componentDidMount() {
