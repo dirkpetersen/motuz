@@ -83,6 +83,8 @@ chunk_dto = api.model('system-file-view-chunk-request', {
     'before': fields.Integer(description='Read the chunk that ends at this byte (backward, the previous chunk)'),
     'from_end': fields.Boolean(description='Read the last chunk of the file (tail)'),
     'length': fields.Integer(description='At most this many bytes (256 to 262144, the default)'),
+    'follow': fields.Boolean(description='Follow mode (with offset): an incomplete last line is withheld, and '
+                                         'an offset beyond the end returns the new (smaller) size instead of 400'),
 })
 
 chunk_result_dto = api.model('system-file-view-chunk', {
