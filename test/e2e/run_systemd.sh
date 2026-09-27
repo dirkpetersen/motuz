@@ -227,7 +227,7 @@ cleanup_inside() {
 }
 trap cleanup_inside EXIT
 "$INSIDE_ROOT/azurite/node_modules/.bin/azurite-blob" --blobHost 127.0.0.1 --blobPort 10000 --skipApiVersionCheck \
-    --loose --inMemoryPersistence --location "$WORK/azurite" > "$LOGS/azurite.log" 2>&1 &
+    --loose --inMemoryPersistence > "$LOGS/azurite.log" 2>&1 &
 AZURITE_PID=$!
 
 OWN_APP=0
