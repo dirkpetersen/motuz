@@ -3,6 +3,7 @@ import { ProgressBar } from 'react-bootstrap';
 
 import UriResource from 'components/UriResource.jsx'
 import parseTime from 'utils/parseTime.jsx'
+import {describeJobLocation} from 'utils/jobLocation.js'
 
 
 class HashsumJobTable extends React.Component {
@@ -83,12 +84,18 @@ class HashsumJobTable extends React.Component {
             const destination = (
                 <UriResource protocol={job.dst_cloud_type} path={job.dst_resource_path} />
             )
+            const location = describeJobLocation(job)
             const progress = (
-                <ProgressBar
-                    now={progressValue}
-                    label={`${progressValue}%`}
-                    variant={color}
-                />
+                <>
+                    <ProgressBar
+                        now={progressValue}
+                        label={`${progressValue}%`}
+                        variant={color}
+                    />
+                    {location && (
+                        <div className="small text-muted job-location">{location}</div>
+                    )}
+                </>
             )
 
             const jobFields = {

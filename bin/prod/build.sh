@@ -12,6 +12,16 @@ if command -v docker-compose >/dev/null 2>&1; then
 else
     DOCKER_COMPOSE="docker compose"
 fi
+# The commit of this checkout, baked into the image: temporary EC2 workers fetch Motuz at
+# this commit from MOTUZ_WORKER_SOURCE (README, "Temporary EC2 workers"), so it must be
+# pushed there. Uncommitted changes are not in it.
+if [ -z "${MOTUZ_SOURCE_COMMIT:-}" ] && git rev-parse --verify -q HEAD >/dev/null 2>&1; then
+    MOTUZ_SOURCE_COMMIT=$(git rev-parse HEAD)
+    git diff --quiet HEAD -- src 2>/dev/null \
+        || echo "WARNING: uncommitted changes in src/: EC2 workers would run commit $MOTUZ_SOURCE_COMMIT without them" >&2
+fi
+export MOTUZ_SOURCE_COMMIT="${MOTUZ_SOURCE_COMMIT:-}"
+
 COMPOSE="${DOCKER_COMPOSE} -f docker-compose.yml -f docker-compose.override.yml -f deployment/docker-compose/docker-compose.build.yml"
 
 # Pick up latest changes. Add `--no-cache` if this turns out to be unreliable.
