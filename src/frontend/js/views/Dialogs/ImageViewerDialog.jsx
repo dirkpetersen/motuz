@@ -91,8 +91,11 @@ class ImageViewerDialog extends React.Component {
         this.setState({loading: false, url: this.url, type: result.type, size: result.size});
     }
 
-    onImageLoad(event) {
-        const img = event.target;
+    /** The image is decoded: its natural size (from onLoad, or the ref if it was already complete) */
+    onImageLoad(img) {
+        if (!img || !img.complete || !img.naturalWidth || this.state.width === img.naturalWidth) {
+            return;
+        }
         this.setState({width: img.naturalWidth, height: img.naturalHeight, decodeError: false});
         if (this.stage) {
             this.stage.focus({preventScroll: true});
@@ -176,7 +179,8 @@ class ImageViewerDialog extends React.Component {
                                     src={url}
                                     alt={name}
                                     draggable={false}
-                                    onLoad={e => this.onImageLoad(e)}
+                                    ref={img => this.onImageLoad(img)}
+                                    onLoad={e => this.onImageLoad(e.target)}
                                     onError={() => this.onImageError()}
                                     onClick={() => this.toggleSize()}
                                     title={actualSize ? 'Click to fit to the window' : 'Click for 100%'}

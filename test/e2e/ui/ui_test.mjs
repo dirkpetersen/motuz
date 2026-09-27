@@ -1069,9 +1069,11 @@ os.utime(os.path.join(d, 'dirB'), (now - 86400,) * 2)
             info: (document.querySelector('.image-viewer-info') || {}).textContent || '',
         };
     });
+    // Decoded, and the dialog shows its dimensions
     const imageLoaded = () => page.waitForFunction(() => {
         const i = document.querySelector('.image-viewer-image');
-        return i && i.complete && i.naturalWidth > 0;
+        const info = document.querySelector('.image-viewer-info');
+        return i && i.complete && i.naturalWidth > 0 && info && info.textContent.includes(' px');
     }, null, { timeout: 30000 });
     const closeViewer = async () => {
         await page.keyboard.press('Escape');
