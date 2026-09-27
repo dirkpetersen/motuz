@@ -178,6 +178,8 @@ check('copy job SUCCESS on the remote worker', job['progress_state'] == 'SUCCESS
 check('job record: claimed and finished by worker w1 (pool onprem)', remote_job('copy', job['id']) == ('DONE', 'w1', 'onprem'),
       remote_job('copy', job['id']))
 check('copy progress text returned by the API', 'Transferred' in (job.get('progress_text') or ''), job.get('progress_text'))
+check('job says where it ran (pool onprem, worker w1)',
+      (job.get('pool'), job.get('pool_status')) == ('onprem', 'ran on w1'), (job.get('pool'), job.get('pool_status')))
 owners = worker_sh('stat -c %U /home/alice/wdst/f1.txt /home/alice/wdst/sub/d.txt').stdout.split()
 check('copied files owned by alice (rclone ran as the owner via sudo)', owners == ['alice', 'alice'], owners)
 check('rclone ran on the worker, not by celery, with the job\'s performance flags from the ticket',
@@ -368,6 +370,20 @@ check('revoked worker w1: refused and exits 78 (no restart loop)', result.return
       and 'refused by the central node' in (result.stdout + result.stderr), (result.returncode, (result.stdout + result.stderr)[-800:]))
 rc, out, err = manage('workers', 'list')
 check('manage.py workers list shows revoked and last seen', re.search(r'w1\s+pool=onprem\s+revoked\s+last seen 20', out) is not None, out)
+
+# ---------------------------------------------------------------- temporary EC2 workers off
+# MOTUZ_EC2_WORKERS is unset in this stack: jobs of other pools never start instances
+rc, out, err = manage('ec2', 'reap')
+check('manage.py ec2 reap: EC2 workers are off by default', rc != 0 and 'EC2 workers are off' in err, (rc, out, err[-300:]))
+rc, out, err = manage('ec2', 'status')
+check('manage.py ec2 status works without AWS', rc == 0 and out.startswith('EC2 workers off (pool aws'), (rc, out, err[-300:]))
+check('ec2_worker table exists (migration e4b8c2d6f1a3) and is empty', psql('select count(*) from ec2_worker') == '0',
+      psql('select count(*) from ec2_worker'))
+check('no EC2 reaper loop in the celery container', sh('celery', "grep -la '[e]c2' /proc/[0-9]*/cmdline").stdout.strip() == '',
+      sh('celery', "grep -la '[e]c2' /proc/[0-9]*/cmdline").stdout)
+check('queued jobs keep their source size column (NULL for local jobs)',
+      psql("select count(*) from remote_job where source_bytes is not null") == '0',
+      psql("select count(*) from remote_job where source_bytes is not null"))
 
 # ---------------------------------------------------------------- rate limit and logs
 codes = [req('POST', '/api/workers/auth', body={'secret': 'mzw1.1.wrong'})[0] for _ in range(21)]
