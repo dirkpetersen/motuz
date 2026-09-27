@@ -132,10 +132,12 @@ if new == lines:
 open(path, 'w').write('\n'.join(new) + '\n')
 EOF
 }
-wait_healthy() {
+wait_healthy() { # the API answers through Traefik, the running celery worker said "ready"
+    local invocation
     for _ in $(seq 120); do
-        if curl -skf "$BASE/api/system/info/" 2>/dev/null | grep -q healthy \
-                && journalctl --no-pager -o cat _SYSTEMD_USER_UNIT=motuz-celery.service --since "-10min" 2>/dev/null | grep -q 'celery@.* ready\.'; then
+        invocation=$(as_motuz systemctl --user show -p InvocationID --value motuz-celery.service 2>/dev/null)
+        if curl -skf "$BASE/api/system/info/" 2>/dev/null | grep -q healthy && [ -n "$invocation" ] \
+                && journalctl --no-pager -o cat "_SYSTEMD_INVOCATION_ID=$invocation" 2>/dev/null | grep -q 'celery@.* ready\.'; then
             return 0
         fi
         sleep 2

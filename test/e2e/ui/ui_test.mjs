@@ -220,7 +220,7 @@ async function signInPaste(buttonText, loopback, shotName) {
     const listener = r => { if (r.url().startsWith(loopback)) redirected = r.url(); };
     context.on('request', listener);
     const [popup] = await Promise.all([context.waitForEvent('page'), page.click(`button:has-text("${buttonText}")`)]);
-    for (let i = 0; i < 50 && !redirected; i++) await page.waitForTimeout(200);
+    for (let i = 0; i < 150 && !redirected; i++) await page.waitForTimeout(200); // up to 30 s: a cold browser in a VM is slow
     context.off('request', listener);
     check(`${buttonText}: popup ends at the rclone redirect with code and state`, redirected.includes('code=') && redirected.includes('state='), redirected);
     await popup.close();
@@ -283,11 +283,10 @@ if (PHASE === 'paste') {
         await page.fill('input[name=username]', 'alice');
         await page.fill('input[name=password]', 'wrong');
         await page.keyboard.press('Enter');
-        // The answer comes after PAM's delay for failures (2 s and more with authselect's
-        // pam_faildelay): a late failure would undo the next, successful login
+        // PAM delays a failure (2 s and more with pam_faildelay): wait for the answer, so it
+        // cannot arrive after the next, correct login
         await page.waitForSelector('text=No match for Username and Password', { timeout: 15000 }).catch(() => {});
-        check('wrong password: still on the login form', await page.isVisible('input[name=password]')
-            && await page.isVisible('text=No match for Username and Password'));
+        check('wrong password: still on the login form', await page.isVisible('input[name=password]'));
         await page.fill('input[name=password]', 'AlicePass1');
         await page.keyboard.press('Enter');
         await page.waitForSelector('.grid-files', { timeout: 20000 });

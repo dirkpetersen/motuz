@@ -25,7 +25,7 @@ check "the Motuz services run as $ACCOUNT" bash -c "
         ! ps -eo user=,args= | grep -v grep | grep -E '^root ' | grep -qE \"(/usr/local/bin/traefik|(redis|valkey)-server|postgres -D|uwsgi|celery)\" || exit 1
     done"
 check "the login helper only runs as root on demand (socket activated, no daemon)" \
-    bash -c "systemctl is-active --quiet motuz-auth.socket && ! pgrep -f '[m]otuz_auth_helper.py'"
+    bash -c "systemctl is-active --quiet motuz-auth.socket && ! ps -eo args= | grep -q '^/usr/bin/python3 -I -S /usr/local/lib/motuz-auth/'"
 
 # --- sudo
 RULE=$(sudo -l -U "$ACCOUNT" 2>/dev/null | sed -n '/may run the following commands/,$p' | tail -n +2 | sed 's/^ *//')
@@ -73,7 +73,8 @@ try:
 except OSError as e:
     print("ERROR", e.errno)' "$2" "$3"
 }
-export -f ask # the checks run in bash -c
+export -f ask # the checks run it in `bash -c`
+export ACCOUNT
 check "socket is root:$ACCOUNT 660" bash -c "[ \"\$(stat -c '%U:%G %a' /run/motuz-auth.sock)\" = 'root:$ACCOUNT 660' ]"
 check "helper accepts alice with her password" bash -c "[ \"\$(ask $ACCOUNT alice AlicePass1)\" = OK ]"
 check "helper rejects a wrong password" bash -c "[ \"\$(ask $ACCOUNT alice wrong)\" = NO ]"
