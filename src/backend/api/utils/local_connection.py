@@ -9,6 +9,7 @@ from ..exceptions import *
 from .abstract_connection import AbstractConnection, RcloneException, check_output
 from .file_times import epoch_to_iso_utc
 from . import file_view
+from . import image_view
 
 
 # Absolute paths: the sudoers rule of a non-root install (bin/systemd/install.sh) allows
@@ -89,6 +90,20 @@ class LocalConnection(AbstractConnection):
             return file_view.chunk_result(path, request, size, head, data_start, content)
         except file_view.NotTextError:
             raise file_view.NotTextError("'{}' is not a text file".format(os.path.basename(path)))
+
+
+    def view_image(self, data, path, max_bytes):
+        """
+        (bytes, type) of a PNG, JPEG, GIF or WebP image, read as the user by the same
+        reader as the text viewer: a file larger than `max_bytes` is refused before it
+        is read, and at most max_bytes + 1 bytes are read (see image_view).
+        """
+        user = data.owner
+        if not isinstance(path, str) or not path.startswith('/') or '\x00' in path:
+            raise file_view.ViewError("Local path must be absolute: '{}'".format(path))
+
+        header, _, content = _read_with_impersonation(path, user, 0, max_bytes + 1, max_size=max_bytes)
+        return image_view.image_result(os.path.basename(path), content, header.get('size'), max_bytes)
 
 
     def mkdir(self, data, path):
@@ -226,13 +241,14 @@ def _mkdir_with_impersonation(path, user):
 # open file) and prints a JSON header line ({"size", "start", "head"}) followed by the
 # first `head` bytes of the file (at most, for the text check) and at most `count` bytes
 # from `start` (a negative start counts from the end of the file, for a tail read).
-# Nothing is read when `start` is at (or past) the end of the file.
-# Errors: exit status 3 and {"error": kind} on stdout.
+# Nothing is read when `start` is at (or past) the end of the file, nothing at all when
+# the file is larger than `max_size` (unless it is negative: no limit; the image viewer).
+# Errors: exit status 3 and {"error": kind} on stdout ({"error": "large", "size"}).
 _VIEW_READER = r'''
 import json, os, stat, sys
-head_cap, start, count, path = int(sys.argv[1]), int(sys.argv[2]), int(sys.argv[3]), sys.argv[4]
-def fail(kind):
-    sys.stdout.write(json.dumps({"error": kind})); sys.stdout.flush(); os._exit(3)
+head_cap, start, count, max_size, path = int(sys.argv[1]), int(sys.argv[2]), int(sys.argv[3]), int(sys.argv[4]), sys.argv[5]
+def fail(kind, **extra):
+    sys.stdout.write(json.dumps(dict(extra, error=kind))); sys.stdout.flush(); os._exit(3)
 def kind_of(e):
     if isinstance(e, (FileNotFoundError, NotADirectoryError)): return "missing"
     if isinstance(e, PermissionError): return "denied"
@@ -249,6 +265,7 @@ except OSError as e:
     fail(kind_of(e))
 st = os.fstat(fd)
 if not stat.S_ISREG(st.st_mode): fail("special")
+if max_size >= 0 and st.st_size > max_size: fail("large", size=st.st_size)
 if start < 0:
     start = max(0, st.st_size + start)
 if start >= st.st_size:
@@ -282,10 +299,11 @@ _VIEW_ERRORS = {
 }
 
 
-def _read_with_impersonation(path, user, start, count, head=0):
+def _read_with_impersonation(path, user, start, count, head=0, max_size=-1):
     """
     Reads up to `count` bytes of `path` from `start` (negative: from the end), and the
-    first `head` bytes, as `user`, never as root.
+    first `head` bytes, as `user`, never as root. A file larger than `max_size` (if not
+    negative) is not read: image_view.TooLargeError.
     Returns ({'size': file size, 'start': resolved start}, head bytes, bytes).
     Raises file_view errors.
     """
@@ -295,15 +313,19 @@ def _read_with_impersonation(path, user, start, count, head=0):
     if os.environ.get('LD_LIBRARY_PATH'):
         command.append('LD_LIBRARY_PATH={}'.format(os.environ['LD_LIBRARY_PATH']))
     # The path is an argument of the script, never an option of env or python
-    command += [_python(), '-I', '-S', '-c', _VIEW_READER, str(int(head)), str(int(start)), str(int(count)), path]
+    command += [_python(), '-I', '-S', '-c', _VIEW_READER, str(int(head)), str(int(start)), str(int(count)),
+                str(int(max_size)), path]
 
     returncode, stdout, stderr = file_view.run_limited(command, file_view.LOCAL_TIMEOUT)
 
     if returncode == 3:
         try:
-            kind = json.loads(stdout.decode('utf-8'))['error']
+            failure = json.loads(stdout.decode('utf-8'))
+            kind = failure['error']
         except (ValueError, KeyError, TypeError):
             kind = 'error'
+        if kind == 'large' and isinstance(failure.get('size'), int):
+            raise image_view.too_large(os.path.basename(path), failure['size'], max_size)
         error, message = _VIEW_ERRORS.get(kind, _VIEW_ERRORS['error'])
         raise error(message.format(path=path, user=user))
     header, newline, content = stdout.partition(b'\n')

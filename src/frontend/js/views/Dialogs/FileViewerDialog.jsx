@@ -2,6 +2,7 @@ import React from 'react';
 import { Modal, Button } from 'react-bootstrap'
 
 import formatBytes from 'utils/formatBytes.jsx'
+import { ViewerModeSwitch } from 'views/Dialogs/MarkdownViewerDialog.jsx'
 import {
     MAX_CHUNKS,
     MERGE_BYTES,
@@ -72,6 +73,9 @@ function FollowAgo({since}) {
  * tail, a deleted one stops following. Requests never overlap (one queue), the next
  * poll is scheduled after the answer, and polling stops when the dialog closes, while
  * the tab is hidden and after an hour without activity.
+ *
+ * Images and Markdown files open in ImageViewerDialog / MarkdownViewerDialog instead
+ * (Dialogs.jsx); for a Markdown file this is the "Source" view.
  */
 class FileViewerDialog extends React.Component {
     constructor(props) {
@@ -583,6 +587,7 @@ class FileViewerDialog extends React.Component {
             <Modal
                 show={true}
                 size="xl"
+                animation={this.props.animation}
                 onHide={() => this.props.onClose()}
                 dialogClassName='file-viewer-dialog'
                 aria-labelledby='file-viewer-title'
@@ -594,6 +599,9 @@ class FileViewerDialog extends React.Component {
                             {hostName ? `${hostName}: ` : ''}{path}
                         </small>
                     </Modal.Title>
+                    {this.props.data.kind === 'markdown' && (
+                        <ViewerModeSwitch mode='source' onChange={mode => this.props.onModeChange(mode)} />
+                    )}
                 </Modal.Header>
                 <Modal.Body
                     className='file-viewer-body'
@@ -766,13 +774,15 @@ class FileViewerDialog extends React.Component {
 
 FileViewerDialog.defaultProps = {
     data: {},
+    animation: true,
+    onModeChange: () => {},
     useSiUnits: false,
     onClose: () => {},
     fetchChunk: async () => undefined,
 }
 
 import {connect} from 'react-redux';
-import {hideFileViewerDialog} from 'actions/dialogActions.jsx'
+import {hideFileViewerDialog, setFileViewerMode} from 'actions/dialogActions.jsx'
 import {viewFileChunk} from 'actions/apiActions.jsx'
 
 const mapStateToProps = state => ({
@@ -782,6 +792,7 @@ const mapStateToProps = state => ({
 
 const mapDispatchToProps = dispatch => ({
     onClose: () => dispatch(hideFileViewerDialog()),
+    onModeChange: mode => dispatch(setFileViewerMode(mode)),
     fetchChunk: data => dispatch(viewFileChunk(data)),
 });
 

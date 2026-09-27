@@ -30,6 +30,8 @@ x-env: &env
     # rclone performance (e2e_test.py): an installation default and a cap
     MOTUZ_RCLONE_CHECKERS: "16"
     MOTUZ_RCLONE_MAX_TRANSFERS: "48"
+    # Image viewer (e2e_test.py): a small cap, so that 413 needs no big file
+    MOTUZ_VIEW_IMAGE_MAX_BYTES: "2M"
     MOTUZ_OPERATOR_NAME: "E2E Lab <R&D>"
     MOTUZ_CONTACT_EMAIL: "motuz-admin@example.org"
     MOTUZ_OPERATOR_URL: "https://example.org/?a=1&b=2"

@@ -80,6 +80,9 @@ x-variables:
         MOTUZ_RCLONE_MAX_UPLOAD_CONCURRENCY: ${MOTUZ_RCLONE_MAX_UPLOAD_CONCURRENCY:-}
         MOTUZ_RCLONE_MEMORY_BUDGET: ${MOTUZ_RCLONE_MEMORY_BUDGET:-}
         MOTUZ_RCLONE_EXTRA_FLAGS: ${MOTUZ_RCLONE_EXTRA_FLAGS:-}
+    - &viewer-environment
+        # Largest image the file viewer shows, e.g. 25M (the default); larger is refused
+        MOTUZ_VIEW_IMAGE_MAX_BYTES: ${MOTUZ_VIEW_IMAGE_MAX_BYTES:-}
     - &shared-volumes
         volumes:
             # Using system users for authentication
@@ -162,7 +165,7 @@ services:
         network_mode: host
         <<: *shared-volumes
         environment:
-            <<: [*database-environment, *smtp-environment, *oauth-environment, *operator-environment, *rclone-environment, *worker-environment, *ec2-environment]
+            <<: [*database-environment, *smtp-environment, *oauth-environment, *operator-environment, *rclone-environment, *worker-environment, *ec2-environment, *viewer-environment]
         secrets:
             - MOTUZ_DATABASE_PASSWORD
             - MOTUZ_FLASK_SECRET_KEY

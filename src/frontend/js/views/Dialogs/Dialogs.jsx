@@ -9,10 +9,29 @@ import EditCloudConnectionDialog from 'views/Dialogs/CloudConnection/EditCloudCo
 import MkdirDialog from 'views/Dialogs/MkdirDialog.jsx';
 import SettingsDialog from 'views/Dialogs/SettingsDialog.jsx';
 import FileViewerDialog from 'views/Dialogs/FileViewerDialog.jsx';
+import ImageViewerDialog from 'views/Dialogs/ImageViewerDialog.jsx';
+import MarkdownViewerDialog from 'views/Dialogs/MarkdownViewerDialog.jsx';
 
 class Dialogs extends React.PureComponent {
     constructor(props) {
         super(props);
+    }
+
+    /**
+     * The viewer for the file's kind (utils/viewerKind.js); a Markdown file switches
+     * between the rendered view and the pager (Source) without the modal's animation
+     */
+    renderFileViewer() {
+        const data = this.props.dialogs.fileViewerDialogData;
+        const key = `${data.requestId}-${data.mode || ''}`;
+        const animation = !data.switched;
+        if (data.kind === 'image') {
+            return <ImageViewerDialog key={key} animation={animation} />;
+        }
+        if (data.kind === 'markdown' && data.mode !== 'source') {
+            return <MarkdownViewerDialog key={key} animation={animation} />;
+        }
+        return <FileViewerDialog key={key} animation={animation} />;
     }
 
     render() {
@@ -26,9 +45,7 @@ class Dialogs extends React.PureComponent {
                 {this.props.dialogs.displayEditCloudConnectionDialog && <EditCloudConnectionDialog />}
                 {this.props.dialogs.displayMkdirDialog && <MkdirDialog />}
                 {this.props.dialogs.displaySettingsDialog && <SettingsDialog />}
-                {this.props.dialogs.displayFileViewerDialog && (
-                    <FileViewerDialog key={this.props.dialogs.fileViewerDialogData.requestId} />
-                )}
+                {this.props.dialogs.displayFileViewerDialog && this.renderFileViewer()}
             </React.Fragment>
         );
     }

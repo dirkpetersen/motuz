@@ -6,7 +6,7 @@ import re
 import pwd
 import subprocess
 
-from flask import request
+from flask import current_app, request
 
 from ..exceptions import *
 from ..managers.auth_manager import token_required, get_logged_in_user
@@ -16,6 +16,7 @@ from ..utils.rclone_connection import RcloneConnection
 from ..utils.local_connection import LocalConnection
 from ..utils.abstract_connection import RcloneException
 from ..utils import file_view
+from ..utils import image_view
 
 
 @token_required
@@ -138,6 +139,27 @@ def view_chunk(data):
         raise HTTP_400_BAD_REQUEST(str(e))
 
 
+@token_required
+def view_image(data):
+    """
+    A PNG, JPEG, GIF or WebP image for the viewer, read as the logged-in user:
+    (bytes, type detected from the magic number, path). Anything else is 415 (SVG
+    too), a file larger than VIEW_IMAGE_MAX_BYTES 413. Contents are never logged.
+    """
+    path = data.get('path')
+    if not isinstance(path, str) or not path:
+        raise HTTP_400_BAD_REQUEST('Invalid path')
+    max_bytes = current_app.config.get('VIEW_IMAGE_MAX_BYTES') or image_view.DEFAULT_MAX_BYTES
+    cloud_connection, connection = _view_connection(data['connection_id'])
+    try:
+        content, mime = connection.view_image(data=cloud_connection, path=path, max_bytes=max_bytes)
+    except file_view.ViewError as e:
+        raise _VIEW_EXCEPTIONS.get(e.status, HTTP_400_BAD_REQUEST)(str(e))
+    except RcloneException as e:
+        raise HTTP_400_BAD_REQUEST(str(e))
+    return content, mime, path
+
+
 def _view_connection(connection_id):
     """(connection row, connection) for viewing as the logged-in user; 404 for others' connections"""
     user = get_logged_in_user(request)
@@ -157,6 +179,7 @@ _VIEW_EXCEPTIONS = {
     400: HTTP_400_BAD_REQUEST,
     403: HTTP_403_FORBIDDEN,
     404: HTTP_404_NOT_FOUND,
+    413: HTTP_413_PAYLOAD_TOO_LARGE,
     415: HTTP_415_UNSUPPORTED_MEDIA_TYPE,
     504: HTTP_504_GATEWAY_TIMEOUT,
 }

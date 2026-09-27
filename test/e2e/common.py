@@ -154,6 +154,87 @@ def numbered_log():
     return namespace['numbered_log']()
 
 
+# Image and Markdown viewer fixtures (viewer_fixtures.py): run in a container as a user
+# with `python3 - <folder>`, and here for the expected bytes
+with open(os.path.join(HERE, 'viewer_fixtures.py')) as _f:
+    VIEWER_FIXTURES_CODE = _f.read()
+VIEW_IMAGE_MAX = 2 * 1024 * 1024 # MOTUZ_VIEW_IMAGE_MAX_BYTES in compose.yml
+
+
+def viewer_fixtures():
+    namespace = {'__name__': 'viewer_fixtures'}
+    exec(VIEWER_FIXTURES_CODE, namespace)
+    return namespace['fixtures']()
+
+
+def api_request(method, path, token=None, body=None):
+    """(status, JSON or the raw bytes, headers) of an API call through Traefik"""
+    import json
+    import urllib.error
+    import urllib.request
+    r = urllib.request.Request(BASE + path, data=json.dumps(body).encode() if body is not None else None, method=method)
+    r.add_header('Content-Type', 'application/json')
+    if token:
+        r.add_header('Authorization', 'Bearer ' + token)
+    try:
+        with urllib.request.urlopen(r, context=CTX, timeout=180) as resp:
+            raw = resp.read()
+            return resp.status, (json.loads(raw) if raw and 'json' in resp.headers.get('Content-Type', '') else raw), resp.headers
+    except urllib.error.HTTPError as e:
+        raw = e.read()
+        try:
+            return e.code, json.loads(raw), e.headers
+        except ValueError:
+            return e.code, raw, e.headers
+
+
+def check_image_view(token, other_token, folder, connection_id, label, other_status):
+    """
+    POST /api/system/files/view/image/ on the viewer fixtures in `folder`: the images
+    with their detected type and the security headers, everything else refused.
+    `other_token` (another user) gets `other_status`.
+    """
+    files = viewer_fixtures()
+
+    def image(name, tok=token, path=None):
+        return api_request('POST', '/api/system/files/view/image/', tok,
+                   {'connection_id': connection_id, 'path': path or f'{folder}/{name}'})
+
+    def message(body):
+        return body.get('message', '') if isinstance(body, dict) else str(body)
+
+    for name, mime in (('pic.png', 'image/png'), ('small.png', 'image/png'), ('pic.jpg', 'image/jpeg'),
+                       ('PIC2.JPEG', 'image/jpeg'), ('pic.gif', 'image/gif'), ('pic.webp', 'image/webp')):
+        status, body, headers = image(name)
+        check(f'{label}: {name} served as {mime}', status == 200 and body == files[name]
+              and headers.get('Content-Type') == mime and headers.get('Content-Length') == str(len(files[name])),
+              (status, headers.get('Content-Type'), len(body) if isinstance(body, bytes) else body))
+    status, body, headers = image('pic.png')
+    check(f'{label}: security headers (nosniff, sandbox CSP, no-store, inline with the file name)',
+          headers.get('X-Content-Type-Options') == 'nosniff'
+          and headers.get('Content-Security-Policy') == "default-src 'none'; sandbox"
+          and headers.get('Cache-Control') == 'no-store'
+          and headers.get('Content-Disposition') == 'inline; filename="pic.png"; filename*=UTF-8\'\'pic.png', dict(headers))
+    status, body, _ = image('fake.png')
+    check(f'{label}: a .png that is text is refused (415)', status == 415 and 'not a PNG, JPEG, GIF or WebP' in message(body), (status, body))
+    for name in ('logo.svg', 'svg-named.png'):
+        status, body, _ = image(name)
+        check(f'{label}: SVG refused ({name}, 415)', status == 415 and 'SVG' in message(body), (status, body))
+    status, body, _ = image('README.md')
+    check(f'{label}: Markdown is not an image (415)', status == 415, (status, body))
+    status, body, _ = image('big.png')
+    check(f'{label}: above MOTUZ_VIEW_IMAGE_MAX_BYTES refused (413)', status == 413
+          and 'images up to 2.0 MiB' in message(body) and '3.0 MiB' in message(body), (status, body))
+    status, body, _ = image(None, path=folder)
+    check(f'{label}: a folder is refused (400)', status == 400 and 'folder' in message(body), (status, body))
+    status, body, _ = image('missing.png')
+    check(f'{label}: a missing file is refused', status in (400, 404) and 'does not exist' in message(body), (status, body))
+    status, body, _ = image('pic.png', tok=other_token)
+    check(f'{label}: another user gets {other_status}', status == other_status and not isinstance(body, bytes), (status, body))
+    status, body, _ = image('pic.png', tok=None)
+    check(f'{label}: needs a token (401)', status == 401, status)
+
+
 def check_chunked_reads(req, token, path, connection_id, data, label):
     """
     Reads `path` through /api/system/files/view/chunk/ forward from the start, the

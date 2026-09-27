@@ -9,6 +9,7 @@ from .abstract_connection import AbstractConnection, RcloneException, check_outp
 from . import local_credentials
 from .file_times import rfc3339_to_iso_utc
 from . import file_view
+from . import image_view
 from . import rclone_tuning
 from .copy_job_queue import CopyJobQueue
 from .hashsum_job_queue import HashsumJobQueue
@@ -169,6 +170,25 @@ class RcloneConnection(AbstractConnection):
             return file_view.chunk_result(path, request, size, head, start, content)
         except file_view.NotTextError:
             raise file_view.NotTextError("'{}' is not a text file".format(path.rstrip('/').split('/')[-1]))
+
+
+    def view_image(self, data, path, max_bytes):
+        """
+        (bytes, type) of a PNG, JPEG, GIF or WebP image, read by rclone as the user with
+        the connection's credentials: `lsjson --stat` (size; a folder is refused, and a
+        file larger than `max_bytes` is refused before it is read), then
+        `cat --count max_bytes+1`, so a file that grew meanwhile is refused too
+        (see image_view).
+        """
+        name = path.rstrip('/').split('/')[-1]
+        credentials, base, remote = self._view_base(data, path)
+        size = self._view_stat(base, remote, credentials, path)
+        image_view.check_size(name, size, max_bytes)
+
+        command = base + ['cat', '--count', str(max_bytes + 1), remote]
+        self._log_command(command, credentials)
+        content = self._run_view_command(command, credentials, path)
+        return image_view.image_result(name, content, size, max_bytes)
 
 
     def _view_base(self, data, path):
