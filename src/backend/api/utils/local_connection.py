@@ -9,6 +9,7 @@ from .abstract_connection import AbstractConnection, RcloneException
 from .file_times import epoch_to_iso_utc
 from . import file_view
 from . import image_view
+from . import document_view
 
 
 class LocalConnection(AbstractConnection):
@@ -97,6 +98,37 @@ class LocalConnection(AbstractConnection):
 
         header, _, content = _read_with_impersonation(path, user, 0, max_bytes + 1, max_size=max_bytes)
         return image_view.image_result(os.path.basename(path), content, header.get('size'), max_bytes)
+
+
+    def view_document(self, data, path, max_bytes, request):
+        """
+        A document for the document viewer, read as the user by the same reader as the
+        text viewer: (bytes, container, file size, start). The whole file
+        (document_view.DocumentRequest without a range) is refused before it is read
+        when it is larger than `max_bytes`, and at most max_bytes + 1 bytes are read; a
+        range (PDFs only) is read with the file's first bytes (the type check) in the
+        same process.
+        """
+        user = data.owner
+        if not isinstance(path, str) or not path.startswith('/') or '\x00' in path:
+            raise file_view.ViewError("Local path must be absolute: '{}'".format(path))
+        name = os.path.basename(path)
+
+        if not request.is_range:
+            header, _, content = _read_with_impersonation(path, user, 0, max_bytes + 1, max_size=max_bytes,
+                                                          too_large=document_view.too_large)
+            size = header.get('size')
+            content, container = document_view.document_result(name, content, size, max_bytes)
+            return content, container, size if isinstance(size, int) else len(content), 0
+
+        header, head, content = _read_with_impersonation(path, user, request.offset, request.length,
+                                                         document_view.HEAD_BYTES)
+        size = header.get('size')
+        if not isinstance(size, int):
+            raise file_view.ViewError("'{}' could not be read".format(path))
+        document_view.check_range(name, request, size)
+        content, container = document_view.range_result(name, head, content)
+        return content, container, size, request.offset
 
 
     def mkdir(self, data, path):
@@ -239,7 +271,8 @@ def _mkdir_with_impersonation(path, user):
 # first `head` bytes of the file (at most, for the text check) and at most `count` bytes
 # from `start` (a negative start counts from the end of the file, for a tail read).
 # Nothing is read when `start` is at (or past) the end of the file, nothing at all when
-# the file is larger than `max_size` (unless it is negative: no limit; the image viewer).
+# the file is larger than `max_size` (unless it is negative: no limit; the image and
+# document viewers).
 # Errors: exit status 3 and {"error": kind} on stdout ({"error": "large", "size"}).
 _VIEW_READER = r'''
 import json, os, stat, sys
@@ -296,11 +329,12 @@ _VIEW_ERRORS = {
 }
 
 
-def _read_with_impersonation(path, user, start, count, head=0, max_size=-1):
+def _read_with_impersonation(path, user, start, count, head=0, max_size=-1, too_large=image_view.too_large):
     """
     Reads up to `count` bytes of `path` from `start` (negative: from the end), and the
     first `head` bytes, as `user`, never as root. A file larger than `max_size` (if not
-    negative) is not read: image_view.TooLargeError.
+    negative) is not read: image_view.TooLargeError, made by `too_large` (the message
+    names what the viewer shows).
     Returns ({'size': file size, 'start': resolved start}, head bytes, bytes).
     Raises file_view errors.
     """
@@ -322,7 +356,7 @@ def _read_with_impersonation(path, user, start, count, head=0, max_size=-1):
         except (ValueError, KeyError, TypeError):
             kind = 'error'
         if kind == 'large' and isinstance(failure.get('size'), int):
-            raise image_view.too_large(os.path.basename(path), failure['size'], max_size)
+            raise too_large(os.path.basename(path), failure['size'], max_size)
         error, message = _VIEW_ERRORS.get(kind, _VIEW_ERRORS['error'])
         raise error(message.format(path=path, user=user))
     header, newline, content = stdout.partition(b'\n')

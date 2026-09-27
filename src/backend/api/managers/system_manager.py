@@ -17,6 +17,7 @@ from ..utils.local_connection import LocalConnection
 from ..utils.abstract_connection import RcloneException
 from ..utils import file_view
 from ..utils import image_view
+from ..utils import document_view
 
 
 @token_required
@@ -158,6 +159,35 @@ def view_image(data):
     except RcloneException as e:
         raise HTTP_400_BAD_REQUEST(str(e))
     return content, mime, path
+
+
+@token_required
+def view_document(data):
+    """
+    A PDF, Office Open XML / OpenDocument or legacy Office file for the document
+    viewer, read as the logged-in user: (bytes, container, file size, start, path).
+    Without `offset`/`length` the whole file (413 above VIEW_DOCUMENT_MAX_BYTES), with
+    them a range of a PDF (at most document_view.RANGE_MAX_BYTES). The container
+    ('pdf', 'zip', 'cfb') is detected from the file's first bytes; anything else is
+    415. Contents are never logged.
+    """
+    path = data.get('path')
+    if not isinstance(path, str) or not path:
+        raise HTTP_400_BAD_REQUEST('Invalid path')
+    try:
+        request_ = document_view.parse_document_request(data)
+    except file_view.ViewError as e:
+        raise HTTP_400_BAD_REQUEST(str(e))
+    max_bytes = current_app.config.get('VIEW_DOCUMENT_MAX_BYTES') or document_view.DEFAULT_MAX_BYTES
+    cloud_connection, connection = _view_connection(data['connection_id'])
+    try:
+        content, container, size, start = connection.view_document(
+            data=cloud_connection, path=path, max_bytes=max_bytes, request=request_)
+    except file_view.ViewError as e:
+        raise _VIEW_EXCEPTIONS.get(e.status, HTTP_400_BAD_REQUEST)(str(e))
+    except RcloneException as e:
+        raise HTTP_400_BAD_REQUEST(str(e))
+    return content, container, size, start, path
 
 
 def _view_connection(connection_id):

@@ -32,6 +32,8 @@ x-env: &env
     MOTUZ_RCLONE_MAX_TRANSFERS: "48"
     # Image viewer (e2e_test.py): a small cap, so that 413 needs no big file
     MOTUZ_VIEW_IMAGE_MAX_BYTES: "2M"
+    # Document viewer (e2e_test.py): a small cap, so that 413 needs no big file
+    MOTUZ_VIEW_DOCUMENT_MAX_BYTES: "4M"
     MOTUZ_OPERATOR_NAME: "E2E Lab <R&D>"
     MOTUZ_CONTACT_EMAIL: "motuz-admin@example.org"
     MOTUZ_OPERATOR_URL: "https://example.org/?a=1&b=2"
