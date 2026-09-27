@@ -244,6 +244,22 @@ def hashsum_job(self, task_id):
         }
 
 
+@celery.task(name='motuz.api.tasks.ec2_dispatch')
+def ec2_dispatch():
+    """
+    Launches temporary EC2 workers for queued jobs of the EC2 pool (managers/
+    ec2_launcher.py) right after such a job was created, so that creating the job does
+    not wait for AWS. The reaper loop (manage.py ec2 reap --loop) does the same every
+    MOTUZ_EC2_REAP_INTERVAL, e.g. while this task waits behind long copy jobs.
+    """
+    from ..managers import ec2_launcher
+    try:
+        launched = ec2_launcher.dispatch()
+        return {'launched': [row.instance_id or row.client_token for row in launched]}
+    finally:
+        db.session.remove()
+
+
 def _hashsum_job_run(self, hashsum_job, connection, start_time):
     """md5sum of both sides (job_runner.run_hashsum), writing progress once per second"""
     def start_side(side, run_id):
