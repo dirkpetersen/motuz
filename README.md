@@ -822,7 +822,9 @@ Worker settings (`worker.env`, see `src/worker/worker.env.example`): `MOTUZ_CENT
 (optional check), `MOTUZ_REQUIRED_PATHS` (mount points that must be mounted before the
 worker claims jobs), `HTTPS_PROXY`/`NO_PROXY` (used by the worker and passed to rclone)
 and `MOTUZ_CA_BUNDLE` (a PEM bundle for the server's certificate, also given to rclone as
-`SSL_CERT_FILE`; it replaces the system roots, so it must contain them). Before claiming,
+`SSL_CERT_FILE`; it replaces the system roots, so it must contain them, and it must be
+readable by every user, e.g. `/etc/motuz-worker/ca.pem`, because rclone runs as the job's
+owner). Before claiming,
 the worker checks its mounts and that its release (`src/backend/api/version.py`: `VERSION`,
 `WORKER_PROTOCOL`) equals the server's; otherwise it logs why and waits. On SIGTERM it
 stops rclone and reports the job as failed. Exit code 78 (configuration error, revoked

@@ -133,7 +133,7 @@ services:
             HTTPS_PROXY: http://proxy:3128
             MOTUZ_WORKER_POOL: onprem
             MOTUZ_REQUIRED_PATHS: /home
-            MOTUZ_CA_BUNDLE: /var/lib/motuz/.config/motuz-worker/ca.pem
+            MOTUZ_CA_BUNDLE: /etc/motuz-worker/ca.pem
             MOTUZ_WORKER_CREDENTIAL_FILE: /var/lib/motuz/.config/motuz-worker/credential
             MOTUZ_WORKER_ONCE_WAIT: "60"
         volumes:

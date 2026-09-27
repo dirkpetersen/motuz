@@ -13,6 +13,8 @@ install -d -o motuz -g motuz -m 700 /var/lib/motuz/.config "$CONF"
 if [ -s /run/motuz-worker/credential ]; then
     install -o motuz -g motuz -m 600 /run/motuz-worker/credential "$CONF/credential"
 fi
-cat /etc/ssl/certs/ca-certificates.crt /run/motuz-worker/central.crt > "$CONF/ca.pem"
-chmod 644 "$CONF/ca.pem"
+# World-readable: rclone reads it as the job's owner (SSL_CERT_FILE)
+install -d -m 755 /etc/motuz-worker
+cat /etc/ssl/certs/ca-certificates.crt /run/motuz-worker/central.crt > /etc/motuz-worker/ca.pem
+chmod 644 /etc/motuz-worker/ca.pem
 exec /users.sh runuser -u motuz -- python3 -u /app/src/worker/motuz_worker.py "$@"

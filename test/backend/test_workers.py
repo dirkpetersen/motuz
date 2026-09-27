@@ -544,7 +544,8 @@ class TestHttpApi(WorkerTestBase):
         client = self.app.test_client()
         token = client.post('/api/workers/auth', json={'secret': secret}, base_url=BASE_URL).get_json()['access_token']
         headers = {'Authorization': 'Bearer ' + token}
-        response = client.post('/api/workers/claim', json={'pool': 'onprem', 'wait': 0}, headers=headers, base_url=BASE_URL)
+        # A long poll that finds nothing (the session is released while it waits)
+        response = client.post('/api/workers/claim', json={'pool': 'onprem', 'wait': 1.5}, headers=headers, base_url=BASE_URL)
         self.assertEqual(response.status_code, 204)
         job = self.copy_job()
         ticket = client.post('/api/workers/claim', json={'pool': 'onprem'}, headers=headers, base_url=BASE_URL).get_json()
@@ -694,6 +695,19 @@ class TestWorkerAgent(unittest.TestCase):
         config = self.agent.Config({'MOTUZ_CENTRAL_URL': 'https://motuz.test', 'HTTPS_PROXY': 'http://proxy:3128',
                                     'MOTUZ_FLASK_SECRET_KEY': 'x'}, args)
         self.assertEqual(config.rclone_env, {'HTTPS_PROXY': 'http://proxy:3128'})
+
+    def test_ca_bundle_must_be_readable_by_the_job_owner(self):
+        with tempfile.TemporaryDirectory() as directory:
+            os.chmod(directory, 0o755)
+            path = os.path.join(directory, 'ca.pem')
+            open(path, 'w').close()
+            os.chmod(path, 0o644)
+            self.assertTrue(self.agent.readable_by_everyone(path))
+            os.chmod(path, 0o600)
+            self.assertFalse(self.agent.readable_by_everyone(path))
+            os.chmod(path, 0o644)
+            os.chmod(directory, 0o700)
+            self.assertFalse(self.agent.readable_by_everyone(path))
 
     def test_required_paths(self):
         args = mock.Mock(central_url=None, bootstrap_token=None, bootstrap_token_file=None, once=False)

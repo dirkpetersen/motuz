@@ -494,6 +494,7 @@ def claim(worker, body):
     except (TypeError, ValueError):
         raise HTTP_400_BAD_REQUEST('wait must be a number of seconds')
 
+    worker_id = worker.id
     deadline = time.monotonic() + wait
     while True:
         expire_leases()
@@ -504,7 +505,7 @@ def claim(worker, body):
             return None
         db.session.remove() # no connection held while waiting
         time.sleep(1)
-        worker = db.session.get(Worker, worker.id)
+        worker = db.session.get(Worker, worker_id)
         if worker is None or worker.revoked_at is not None:
             raise HTTP_401_UNAUTHORIZED('Worker revoked')
 

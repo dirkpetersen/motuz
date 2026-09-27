@@ -19,6 +19,7 @@ Configuration (environment, e.g. the systemd unit's EnvironmentFile):
                                 before jobs are claimed, e.g. /home,/fh/fast
   MOTUZ_CA_BUNDLE               CA bundle (PEM) for the central node and rclone, which
                                 gets it as SSL_CERT_FILE: must include the public roots
+                                and be readable by every user (rclone runs as the owner)
   HTTPS_PROXY, NO_PROXY         HTTP proxy for everything (the agent and rclone)
   MOTUZ_WORKER_JOB_TYPES        copy,hashsum (default: both)
 
@@ -133,7 +134,27 @@ def check_host(config):
             problems.append('required path {} is not mounted'.format(path))
     if not os.access(RCLONE, os.X_OK):
         problems.append('{} is missing'.format(RCLONE))
+    if config.ca_bundle and not readable_by_everyone(config.ca_bundle):
+        problems.append('MOTUZ_CA_BUNDLE {} must be readable by every user: rclone runs as the job\'s owner'.format(
+            config.ca_bundle))
     return problems
+
+
+def readable_by_everyone(path):
+    """The file is world-readable and every directory above it world-searchable"""
+    path = os.path.abspath(path)
+    try:
+        if not os.stat(path).st_mode & stat.S_IROTH:
+            return False
+        directory = os.path.dirname(path)
+        while True:
+            if not os.stat(directory).st_mode & stat.S_IXOTH:
+                return False
+            if directory == os.path.dirname(directory):
+                return True
+            directory = os.path.dirname(directory)
+    except OSError:
+        return False
 
 
 def rclone_version():
