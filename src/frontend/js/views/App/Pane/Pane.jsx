@@ -2,9 +2,11 @@ import React from 'react';
 import classnames from 'classnames';
 import upath from 'upath';
 
+import Icon from 'components/Icon.jsx'
 import PaneFile from 'views/App/Pane/PaneFile.jsx'
 import {isCopyableFile} from 'managers/paneManager.jsx'
 import {parentDirectory} from 'utils/parentDirectory.js'
+import {normalizeSort} from 'utils/fileSort.js'
 
 // Drag and drop between panes. The payload ({side}) is only readable on drop,
 // so the source side is also encoded in a second type, which dragover can see.
@@ -13,6 +15,13 @@ const DRAG_MIME = 'application/x-motuz-files';
 const DRAG_SIDE_MIME_PREFIX = 'application/x-motuz-side-';
 const DROP_ON_PANE = -1; // dropTarget value for the pane itself (its current path)
 const AGE_REFRESH_MS = 30 * 1000; // how often the file ages are recomputed
+
+// Column headers; `asc`/`desc` describe the order in words (ascending age = newest first)
+const SORT_HEADERS = [
+    {column: 'name', label: 'Name', asc: 'A to Z', desc: 'Z to A'},
+    {column: 'age', label: 'Age', asc: 'newest first', desc: 'oldest first'},
+    {column: 'size', label: 'Size', asc: 'smallest first', desc: 'largest first'},
+];
 
 
 class Pane extends React.Component {
@@ -52,18 +61,54 @@ class Pane extends React.Component {
         ))
 
         return (
-            <div
-                className={classnames({
-                    'grid-files': true,
-                    'drop-target': dropTarget !== null,
-                })}
-                onDragOver={(event) => this.onDragOver(event)}
-                onDragLeave={(event) => this.onDragLeave(event)}
-                onDrop={(event) => this.onDrop(event)}
-            >
-                {paneFiles}
-            </div>
+            <React.Fragment>
+                {this.renderHeader()}
+                <div
+                    className={classnames({
+                        'grid-files': true,
+                        'drop-target': dropTarget !== null,
+                    })}
+                    onDragOver={(event) => this.onDragOver(event)}
+                    onDragLeave={(event) => this.onDragLeave(event)}
+                    onDrop={(event) => this.onDrop(event)}
+                >
+                    {paneFiles}
+                </div>
+            </React.Fragment>
         );
+    }
+
+    renderHeader() {
+        const sort = normalizeSort(this.props.sort);
+        const headers = SORT_HEADERS.map(({column, label, asc, desc}) => {
+            const active = sort.column === column;
+            const order = active ? (sort.asc ? asc : desc) : null;
+            return (
+                <div
+                    key={column}
+                    role='columnheader'
+                    aria-sort={active ? (sort.asc ? 'ascending' : 'descending') : 'none'}
+                    className={`pane-header-cell pane-header-${column}`}
+                >
+                    <button
+                        type='button'
+                        className={classnames({'pane-sort': true, 'active': active})}
+                        data-sort-column={column}
+                        title={active ? `Sorted by ${label.toLowerCase()}: ${order}. Click to reverse.` : `Sort by ${label.toLowerCase()}`}
+                        onClick={() => this.props.onSort(this.props.side, column)}
+                    >
+                        <span>{label}</span>
+                        {active && <Icon
+                            name={sort.asc ? 'chevron-up' : 'chevron-down'}
+                            size={12}
+                            className='pane-sort-arrow'
+                            aria-label={order}
+                        />}
+                    </button>
+                </div>
+            );
+        });
+        return <div className='pane-header' role='row'>{headers}</div>;
     }
 
     componentDidMount() {
@@ -274,6 +319,8 @@ Pane.defaultProps = {
     pane: {},
     active: false,
     useSiUnits: false,
+    sort: null,
+    onSort: (side, column) => {},
     onSelect: (side, index) => {},
     onMultiSelect: (side, index) => {},
     onRangeSelect: (side, index) => {},
@@ -287,15 +334,18 @@ import {
     fileMultiFocusIndexes,
     fileRangeFocusIndex,
     directoryChange,
+    sortChange,
 } from 'actions/paneActions.jsx';
 import {showDropCopyJobDialog} from 'actions/dialogActions.jsx';
 import {showAlert} from 'actions/alertActions.jsx';
 
-const mapStateToProps = state => ({
+const mapStateToProps = (state, ownProps) => ({
     useSiUnits: state.settings.useSiUnits,
+    sort: state.pane.sort[ownProps.side || 'left'],
 });
 
 const mapDispatchToProps = dispatch => ({
+    onSort: (side, column) => dispatch(sortChange(side, column)),
     onSelect: (side, index) => dispatch(fileFocusIndex(side, index)),
     onMultiSelect: (side, index) => dispatch(fileMultiFocusIndexes(side, index)),
     onRangeSelect: (side, index) => dispatch(fileRangeFocusIndex(side, index)),

@@ -1,5 +1,6 @@
 import * as api from 'actions/apiActions.jsx';
 import { getCurrentPane } from 'managers/paneManager.jsx'
+import { nextSort } from 'utils/fileSort.js'
 
 export const SIDE_FOCUS = '@@pane/SIDE_FOCUS';
 export const FILE_FOCUS_INDEX = '@@pane/FILE_FOCUS_INDEX';
@@ -7,6 +8,7 @@ export const FILE_MULTI_FOCUS_INDEX = '@@pane/FILE_MULTI_FOCUS_INDEX';
 export const FILE_RANGE_FOCUS_INDEX = '@@pane/FILE_RANGE_FOCUS_INDEX';
 export const DIRECTORY_CHANGE = '@@pane/DIRECTORY_CHANGE';
 export const HOST_CHANGE = '@@pane/HOST_CHANGE';
+export const SORT_CHANGE = '@@pane/SORT_CHANGE';
 
 
 export const fileFocusIndex = (side, index) => ({
@@ -23,6 +25,22 @@ export const fileRangeFocusIndex = (side, index) => ({
     type: FILE_RANGE_FOCUS_INDEX,
     payload: {side, index},
 });
+
+
+/**
+ * Click on a column header of a pane: sorts by that column, or toggles the direction.
+ * Handled by the pane reducer (re-sorts, keeps the selection) and the settings
+ * reducer (persisted per pane).
+ */
+export const sortChange = (side, column) => {
+    return (dispatch, getState) => {
+        const current = getState().pane.sort[side];
+        dispatch({
+            type: SORT_CHANGE,
+            payload: {side, sort: nextSort(current, column)},
+        });
+    }
+}
 
 
 export const sideFocus = (side) => ({
