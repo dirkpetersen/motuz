@@ -75,7 +75,8 @@ central "grep -q '^MOTUZ_LOCAL_JOB_POOL=' /var/lib/motuz/.config/motuz/motuz.env
     || echo 'MOTUZ_LOCAL_JOB_POOL=onprem' >> /var/lib/motuz/.config/motuz/motuz.env
     runuser -u motuz -- env XDG_RUNTIME_DIR=/run/user/\$(id -u motuz) systemctl --user restart motuz-app
     for i in \$(seq 90); do curl -skf https://localhost/api/system/info/ | grep -q healthy && break; sleep 2; done"
-SECRET=$(central 'bash /root/manage.sh workers add w1 --pool onprem 2>/dev/null' | tail -n 1)
+WNAME="host-$(date +%s)"  # a new worker per run
+SECRET=$(central "bash /root/manage.sh workers add $WNAME --pool onprem 2>/dev/null" | tail -n 1)
 check "manage.py workers add prints a worker secret" '[[ "$SECRET" == mzw1.* ]]' "$SECRET"
 
 # ------------------------------------------------------------------ worker host
@@ -91,7 +92,7 @@ worker 'install -d -m 755 /etc/motuz-worker && cat /etc/pki/tls/certs/ca-bundle.
     < "$HERE/../.work-worker-central.crt"
 rm -f "$HERE/../.work-worker-central.crt"
 
-out=$(worker '$WORKER_HOME/bin/systemd/install.sh --worker-only --central-url=https://localhost --pool=onprem 2>&1')
+out=$(worker "$WORKER_HOME/bin/systemd/install.sh --worker-only --central-url=https://localhost --pool=onprem 2>&1")
 as_motuz_systemctl='runuser -u motuz -- env XDG_RUNTIME_DIR=/run/user/$(id -u motuz) systemctl --user'
 check "install.sh --worker-only (no credential): installed, not started" \
     '[[ "$out" == *"Worker installed, not started"* ]] && ! worker "$as_motuz_systemctl is-active --quiet motuz-worker"' "$(tail -3 <<<"$out")"
@@ -104,16 +105,16 @@ check "worker.env: MOTUZ_HOME, central URL, pool, no required mounts, mode 600" 
      && grep -qx "MODE=600:motuz" <<<"$env_file"' "$env_file"
 worker "sed -i 's|^#\\?MOTUZ_CA_BUNDLE=.*|MOTUZ_CA_BUNDLE=/etc/motuz-worker/ca.pem|' ~motuz/.config/motuz-worker/worker.env"
 printf '%s\n' "$SECRET" | worker 'umask 077; cat > /root/credential'
-out=$(worker '$WORKER_HOME/bin/systemd/install.sh --worker-only --central-url=https://localhost --pool=onprem --credential-file=/root/credential 2>&1')
+out=$(worker "$WORKER_HOME/bin/systemd/install.sh --worker-only --central-url=https://localhost --pool=onprem --credential-file=/root/credential 2>&1")
 check "install.sh --worker-only again with --credential-file starts motuz-worker" '[[ "$out" == *"starting motuz-worker"* ]]' "$(tail -3 <<<"$out")"
 check "the credential is mode 600, owned by motuz" 'worker "[ \$(stat -c %a:%U ~motuz/.config/motuz-worker/credential) = 600:motuz ]"'
 signed=""
 for _ in $(seq 60); do
-    signed=$(worker "journalctl --no-pager -o cat _SYSTEMD_USER_UNIT=motuz-worker.service | grep 'signed in as worker w1'")
+    signed=$(worker "journalctl --no-pager -o cat _SYSTEMD_USER_UNIT=motuz-worker.service | grep 'signed in as worker $WNAME'")
     [ -z "$signed" ] || break
     sleep 2
 done
-check "motuz-worker signs in to https://localhost as w1 (pool onprem)" '[ -n "$signed" ]' \
+check "motuz-worker signs in to https://localhost as $WNAME (pool onprem)" '[ -n "$signed" ]' \
     "$(worker 'journalctl --no-pager -o cat _SYSTEMD_USER_UNIT=motuz-worker.service | tail -5')"
 check "motuz-worker runs as motuz (user service)" \
     'worker "ps -eo user=,args= | grep -v grep | grep motuz_worker.py | grep -q ^motuz"'
@@ -144,7 +145,7 @@ JOB2=$(central "python3 /root/api.py POST /api/copy-jobs/ '{\"description\": \"o
 TOKEN=$(central "bash /root/manage.sh workers bootstrap --pool onprem --job copy:$JOB2 --ttl 10m 2>/dev/null" | tail -n 1)
 check "manage.py workers bootstrap prints a token" '[[ "$TOKEN" == mzb1.* ]]' "$TOKEN"
 printf '%s\n' "$TOKEN" | worker 'umask 077; cat > /root/bootstrap-token'
-out=$(worker '$WORKER_HOME/bin/systemd/worker_once.sh --bootstrap-token-file=/root/bootstrap-token 2>&1'); rc=$?
+out=$(worker "$WORKER_HOME/bin/systemd/worker_once.sh --bootstrap-token-file=/root/bootstrap-token 2>&1"); rc=$?
 check "worker_once.sh runs the job and exits 0" '[ "$rc" = 0 ]' "rc=$rc $(tail -5 <<<"$out")"
 state=$(wait_job "$JOB2")
 check "copy job $JOB2 SUCCESS through the bootstrap token" '[ "$state" = SUCCESS ]' "$state"
