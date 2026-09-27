@@ -70,65 +70,65 @@ export_docker() {
     docker inspect "$db_container" "$app_container" >/dev/null || die "containers $db_container and $app_container must be running"
     [ -d "$docker_root/secrets" ] || die "no $docker_root/secrets (--docker-root)"
 
-    local work; work=$(mktemp -d)
-    trap 'rm -rf "$work"' EXIT
-    chmod 700 "$work"
-    mkdir -p "$work/export/secrets"
+    WORK_TMP=$(mktemp -d)
+    trap 'rm -rf "$WORK_TMP"' EXIT
+    chmod 700 "$WORK_TMP"
+    mkdir -p "$WORK_TMP/export/secrets"
 
     log "settings of $app_container"
     local key value
-    docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$app_container" | grep '^MOTUZ_' | sort > "$work/app.env"
-    : > "$work/export/settings.env"
+    docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$app_container" | grep '^MOTUZ_' | sort > "$WORK_TMP/app.env"
+    : > "$WORK_TMP/export/settings.env"
     while IFS='=' read -r key value; do
         case " $(echo $NOT_CARRIED) " in *" $key "*) continue ;; esac
         [ -n "$value" ] || continue
-        env_line "$key" "$value" >> "$work/export/settings.env"
-    done < "$work/app.env"
+        env_line "$key" "$value" >> "$WORK_TMP/export/settings.env"
+    done < "$WORK_TMP/app.env"
     for key in MOTUZ_ACME_DOMAIN MOTUZ_ACME_EMAIL MOTUZ_ACME_CA_SERVER; do
         value=$(sed -n "s/^$key=//p" "$env_file" 2>/dev/null | tail -n 1)
-        [ -z "$value" ] || env_line "$key" "$value" >> "$work/export/settings.env"
+        [ -z "$value" ] || env_line "$key" "$value" >> "$WORK_TMP/export/settings.env"
     done
-    sed 's/=.*//' "$work/export/settings.env" | sed 's/^/    /'
+    sed 's/=.*//' "$WORK_TMP/export/settings.env" | sed 's/^/    /'
 
     log "secrets of $docker_root/secrets"
     for key in $CARRIED_SECRETS; do
         if [ -s "$docker_root/secrets/$key" ]; then
             # like load-secrets.sh: the file's content without trailing newlines
-            printf '%s' "$(cat "$docker_root/secrets/$key")" > "$work/export/secrets/$key"
+            printf '%s' "$(cat "$docker_root/secrets/$key")" > "$WORK_TMP/export/secrets/$key"
             echo "    $key"
         fi
     done
-    [ -s "$work/export/secrets/MOTUZ_FLASK_SECRET_KEY" ] || die "no MOTUZ_FLASK_SECRET_KEY in $docker_root/secrets"
+    [ -s "$WORK_TMP/export/secrets/MOTUZ_FLASK_SECRET_KEY" ] || die "no MOTUZ_FLASK_SECRET_KEY in $docker_root/secrets"
 
     log "Traefik certificates"
     if [ -s "$docker_root/traefik/acme.json" ]; then
-        cp "$docker_root/traefik/acme.json" "$work/export/acme.json" && echo "    acme.json"
+        cp "$docker_root/traefik/acme.json" "$WORK_TMP/export/acme.json" && echo "    acme.json"
     fi
     if [ -s "$docker_root/certs/cert.crt" ] && [ -s "$docker_root/certs/cert.key" ]; then
-        mkdir -p "$work/export/certs"
-        cp "$docker_root/certs/cert.crt" "$docker_root/certs/cert.key" "$work/export/certs/" && echo "    certs/cert.crt, cert.key"
+        mkdir -p "$WORK_TMP/export/certs"
+        cp "$docker_root/certs/cert.crt" "$docker_root/certs/cert.key" "$WORK_TMP/export/certs/" && echo "    certs/cert.crt, cert.key"
     fi
 
     log "database dump ($db_container)"
     local db_user db_name db_password
-    db_user=$(sed -n 's/^MOTUZ_DATABASE_USER=//p' "$work/app.env"); db_user="${db_user:-motuz_user}"
-    db_name=$(sed -n 's/^MOTUZ_DATABASE_NAME=//p' "$work/app.env"); db_name="${db_name:-motuz}"
+    db_user=$(sed -n 's/^MOTUZ_DATABASE_USER=//p' "$WORK_TMP/app.env"); db_user="${db_user:-motuz_user}"
+    db_name=$(sed -n 's/^MOTUZ_DATABASE_NAME=//p' "$WORK_TMP/app.env"); db_name="${db_name:-motuz}"
     db_password=$(cat "$docker_root/secrets/MOTUZ_DATABASE_PASSWORD")
     # The password in the environment of `docker exec`, never on a command line
     PGPASSWORD="$db_password" docker exec -e PGPASSWORD "$db_container" \
-        psql -X -h 127.0.0.1 -U "$db_user" -d "$db_name" -tA -F '|' -c "$COUNT_SQL" > "$work/export/counts.txt" \
+        psql -X -h 127.0.0.1 -U "$db_user" -d "$db_name" -tA -F '|' -c "$COUNT_SQL" > "$WORK_TMP/export/counts.txt" \
         || die "could not count the rows"
     PGPASSWORD="$db_password" docker exec -e PGPASSWORD "$db_container" \
-        pg_dump -h 127.0.0.1 -U "$db_user" -d "$db_name" -Fc --no-owner --no-privileges > "$work/export/motuz.dump" \
+        pg_dump -h 127.0.0.1 -U "$db_user" -d "$db_name" -Fc --no-owner --no-privileges > "$WORK_TMP/export/motuz.dump" \
         || die "pg_dump failed"
-    echo "    $(wc -l < "$work/export/counts.txt") tables, $(du -h "$work/export/motuz.dump" | cut -f1)"
+    echo "    $(wc -l < "$WORK_TMP/export/counts.txt") tables, $(du -h "$WORK_TMP/export/motuz.dump" | cut -f1)"
 
     log "mounts of $app_container (recreate them on the new host, at the same paths)"
     docker inspect -f '{{range .Mounts}}{{println .Source "->" .Destination}}{{end}}' "$app_container" \
-        | grep -v '^$' | tee "$work/export/mounts.txt" | sed 's/^/    /'
-    printf 'motuz-export 1\ncreated %s\nhost %s\n' "$(date -Iseconds)" "$(hostname -f 2>/dev/null || hostname)" > "$work/export/manifest"
+        | grep -v '^$' | grep -v ' -> /run/secrets/' | tee "$WORK_TMP/export/mounts.txt" | sed 's/^/    /'
+    printf 'motuz-export 1\ncreated %s\nhost %s\n' "$(date -Iseconds)" "$(hostname -f 2>/dev/null || hostname)" > "$WORK_TMP/export/manifest"
 
-    (umask 077 && tar -C "$work" -czf "$out" export)
+    (umask 077 && tar -C "$WORK_TMP" -czf "$out" export)
     chmod 600 "$out"
     log "wrote $out (SECRET: keep it private, delete it after the import)"
 }
@@ -147,12 +147,12 @@ import_systemd() {
         || die "run bin/systemd/deploy.sh once before the import"
     [ "$(env_get "$SETTINGS" MOTUZ_DATABASE_HOST)" = 127.0.0.1:5432 ] || die "the import needs the local database (MOTUZ_DATABASE_HOST=127.0.0.1:5432)"
 
-    local work; work=$(mktemp -d)
-    trap 'rm -rf "$work"' EXIT
-    chmod 700 "$work"
-    tar -C "$work" -xzf "$file"
-    grep -q '^motuz-export 1$' "$work/export/manifest" 2>/dev/null || die "$file is not an export of migrate_from_docker.sh"
-    sed -n 's/^\(created\|host\) /    exported \1 /p' "$work/export/manifest"
+    WORK_TMP=$(mktemp -d)
+    trap 'rm -rf "$WORK_TMP"' EXIT
+    chmod 700 "$WORK_TMP"
+    tar -C "$WORK_TMP" -xzf "$file"
+    grep -q '^motuz-export 1$' "$WORK_TMP/export/manifest" 2>/dev/null || die "$file is not an export of migrate_from_docker.sh"
+    sed -n 's/^\(created\|host\) /    exported \1 /p' "$WORK_TMP/export/manifest"
 
     log "stopping the app and the worker"
     systemctl --user stop motuz-app.service motuz-celery.service
@@ -167,40 +167,40 @@ DROP DATABASE IF EXISTS :"db" WITH (FORCE);
 CREATE DATABASE :"db" OWNER :"user";
 EOSQL
     # As the superuser (peer login), every object owned by the database owner
-    pg_restore -h "$sock" -d "$db_name" --no-owner --no-privileges --role="$db_user" --exit-on-error "$work/export/motuz.dump" \
+    pg_restore -h "$sock" -d "$db_name" --no-owner --no-privileges --role="$db_user" --exit-on-error "$WORK_TMP/export/motuz.dump" \
         || die "pg_restore failed"
-    psql -X -h "$sock" -d "$db_name" -tA -F '|' -c "$COUNT_SQL" > "$work/counts.new"
-    if ! diff "$work/export/counts.txt" "$work/counts.new"; then
+    psql -X -h "$sock" -d "$db_name" -tA -F '|' -c "$COUNT_SQL" > "$WORK_TMP/counts.new"
+    if ! diff "$WORK_TMP/export/counts.txt" "$WORK_TMP/counts.new"; then
         die "row counts differ after the restore (above: < docker, > new)"
     fi
-    echo "    $(wc -l < "$work/counts.new") tables, row counts match"
+    echo "    $(wc -l < "$WORK_TMP/counts.new") tables, row counts match"
 
     log "secrets and settings"
     local key value
     for key in $CARRIED_SECRETS; do
-        if [ -f "$work/export/secrets/$key" ]; then
-            env_set "$SECRETS" "$key" "$(cat "$work/export/secrets/$key")"
+        if [ -f "$WORK_TMP/export/secrets/$key" ]; then
+            env_set "$SECRETS" "$key" "$(cat "$WORK_TMP/export/secrets/$key")"
             echo "    $key"
         fi
     done
     while IFS= read -r line; do
         key="${line%%=*}"
-        env_set "$SETTINGS" "$key" "$(env_get "$work/export/settings.env" "$key")"
+        env_set "$SETTINGS" "$key" "$(env_get "$WORK_TMP/export/settings.env" "$key")"
         echo "    $key"
-    done < "$work/export/settings.env"
+    done < "$WORK_TMP/export/settings.env"
 
-    if [ -s "$work/export/acme.json" ]; then
-        (umask 077 && cp "$work/export/acme.json" "$ACME_DIR/acme.json")
+    if [ -s "$WORK_TMP/export/acme.json" ]; then
+        (umask 077 && cp "$WORK_TMP/export/acme.json" "$ACME_DIR/acme.json")
         chmod 600 "$ACME_DIR/acme.json"
         echo "    Traefik acme.json"
     fi
-    if [ -f "$work/export/certs/cert.crt" ]; then
-        (umask 077 && cp "$work/export/certs/cert.crt" "$work/export/certs/cert.key" "$CERTS_DIR/")
+    if [ -f "$WORK_TMP/export/certs/cert.crt" ]; then
+        (umask 077 && cp "$WORK_TMP/export/certs/cert.crt" "$WORK_TMP/export/certs/cert.key" "$CERTS_DIR/")
         echo "    certs/cert.crt, cert.key"
     fi
-    if [ -s "$work/export/mounts.txt" ]; then
+    if [ -s "$WORK_TMP/export/mounts.txt" ]; then
         echo "    Mounts of the docker app (Motuz needs the same paths here):"
-        sed 's/^/        /' "$work/export/mounts.txt"
+        sed 's/^/        /' "$WORK_TMP/export/mounts.txt"
     fi
 
     log "deploy.sh"
