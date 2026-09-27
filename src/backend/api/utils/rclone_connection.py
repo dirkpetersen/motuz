@@ -5,7 +5,7 @@ import os
 import subprocess
 from collections import defaultdict
 
-from .abstract_connection import AbstractConnection, RcloneException, user_process_env
+from .abstract_connection import AbstractConnection, RcloneException, check_output, sudo_as, user_process_env
 from . import local_credentials
 from .file_times import rfc3339_to_iso_utc
 from . import file_view
@@ -13,6 +13,10 @@ from . import image_view
 from . import rclone_tuning
 from .copy_job_queue import CopyJobQueue
 from .hashsum_job_queue import HashsumJobQueue
+
+
+# The sudoers rule of a non-root install (bin/systemd/install.sh) allows exactly this path
+RCLONE = '/usr/local/bin/rclone'
 
 
 class RcloneConnection(AbstractConnection):
@@ -45,10 +49,8 @@ class RcloneConnection(AbstractConnection):
             bucket = ''
 
         command = [
-            'sudo',
-            '-E',
-            '-u', user,
-            '/usr/local/bin/rclone',
+            *sudo_as(user, credentials),
+            RCLONE,
             '--config=/dev/null',
             *_rate_limit_flags(credentials),
             'lsjson',
@@ -81,10 +83,8 @@ class RcloneConnection(AbstractConnection):
         credentials = self._formatCredentials(data, name='current')
         user = data.owner
         command = [
-            'sudo',
-            '-E',
-            '-u', user,
-            '/usr/local/bin/rclone',
+            *sudo_as(user, credentials),
+            RCLONE,
             '--config=/dev/null',
             *_rate_limit_flags(credentials),
             'lsjson',
@@ -197,10 +197,8 @@ class RcloneConnection(AbstractConnection):
         user = data.owner
         remote = 'current:{}'.format(path) # never an option: always prefixed
         base = [
-            'sudo',
-            '-E',
-            '-u', user,
-            '/usr/local/bin/rclone',
+            *sudo_as(user, credentials),
+            RCLONE,
             '--config=/dev/null',
             *_rate_limit_flags(credentials),
         ]
@@ -246,10 +244,8 @@ class RcloneConnection(AbstractConnection):
         credentials = self._formatCredentials(data, name='current')
         user = data.owner
         command = [
-            'sudo',
-            '-E',
-            '-u', user,
-            '/usr/local/bin/rclone',
+            *sudo_as(user, credentials),
+            RCLONE,
             '--config=/dev/null',
             *_rate_limit_flags(credentials),
             '--s3-no-check-bucket',
@@ -373,10 +369,8 @@ class RcloneConnection(AbstractConnection):
             option_copy_links = ''
 
         command = [
-            'sudo',
-            '-E',
-            '-u', user,
-            '/usr/local/bin/rclone',
+            *sudo_as(user, credentials),
+            RCLONE,
             '--config=/dev/null',
             *_rate_limit_flags(credentials),
             '--s3-disable-checksum',
@@ -480,10 +474,8 @@ class RcloneConnection(AbstractConnection):
             option_download = '--download'
 
         command = [
-            'sudo',
-            '-E',
-            '-u', user,
-            '/usr/local/bin/rclone',
+            *sudo_as(user, credentials),
+            RCLONE,
             '--config=/dev/null',
             *_rate_limit_flags(credentials),
             *_checked_flags(extra_flags),
@@ -813,11 +805,7 @@ class RcloneConnection(AbstractConnection):
 
         full_env = user_process_env(env)
         try:
-            byteOutput = subprocess.check_output(
-                command,
-                stderr=subprocess.PIPE,
-                env=full_env
-            )
+            byteOutput = check_output(command, stderr=subprocess.PIPE, env=full_env)
             output = byteOutput.decode('UTF-8').rstrip()
             return output
         except subprocess.CalledProcessError as err:

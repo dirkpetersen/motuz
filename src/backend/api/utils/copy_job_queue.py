@@ -9,7 +9,7 @@ import time
 import os
 import signal
 
-from .abstract_connection import AbstractConnection, RcloneException, user_process_env
+from .abstract_connection import signals_unblocked, AbstractConnection, RcloneException, user_process_env
 
 class CopyJobQueue:
     def __init__(self):
@@ -78,14 +78,15 @@ class CopyJobQueue:
         stop_event = self._stop_events[job_id]
         full_env = user_process_env(env)
 
-        process = subprocess.Popen(
-            command,
-            env=full_env,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            start_new_session=True, # Own process group, see terminate_all()
-        )
+        with signals_unblocked():
+            process = subprocess.Popen(
+                command,
+                env=full_env,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                start_new_session=True, # Own process group, see terminate_all()
+            )
         self._processes[job_id] = process
 
         # Drain stderr concurrently, otherwise rclone blocks once the pipe buffer is full

@@ -12,6 +12,7 @@ from unittest import mock
 from api.utils import rclone_tuning as tuning
 from api.utils.rclone_tuning import MiB, GiB, TuningError, TuningConfigError
 from api.utils.rclone_connection import RcloneConnection
+from api.utils.abstract_connection import sudo_as
 
 
 def settings(**env):
@@ -419,13 +420,13 @@ class TestRcloneCommand(unittest.TestCase):
         return pushed['command'], pushed['env']
 
     def test_defaults_unset_command_unchanged(self):
-        command, _ = self.command(DEFAULT, dst=_s3_connection())
+        command, env = self.command(DEFAULT, dst=_s3_connection())
         self.assertEqual(command, [
-            'sudo', '-E', '-u', 'alice', '/usr/local/bin/rclone', '--config=/dev/null',
+            *sudo_as('alice', env), '/usr/local/bin/rclone', '--config=/dev/null',
             '--s3-disable-checksum', '--s3-no-check-bucket', '--s3-acl', 'bucket-owner-full-control',
             '--exclude=\\.snapshot/', '--contimeout=5m', 'copyto', '/tmp', 'dst:/bucket/x', '--progress', '--stats', '2s'])
-        command, _ = self.command(DEFAULT, dst=_s3_connection(), method='md5sum')
-        self.assertEqual(command, ['sudo', '-E', '-u', 'alice', '/usr/local/bin/rclone', '--config=/dev/null',
+        command, env = self.command(DEFAULT, dst=_s3_connection(), method='md5sum')
+        self.assertEqual(command, [*sudo_as('alice', env), '/usr/local/bin/rclone', '--config=/dev/null',
                                    'md5sum', 'src:/bucket/x'])
 
     def test_preset_flags_in_command(self):
@@ -442,7 +443,7 @@ class TestRcloneCommand(unittest.TestCase):
         self.assertIn('--checkers=64', command)
         self.assertIn('--fast-list', command)
         command, _ = self.command(s, performance={'checkers': 16}, dst=_s3_connection(), method='md5sum')
-        self.assertEqual(command[6:9], ['--checkers=16', '--fast-list', 'md5sum'])
+        self.assertEqual(command[command.index('--config=/dev/null') + 1:][:3], ['--checkers=16', '--fast-list', 'md5sum'])
 
     def test_injection_never_reaches_command(self):
         for value in INJECTIONS:

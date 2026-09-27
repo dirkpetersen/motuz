@@ -1,0 +1,21 @@
+# TLS and routing on :80 (redirects to https) and :443, the only ports open beyond
+# loopback (the sysctl net.ipv4.ip_unprivileged_port_start=80 of bin/systemd/install.sh
+# lets this user service bind them). The static configuration is the `command` of the
+# traefik service in docker-compose.yml: bin/systemd/deploy.sh turns it into TRAEFIK_ARGS
+# in ~/.config/motuz/traefik.env, with this install's paths. The dynamic configuration is
+# deployment/docker/traefik/dynamic/motuz.yml, as in docker.
+[Unit]
+Description=Motuz Traefik (:80, :443)
+PartOf=motuz.target
+
+[Service]
+Type=simple
+# MOTUZ_ACME_DOMAIN (read by motuz.yml)
+EnvironmentFile=%h/.config/motuz/motuz.env
+EnvironmentFile=%h/.config/motuz/traefik.env
+# cert.crt and cert.key when MOTUZ_ACME_DOMAIN is empty (motuz.yml)
+Environment=MOTUZ_TRAEFIK_CERTS_DIR=%h/data/certs
+ExecStart=/usr/local/bin/traefik $TRAEFIK_ARGS
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=yes

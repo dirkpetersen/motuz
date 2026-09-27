@@ -1,0 +1,42 @@
+# One password check per connection to /run/motuz-auth.sock, as root, with the PAM
+# service `motuz` (/etc/pam.d/motuz). The code is a root-owned copy in
+# /usr/local/lib/motuz-auth (never the motuz account's checkout).
+[Unit]
+Description=Motuz login helper (one PAM check)
+CollectMode=inactive-or-failed
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 -I -S /usr/local/lib/motuz-auth/motuz_auth_helper.py
+StandardInput=socket
+StandardOutput=socket
+StandardError=journal
+Environment=MOTUZ_AUTH_CLIENT_USER=motuz
+Environment=MOTUZ_AUTH_PAM_SERVICE=motuz
+# Lockout: 5 failed attempts of a user within 15 minutes
+Environment=MOTUZ_AUTH_MAX_FAILURES=5
+Environment=MOTUZ_AUTH_WINDOW=900
+StateDirectory=motuz-auth
+StateDirectoryMode=0700
+RuntimeMaxSec=60
+# Reads /etc/shadow (pam_unix as root), may ask sssd or a Kerberos KDC; nothing else
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=CAP_DAC_READ_SEARCH
+SystemCallArchitectures=native
+SystemCallFilter=@system-service

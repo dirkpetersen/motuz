@@ -1,9 +1,15 @@
 """Shared helpers for the end-to-end suites. The suites expect the stack that
 test/e2e/run.sh starts (Traefik on https://localhost, fake Microsoft on 127.0.0.1:5999).
 
+The same suites also run against the systemd install (test/e2e/run_systemd.sh), on the
+machine where it is installed, as root: MOTUZ_E2E_TARGET=systemd. The helpers below are
+the only places that reach into the installation (a shell where the app runs, its
+database, its logs); everything else goes through https://localhost.
+
 Every suite records checks with check()/skip() and ends with finish(), which prints
 "<passed>/<total> passed[, <n> skipped]" (parsed by run.sh) and sets the exit code."""
 import os
+import re
 import shutil
 import ssl
 import subprocess
@@ -16,6 +22,13 @@ FAKE_LOG = os.path.join(FAKE_DIR, 'requests.jsonl')  # every request fake_ms.py 
 FAKE_MODE = os.path.join(FAKE_DIR, 'mode.txt')  # "fail" makes the fake /token fail
 BASE = os.environ.get('MOTUZ_E2E_BASE', 'https://localhost')
 CTX = ssl._create_unverified_context()  # self-signed certificate made by run.sh
+TARGET = os.environ.get('MOTUZ_E2E_TARGET', 'docker')  # docker | systemd
+# systemd: the configuration directory of the service account (bin/systemd/deploy.sh)
+SYSTEMD_CONFIG = os.environ.get('MOTUZ_E2E_SYSTEMD_CONFIG', '/var/lib/motuz/.config/motuz')
+# docker compose service -> systemd user unit
+# Where the server writes AWS SSO configs (MOTUZ_SSO_CONFIG_DIR of each install)
+SSO_CONFIG_DIR = '/var/lib/motuz-aws-config' if TARGET == 'systemd' else '/tmp/motuz-aws-config'
+SYSTEMD_UNITS = {'app': 'motuz-app.service', 'celery': 'motuz-celery.service', 'database': 'motuz-postgres.service'}
 
 
 def _compose():
@@ -37,20 +50,52 @@ def compose(*args, **kwargs):
 
 
 def sh(service, cmd, stdin=None):
+    """A root shell where `service` runs: its container, or this machine (systemd)"""
+    if TARGET == 'systemd':
+        return subprocess.run(['sh', '-c', cmd], input=stdin, capture_output=True, text=True)
     return compose('exec', '-T', service, 'sh', '-c', cmd, input=stdin)
 
 
+def _systemd_setting(name, key):
+    with open(os.path.join(SYSTEMD_CONFIG, name)) as f:
+        for line in f:
+            match = re.match(r'^{}="?(.*?)"?\s*$'.format(key), line)
+            if match:
+                return match.group(1)
+    raise KeyError(key)
+
+
 def db_password():
+    if TARGET == 'systemd':
+        return _systemd_setting('secrets.env', 'MOTUZ_DATABASE_PASSWORD')
     with open(os.path.join(WORK, 'secrets', 'MOTUZ_DATABASE_PASSWORD')) as f:
         return f.read()
 
 
+def _db_url():
+    return f'postgresql://motuz_user:{db_password()}@127.0.0.1:5432/motuz'
+
+
 def psql(sql):
-    return compose('exec', '-T', 'database', 'psql', f'postgresql://motuz_user:{db_password()}@127.0.0.1:5432/motuz',
-                   '-tAc', sql).stdout.strip()
+    if TARGET == 'systemd':
+        return subprocess.run(['psql', _db_url(), '-tAc', sql], capture_output=True, text=True).stdout.strip()
+    return compose('exec', '-T', 'database', 'psql', _db_url(), '-tAc', sql).stdout.strip()
+
+
+def pg_dump():
+    if TARGET == 'systemd':
+        return subprocess.run(['pg_dump', _db_url()], capture_output=True, text=True).stdout
+    return compose('exec', '-T', 'database', 'pg_dump', _db_url()).stdout
 
 
 def service_logs(*services):
+    if TARGET == 'systemd':
+        # The user units' lines in the journal (system journal: motuz is a system account)
+        # Only the services' own output: sudo's audit lines (syslog, in the same unit) repeat
+        # every command line
+        matches = [f'_SYSTEMD_USER_UNIT={SYSTEMD_UNITS[s]}' for s in services] + ['_TRANSPORT=stdout']
+        return subprocess.run(['journalctl', '--no-pager', '-o', 'cat', *matches],
+                              capture_output=True, text=True).stdout
     return compose('logs', *services).stdout
 
 

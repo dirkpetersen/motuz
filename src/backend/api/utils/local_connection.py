@@ -1,15 +1,22 @@
 import json
 import logging
 import os
+import pwd
 import re
 import subprocess
 
 from ..exceptions import *
-from .abstract_connection import AbstractConnection, RcloneException
+from .abstract_connection import AbstractConnection, RcloneException, check_output
 from .file_times import epoch_to_iso_utc
 from . import file_view
 from . import image_view
 
+
+# Absolute paths: the sudoers rule of a non-root install (bin/systemd/install.sh) allows
+# exactly these commands
+LS = '/usr/bin/ls'
+MKDIR = '/usr/bin/mkdir'
+ENV = '/usr/bin/env'
 
 class LocalConnection(AbstractConnection):
     """
@@ -119,17 +126,13 @@ class LocalConnection(AbstractConnection):
 
 
 def _homepath_with_impersonation(user):
-    command = [
-        'sudo',
-        '-n',
-        '-u', user,
-        '-i', 'eval',
-        'echo $HOME'
-    ]
-
-    byteOutput = subprocess.check_output(command)
-    output = byteOutput.decode('UTF-8').rstrip()
-    return output
+    """
+    The user's home directory from the user database (NSS: /etc/passwd, SSSD, ...).
+    Not through a login shell as the user (`sudo -i`), which the sudoers rule of a
+    non-root install does not allow and which would run the user's shell profile.
+    Raises KeyError for an unknown user.
+    """
+    return pwd.getpwnam(user).pw_dir
 
 
 def _parse_ls(output):
@@ -190,7 +193,7 @@ def _ls_with_impersonation(path, user):
         'sudo',
         '-n',
         '-u', user,
-        'ls',
+        LS,
         '-a', # Hidden files
         '-l', # List format
         '-L', # Dereference symlinks
@@ -202,7 +205,7 @@ def _ls_with_impersonation(path, user):
     ]
 
     try:
-        byteOutput = subprocess.check_output(command)
+        byteOutput = check_output(command)
         output = byteOutput.decode('UTF-8').rstrip('\n') # names may end in spaces
         return output
     except subprocess.CalledProcessError as err:
@@ -222,13 +225,13 @@ def _mkdir_with_impersonation(path, user):
         'sudo',
         '-n',
         '-u', user,
-        'mkdir',
+        MKDIR,
         '-p',
         '--', # Never interpret the path as an option
         path,
     ]
 
-    byteOutput = subprocess.check_output(command)
+    byteOutput = check_output(command)
     output = byteOutput.decode('UTF-8').rstrip()
     return output
 
@@ -305,7 +308,7 @@ def _read_with_impersonation(path, user, start, count, head=0, max_size=-1):
     Raises file_view errors.
     """
     from .local_credentials import _python
-    command = ['sudo', '-n', '-u', user, '--', 'env']
+    command = ['sudo', '-n', '-u', user, '--', ENV]
     # sudo drops LD_LIBRARY_PATH, which the image's python needs when /etc is the host's
     if os.environ.get('LD_LIBRARY_PATH'):
         command.append('LD_LIBRARY_PATH={}'.format(os.environ['LD_LIBRARY_PATH']))

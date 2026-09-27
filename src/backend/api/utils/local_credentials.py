@@ -45,7 +45,7 @@ import subprocess
 import tempfile
 import urllib.parse
 
-from .abstract_connection import RcloneException
+from .abstract_connection import RcloneException, run as run_command
 
 
 class LocalCredentialsError(RcloneException):
@@ -166,12 +166,10 @@ def _python():
 def home_directory(user):
     from .local_connection import _homepath_with_impersonation
     try:
-        output = _homepath_with_impersonation(user)
-    except (subprocess.CalledProcessError, OSError) as e:
+        home = _homepath_with_impersonation(user)
+    except (KeyError, OSError) as e:
         logging.error("Could not resolve the home directory of %s: %s", user, e)
         raise LocalCredentialsError('Could not find your home directory')
-    lines = [line.strip() for line in output.splitlines() if line.strip()]
-    home = lines[-1] if lines else ''
     if not home.startswith('/') or home == '/':
         raise LocalCredentialsError('Could not find your home directory')
     return home
@@ -188,14 +186,15 @@ def read_home_files(user, relpaths, home=None):
         if rel.startswith('/') or '..' in rel.split('/'):
             raise ValueError('Not a relative path below the home directory: {}'.format(rel))
 
-    command = ['sudo', '-n', '-u', user, '--', 'env']
+    from .local_connection import ENV
+    command = ['sudo', '-n', '-u', user, '--', ENV]
     # sudo drops LD_LIBRARY_PATH, which the image's python needs when /etc is the host's
     if os.environ.get('LD_LIBRARY_PATH'):
         command.append('LD_LIBRARY_PATH={}'.format(os.environ['LD_LIBRARY_PATH']))
     command += [_python(), '-I', '-S', '-c', _READER, str(MAX_FILE_SIZE), home, *relpaths]
 
     try:
-        result = subprocess.run(command, stdin=subprocess.DEVNULL, capture_output=True, timeout=READ_TIMEOUT)
+        result = run_command(command, timeout=READ_TIMEOUT)
     except subprocess.TimeoutExpired:
         logging.error("Reading credential files of %s timed out", user)
         raise LocalCredentialsError('Reading your home directory timed out')
@@ -515,7 +514,7 @@ def azure_cli_env(home):
     site-packages (.pth files are code). The az launcher runs Python with -I.
     """
     return {
-        'HOME': home, # sudo -E keeps root's HOME otherwise
+        'HOME': home, # always explicit (sudo_as keeps it)
         'AZURE_CONFIG_DIR': os.path.join(home, '.azure'),
         'AZURE_EXTENSION_DIR': '/nonexistent/motuz-no-az-extensions',
         'AZURE_EXTENSION_DEV_SOURCES': '',
@@ -829,7 +828,7 @@ def resolve(user, conn_type, source, name, *, materialize=True):
         if profiles[name].get('region'):
             options['region'] = profiles[name]['region']
         env = {
-            # rclone runs with sudo -E, so HOME would be root's. The AWS SDK finds the
+            # HOME explicitly (sudo_as passes it on). The AWS SDK finds the
             # SSO token cache (and writes refreshed tokens) below the user's HOME.
             'HOME': home,
             'AWS_CONFIG_FILE': path,

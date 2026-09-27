@@ -545,10 +545,10 @@ class TestReadHomeFiles(unittest.TestCase):
 
     def test_runs_as_the_user(self):
         completed = subprocess.CompletedProcess([], 0, stdout=b'{}', stderr=b'')
-        with mock.patch.object(lc.subprocess, 'run', return_value=completed) as run:
+        with mock.patch.object(lc, 'run_command', return_value=completed) as run:
             home, files = lc.read_home_files('alice', [lc.AWS_CREDENTIALS], home='/home/alice')
         command = run.call_args[0][0]
-        self.assertEqual(command[:6], ['sudo', '-n', '-u', 'alice', '--', 'env'])
+        self.assertEqual(command[:6], ['sudo', '-n', '-u', 'alice', '--', '/usr/bin/env'])
         self.assertEqual(command[-3:], [str(lc.MAX_FILE_SIZE), '/home/alice', lc.AWS_CREDENTIALS])
         self.assertIn('timeout', run.call_args[1])
 

@@ -1,0 +1,9 @@
+#%PAM-1.0
+# PAM service of Motuz logins without docker on Amazon Linux (MOTUZ_PAM_SERVICE=motuz,
+# and the login helper motuz-auth). Installed as /etc/pam.d/motuz by
+# bin/systemd/install.sh. Motuz only authenticates (pam_authenticate) and checks the
+# account (pam_acct_mgmt, e.g. expired or locked accounts); it opens no session.
+# password-auth is authselect's stack for remote logins (pam_unix, and pam_sss when
+# authselect's sssd profile is selected), as for sshd.
+auth       include      password-auth
+account    include      password-auth

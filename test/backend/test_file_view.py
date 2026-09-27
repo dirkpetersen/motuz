@@ -471,12 +471,21 @@ class TestCloudView(unittest.TestCase):
         result, calls = self.run_view([(0, b'{"Path":"notes.txt","Size":6,"IsDir":false}', b''), (0, b'hello\n', b'')])
         self.assertEqual(result, {'path': '/dir/notes.txt', 'content': 'hello\n', 'truncated': False, 'size': 6, 'encoding': 'utf-8'})
         stat, cat = calls[0][0], calls[1][0]
-        self.assertEqual(stat[:4], ['sudo', '-E', '-u', 'alice'])
+        self.assertSudoAsAlice(stat, calls[0][1])
         self.assertEqual(stat[-3:], ['lsjson', '--stat', 'current:/dir/notes.txt'])
         self.assertEqual(cat[-4:], ['cat', '--count', str(MAX_VIEW_BYTES + 1), 'current:/dir/notes.txt'])
         env = calls[1][1]
         self.assertEqual(env['RCLONE_CONFIG_CURRENT_TYPE'], 'webdav')
         self.assertFalse(any(key.startswith('MOTUZ_') for key in env))
+
+    def assertSudoAsAlice(self, command, env):
+        # sudo -n --preserve-env=<exactly the variables Motuz sets, never PATH> -u alice rclone
+        self.assertEqual(command[:2], ['sudo', '-n'])
+        self.assertTrue(command[2].startswith('--preserve-env='), command[2])
+        names = command[2][len('--preserve-env='):].split(',')
+        self.assertEqual(sorted(names), sorted(key for key in env if key != 'PATH'))
+        self.assertIn('RCLONE_CONFIG_CURRENT_TYPE', names)
+        self.assertEqual(command[3:6], ['-u', 'alice', '/usr/local/bin/rclone'])
 
     def test_folder_is_never_catted(self):
         result, calls = self.run_view([(0, b'{"Path":"dir","IsDir":true}', b'')])
@@ -517,7 +526,8 @@ class TestCloudView(unittest.TestCase):
         self.assertEqual(len(calls), 2) # the range starts at 0 and holds the first bytes: no separate text check
         self.assertEqual(calls[0][-3:], ['lsjson', '--stat', 'current:/dir/log.txt'])
         self.assertEqual(calls[1][-6:], ['cat', '--offset', '0', '--count', '500', 'current:/dir/log.txt'])
-        self.assertEqual(calls[1][:4], ['sudo', '-E', '-u', 'alice'])
+        self.assertEqual(calls[1][:2], ['sudo', '-n'])
+        self.assertEqual(calls[1][3:6], ['-u', 'alice', '/usr/local/bin/rclone'])
         result, calls = self.run_chunk([(0, b'{"Size":500,"IsDir":false}', b''), (0, data[:300], b''), (0, data, b'')],
                                        offset=0, length=300)
         self.assertEqual((result['offset'], result['end'], result['bof'], result['eof']), (0, 300, True, False))

@@ -1,0 +1,21 @@
+# The Celery broker: Redis on a unix socket only (no TCP port), in the private runtime
+# directory /run/user/<uid>/motuz-redis, with a password (MOTUZ_REDIS_PASSWORD in
+# secrets.env), so only the motuz account can queue tasks. The configuration
+# ~/.config/motuz/redis.conf (mode 600) is written by bin/systemd/deploy.sh.
+# Append-only file in ~/data/redis, so queued jobs survive a restart. deploy.sh replaces
+# @REDIS_SERVER@ (redis-server, or valkey-server: bin/systemd/distro/*.sh).
+[Unit]
+Description=Motuz Redis (Celery broker, unix socket only)
+PartOf=motuz.target
+ConditionPathExists=%h/.config/motuz/redis.conf
+
+[Service]
+Type=notify
+ExecStart=@REDIS_SERVER@ %h/.config/motuz/redis.conf
+RuntimeDirectory=motuz-redis
+RuntimeDirectoryMode=0700
+TimeoutStartSec=120
+TimeoutStopSec=60
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=yes

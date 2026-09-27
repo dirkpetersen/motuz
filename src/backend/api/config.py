@@ -47,7 +47,27 @@ class Config:
     # on every refresh, so 30 days is 30 days of inactivity.
     JWT_ACCESS_TOKEN_EXPIRES = datetime.timedelta(minutes=15)
     JWT_REFRESH_TOKEN_EXPIRES = datetime.timedelta(days=30)
-    CELERY_BROKER_URL = 'amqp://'
+    # Celery broker. The docker install uses RabbitMQ on 127.0.0.1:5672 (amqp://); the
+    # systemd install (bin/systemd) a Redis user service on a unix socket, e.g.
+    # redis+socket:///run/user/<uid>/motuz-redis/redis.sock
+    CELERY_BROKER_URL = _optional_env('MOTUZ_CELERY_BROKER_URL', 'amqp://')
+    # Redis redelivers a task message that a worker fetched but has not started within
+    # the visibility timeout (default 1 hour), e.g. while all worker processes are busy
+    # with long copy jobs: that would run the job twice. Tasks are acknowledged when
+    # they start, so only waiting ones are affected.
+    CELERY_BROKER_TRANSPORT_OPTIONS = (
+        {'visibility_timeout': int(_optional_env('MOTUZ_CELERY_VISIBILITY_TIMEOUT', 30 * 24 * 3600))}
+        if CELERY_BROKER_URL.startswith(('redis', 'rediss')) else {}
+    )
+
+    # Logins (managers/auth_manager.py): PAM in this process with the service
+    # PAM_SERVICE (/etc/pam.d/<name>), or, when AUTH_HELPER is set, the root helper on
+    # that unix socket (deployment/systemd/auth-helper): as non-root, pam_unix can only
+    # check the password of the account Motuz runs as.
+    PAM_SERVICE = _optional_env('MOTUZ_PAM_SERVICE', 'login')
+    AUTH_HELPER = _optional_env('MOTUZ_AUTH_HELPER')
+
+    # Largest image the file viewer shows (utils/image_view.py)
     VIEW_IMAGE_MAX_BYTES = VIEW_IMAGE_MAX_BYTES
 
     DATABASE_PARAMS = ''
