@@ -7,7 +7,7 @@
 # along), the settings moved (operator on /privacy), and a new copy job runs.
 #
 # Usage: test/e2e/systemd/migration_test.sh      (needs the VM of run_systemd.sh --keep,
-#        and the images of bin/prod/build.sh; the docker stack is removed at the end)
+#        the docker images are built from this checkout; the stack is removed at the end)
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 E2E="$(cd "$HERE/.." && pwd)"
@@ -23,8 +23,9 @@ die() { echo "ERROR: $*" >&2; exit 1; }
 
 "$VM" status | grep -q running || die "no VM (run test/e2e/run_systemd.sh --keep first)"
 
-echo "==> docker e2e stack with data (run.sh --keep --no-build e2e)"
-MOTUZ_E2E_UI=skip "$E2E/run.sh" --keep --no-build e2e > "$LOGS/migration-docker.log" 2>&1
+echo "==> docker e2e stack with data, images of this checkout (run.sh --keep e2e)"
+MOTUZ_E2E_UI=skip "$E2E/run.sh" --keep e2e > "$LOGS/migration-docker.log" 2>&1 \
+    || { tail -5 "$LOGS/migration-docker.log"; die "the docker e2e stack did not start or its e2e suite failed"; }
 grep -E '^e2e ' "$LOGS/migration-docker.log" | tail -1
 trap '"$E2E/run.sh" --down >/dev/null 2>&1' EXIT
 
@@ -51,7 +52,7 @@ EOF
 echo "==> export (migrate_from_docker.sh export)"
 "$REPO/bin/systemd/migrate_from_docker.sh" export --out "$WORK/export.tar.gz" --repo "$REPO" \
     --env-file "$E2E/.env" --docker-root "$E2E/.work" \
-    --db-container motuz_e2e-database-1 --app-container motuz_e2e-app-1 > "$LOGS/migration-export.log" 2>&1 \
+    --db-container "${COMPOSE_PROJECT_NAME:-motuz_e2e}-database-1" --app-container "${COMPOSE_PROJECT_NAME:-motuz_e2e}-app-1" > "$LOGS/migration-export.log" 2>&1 \
     || { cat "$LOGS/migration-export.log"; die "export failed"; }
 cat "$LOGS/migration-export.log"
 check "export file is mode 600" '[ "$(stat -c %a "$WORK/export.tar.gz")" = 600 ]'

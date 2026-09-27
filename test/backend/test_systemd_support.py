@@ -40,6 +40,21 @@ class TestSudoPrefix(unittest.TestCase):
         with mock.patch.object(abstract_connection, '_INHERITED_VARIABLES', ('PATH',)):
             self.assertEqual(sudo_as('bob'), ['sudo', '-n', '-u', 'bob'])
 
+    def test_extra_env_of_a_remote_worker_is_preserved(self):
+        # the remote worker gives rclone its proxy and CA bundle as extra_env
+        from api.utils.rclone_connection import RcloneConnection
+        connection = RcloneConnection()
+        pushed = {}
+        with mock.patch.object(connection._copy_job_queue, 'push',
+                               side_effect=lambda command, env, job_id: pushed.update(command=command, env=env)):
+            connection.copy_with_credentials({}, src_resource_path='/a', src_local=True, dst_resource_path='/b',
+                                             dst_local=True, user='alice', copy_links=False, job_id=1,
+                                             extra_env={'HTTPS_PROXY': 'http://proxy:3128', 'SSL_CERT_FILE': '/etc/motuz-worker/ca.pem'})
+        preserve = [c for c in pushed['command'] if c.startswith('--preserve-env=')][0]
+        self.assertIn('HTTPS_PROXY', preserve.split('=', 1)[1].split(','))
+        self.assertIn('SSL_CERT_FILE', preserve.split('=', 1)[1].split(','))
+        self.assertEqual(pushed['env']['HTTPS_PROXY'], 'http://proxy:3128')
+
     def test_never_minus_E(self):
         # sudo-rs (Ubuntu 26.04's sudo) ignores -E; -E would also pass everything
         self.assertNotIn('-E', sudo_as('alice', {'RCLONE_CONFIG_CURRENT_TYPE': 'local'}))

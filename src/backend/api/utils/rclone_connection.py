@@ -369,7 +369,7 @@ class RcloneConnection(AbstractConnection):
             option_copy_links = ''
 
         command = [
-            *sudo_as(user, credentials),
+            *sudo_as(user, {**credentials, **(extra_env or {})}), # extra_env too (not logged)
             RCLONE,
             '--config=/dev/null',
             *_rate_limit_flags(credentials),
@@ -474,7 +474,7 @@ class RcloneConnection(AbstractConnection):
             option_download = '--download'
 
         command = [
-            *sudo_as(user, credentials),
+            *sudo_as(user, {**credentials, **(extra_env or {})}), # extra_env too (not logged)
             RCLONE,
             '--config=/dev/null',
             *_rate_limit_flags(credentials),
