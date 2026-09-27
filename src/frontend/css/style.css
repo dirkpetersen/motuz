@@ -375,6 +375,63 @@ pre {
     font-size: 13px;
 }
 
+/* The pager: a toolbar, the scrolling content (the scroll container, focused on open),
+   a key hint. The modal itself does not scroll. */
+.file-viewer-body {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.file-viewer-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px 12px;
+}
+
+.file-viewer-status {
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
+}
+
+.file-viewer-jumps {
+    display: flex;
+    gap: 6px;
+}
+
+.file-viewer-scroll {
+    height: calc(100vh - 17rem);
+    min-height: 200px;
+    overflow: auto;
+    /* The viewer keeps the position itself when chunks are added above */
+    overflow-anchor: none;
+    border: 1px solid #dee2e6;
+    border-radius: 4px;
+    padding: 0 8px;
+    background: #fcfcfc;
+}
+
+.file-viewer-scroll:focus {
+    outline: none;
+    border-color: #86b7fe;
+    box-shadow: 0 0 0 0.2rem rgba(13, 110, 253, 0.2);
+}
+
+.file-viewer-marker {
+    height: 26px;
+    line-height: 26px;
+    font-size: 12px;
+    color: #6c757d;
+    text-align: center;
+    user-select: none;
+}
+
+.file-viewer-hint {
+    font-size: 12px;
+}
+
 /* Drag and drop */
 
 .grid-files.drop-target {

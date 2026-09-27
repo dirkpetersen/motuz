@@ -15,9 +15,9 @@ export const LIST_HOME_FILES_REQUEST = '@@api/LIST_HOME_FILES_REQUEST';
 export const LIST_HOME_FILES_SUCCESS = '@@api/LIST_HOME_FILES_SUCCESS';
 export const LIST_HOME_FILES_FAILURE = '@@api/LIST_HOME_FILES_FAILURE';
 
-export const VIEW_FILE_REQUEST = '@@api/VIEW_FILE_REQUEST';
-export const VIEW_FILE_SUCCESS = '@@api/VIEW_FILE_SUCCESS';
-export const VIEW_FILE_FAILURE = '@@api/VIEW_FILE_FAILURE';
+export const VIEW_FILE_CHUNK_REQUEST = '@@api/VIEW_FILE_CHUNK_REQUEST';
+export const VIEW_FILE_CHUNK_SUCCESS = '@@api/VIEW_FILE_CHUNK_SUCCESS';
+export const VIEW_FILE_CHUNK_FAILURE = '@@api/VIEW_FILE_CHUNK_FAILURE';
 
 export const MAKE_DIRECTORY_REQUEST = '@@api/MAKE_DIRECTORY_REQUEST';
 export const MAKE_DIRECTORY_SUCCESS = '@@api/MAKE_DIRECTORY_SUCCESS';
@@ -126,8 +126,9 @@ export const listHomeFiles = (data) => ({
 let viewRequestId = 0;
 
 /**
- * Double-click on a file: opens the read-only viewer and loads the file (the first
- * 1 MiB). The server reads it as the user and decides whether it is text.
+ * Double-click on a file: opens the read-only viewer (a pager), which loads the file
+ * chunk by chunk with viewFileChunk. The server reads it as the user and decides
+ * whether it is text.
  */
 export const viewFile = (side, index) => {
     return async (dispatch, getState) => {
@@ -137,30 +138,32 @@ export const viewFile = (side, index) => {
         if (!file || !file.type || file.type === 'dir') {
             return;
         }
-        const requestId = ++viewRequestId;
-        const data = {
-            connection_id: currPane.host.id || 0,
-            path: upath.join(currPane.path, file.name),
-        };
         dispatch({
             type: dialog.SHOW_FILE_VIEWER_DIALOG,
-            payload: {data: {host: currPane.host, path: data.path, name: file.name, requestId}},
+            payload: {data: {
+                host: currPane.host,
+                connectionId: currPane.host.id || 0,
+                path: upath.join(currPane.path, file.name),
+                name: file.name,
+                requestId: ++viewRequestId,
+            }},
         });
-        await dispatch(_viewFile(data, requestId));
     }
 }
 
-const _viewFile = (data, requestId) => ({
+/**
+ * One chunk of whole lines of a file for the viewer: {connection_id, path} plus
+ * `offset` (forward), `before` (the chunk that ends there) or `from_end` (the last
+ * chunk). The viewer keeps the chunks itself, so no reducer handles these actions;
+ * the promise resolves with the SUCCESS or FAILURE action (undefined when logged out).
+ */
+export const viewFileChunk = (data) => ({
     [RSAA]: {
-        endpoint: '/api/system/files/view/',
+        endpoint: '/api/system/files/view/chunk/',
         method: 'POST',
         body: JSON.stringify(data),
         headers: withAuth({ 'Content-Type': 'application/json' }),
-        types: [
-            {type: VIEW_FILE_REQUEST, meta: {requestId}},
-            {type: VIEW_FILE_SUCCESS, meta: {requestId}},
-            {type: VIEW_FILE_FAILURE, meta: {requestId}},
-        ],
+        types: [VIEW_FILE_CHUNK_REQUEST, VIEW_FILE_CHUNK_SUCCESS, VIEW_FILE_CHUNK_FAILURE],
     }
 });
 

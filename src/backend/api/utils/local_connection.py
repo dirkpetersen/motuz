@@ -56,9 +56,30 @@ class LocalConnection(AbstractConnection):
         if not isinstance(path, str) or not path.startswith('/') or '\x00' in path:
             raise file_view.ViewError("Local path must be absolute: '{}'".format(path))
 
-        header, content = _read_with_impersonation(path, user, file_view.MAX_VIEW_BYTES + 1)
+        header, _, content = _read_with_impersonation(path, user, 0, file_view.MAX_VIEW_BYTES + 1)
         try:
             return file_view.view_result(path, content, header.get('size'))
+        except file_view.NotTextError:
+            raise file_view.NotTextError("'{}' is not a text file".format(os.path.basename(path)))
+
+
+    def view_chunk(self, data, path, request):
+        """
+        One chunk of a text file for the pager (file_view.ChunkRequest), read as the
+        user by a single reader process, which also returns the size and the first
+        bytes (text check), so a tail read needs no second process.
+        """
+        user = data.owner
+        if not isinstance(path, str) or not path.startswith('/') or '\x00' in path:
+            raise file_view.ViewError("Local path must be absolute: '{}'".format(path))
+
+        start, count = request.read_range()
+        header, head, content = _read_with_impersonation(path, user, start, count, file_view.HEAD_CHECK_BYTES)
+        size, data_start = header.get('size'), header.get('start')
+        if not isinstance(size, int) or not isinstance(data_start, int):
+            raise file_view.ViewError("'{}' could not be read".format(path))
+        try:
+            return file_view.chunk_result(path, request, size, head, data_start, content)
         except file_view.NotTextError:
             raise file_view.NotTextError("'{}' is not a text file".format(os.path.basename(path)))
 
@@ -199,11 +220,13 @@ def _mkdir_with_impersonation(path, user):
 
 # Runs as the user: opens the file non-blocking (a FIFO cannot hang it), accepts only a
 # regular file (checked before opening, so devices are never opened, and again on the
-# open file) and prints a JSON header line ({"size"}) followed by at most `cap` bytes.
+# open file) and prints a JSON header line ({"size", "start", "head"}) followed by the
+# first `head` bytes of the file (at most, for the text check) and at most `count` bytes
+# from `start` (a negative start counts from the end of the file, for a tail read).
 # Errors: exit status 3 and {"error": kind} on stdout.
 _VIEW_READER = r'''
 import json, os, stat, sys
-cap, path = int(sys.argv[1]), sys.argv[2]
+head_cap, start, count, path = int(sys.argv[1]), int(sys.argv[2]), int(sys.argv[3]), sys.argv[4]
 def fail(kind):
     sys.stdout.write(json.dumps({"error": kind})); sys.stdout.flush(); os._exit(3)
 def kind_of(e):
@@ -222,18 +245,25 @@ except OSError as e:
     fail(kind_of(e))
 st = os.fstat(fd)
 if not stat.S_ISREG(st.st_mode): fail("special")
-chunks, size = [], 0
-try:
-    while size < cap:
-        chunk = os.read(fd, min(cap - size, 65536))
+if start < 0:
+    start = max(0, st.st_size + start)
+def read_at(pos, n):
+    chunks, size = [], 0
+    while size < n:
+        chunk = os.pread(fd, min(n - size, 65536), pos + size)
         if not chunk:
             break
         chunks.append(chunk); size += len(chunk)
+    return b"".join(chunks)
+try:
+    head = read_at(0, head_cap) if head_cap > 0 else b""
+    data = read_at(start, count) if count > 0 else b""
 except OSError as e:
     fail(kind_of(e))
 out = sys.stdout.buffer
-out.write(json.dumps({"size": st.st_size}).encode() + b"\n")
-out.write(b"".join(chunks))
+out.write(json.dumps({"size": st.st_size, "start": start, "head": len(head)}).encode() + b"\n")
+out.write(head)
+out.write(data)
 out.flush()
 '''
 
@@ -246,10 +276,12 @@ _VIEW_ERRORS = {
 }
 
 
-def _read_with_impersonation(path, user, cap):
+def _read_with_impersonation(path, user, start, count, head=0):
     """
-    Reads up to `cap` bytes of `path` as `user`, never as root.
-    Returns ({'size': file size}, bytes). Raises file_view errors.
+    Reads up to `count` bytes of `path` from `start` (negative: from the end), and the
+    first `head` bytes, as `user`, never as root.
+    Returns ({'size': file size, 'start': resolved start}, head bytes, bytes).
+    Raises file_view errors.
     """
     from .local_credentials import _python
     command = ['sudo', '-n', '-u', user, '--', 'env']
@@ -257,7 +289,7 @@ def _read_with_impersonation(path, user, cap):
     if os.environ.get('LD_LIBRARY_PATH'):
         command.append('LD_LIBRARY_PATH={}'.format(os.environ['LD_LIBRARY_PATH']))
     # The path is an argument of the script, never an option of env or python
-    command += [_python(), '-I', '-S', '-c', _VIEW_READER, str(cap), path]
+    command += [_python(), '-I', '-S', '-c', _VIEW_READER, str(int(head)), str(int(start)), str(int(count)), path]
 
     returncode, stdout, stderr = file_view.run_limited(command, file_view.LOCAL_TIMEOUT)
 
@@ -276,6 +308,9 @@ def _read_with_impersonation(path, user, cap):
         raise file_view.ForbiddenError("User {} cannot read '{}'".format(user, path))
     try:
         header = json.loads(header.decode('utf-8'))
-    except ValueError:
+        head_length = int(header.get('head', 0))
+    except (ValueError, TypeError, AttributeError):
         raise file_view.ViewError("'{}' could not be read".format(path))
-    return header, content
+    if not 0 <= head_length <= len(content):
+        raise file_view.ViewError("'{}' could not be read".format(path))
+    return header, content[:head_length], content[head_length:]

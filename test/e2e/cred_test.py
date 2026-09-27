@@ -20,7 +20,8 @@ import time
 import urllib.error
 import urllib.request
 
-from common import BASE, CTX, check, compose, db_password, finish, psql, service_logs, sh, skip
+from common import (BASE, CTX, NUMBERED_LOG_CODE, check, check_chunked_reads, compose, db_password, finish,
+                    numbered_log, psql, service_logs, sh, skip)
 
 AWS_PROFILE = os.environ.get('MOTUZ_E2E_AWS_PROFILE')
 REGION = os.environ.get('MOTUZ_E2E_AWS_REGION', 'us-west-2')
@@ -355,6 +356,7 @@ check_r('create azure connection from rclone remote', status == 201, raw)
 status, body, raw = verify(A, c5['id'])
 check_r('azure connection verifies (Azurite)', body['result'] is True, raw)
 sh('app', "sudo -u alice sh -c 'mkdir -p /home/alice/azsrc/sub; for i in 1 2 3; do head -c 200000 /dev/urandom > /home/alice/azsrc/f$i.bin; done; echo deep > /home/alice/azsrc/sub/d.txt'")
+sh('app', 'sudo -u alice python3 - /home/alice/azsrc/numbered.log', stdin=NUMBERED_LOG_CODE) # ~5 MiB, for the pager
 status, cj, raw = req('POST', '/api/copy-jobs/', A, {'description': 'to azure', 'src_resource_path': '/home/alice/azsrc',
                                                     'dst_cloud_id': c5['id'], 'dst_resource_path': '/motuztest/copy', 'copy_links': True})
 cj = wait_job('copy-jobs', cj['id'], A)
@@ -392,6 +394,25 @@ status, v, raw = view(A, '/motuztest/copy/nope.txt', c5['id'])
 check_r('Azure view: missing file refused', status in (400, 404) and 'does not exist' in msg(v), raw)
 status, v, raw = view(B, '/motuztest/copy/sub/d.txt', c5['id'])
 check_r('Azure view: bob cannot use alice\'s connection (404)', status == 404 and 'deep' not in raw, raw)
+# The pager on Azure: rclone lsjson --stat, cat --offset --count (and cat --count for the text check)
+check_chunked_reads(req, A, '/motuztest/copy/numbered.log', c5['id'], numbered_log(), 'Azure pager')
+
+
+def chunk(token, path, **params):
+    return req('POST', '/api/system/files/view/chunk/', token, dict(path=path, connection_id=c5['id'], **params))
+
+
+status, v, raw = chunk(A, '/motuztest/copy/f1.bin', from_end=True)
+check_r('Azure pager: binary file refused also from the end (415)', status == 415 and 'not a text file' in msg(v), raw)
+status, v, raw = chunk(A, '/motuztest/copy/sub', from_end=True)
+check_r('Azure pager: a folder is refused, not concatenated', status == 400 and 'folder' in msg(v), raw)
+status, v, raw = chunk(A, '/motuztest/copy/sub/d.txt', offset=6)
+check_r('Azure pager: offset beyond the end refused (400)', status == 400 and 'beyond the end' in msg(v), raw)
+status, v, raw = chunk(A, '/motuztest/copy/sub/d.txt', length=7)
+check_r('Azure pager: length below 256 bytes refused (400)', status == 400, raw)
+status, v, raw = chunk(B, '/motuztest/copy/numbered.log', from_end=True)
+check_r('Azure pager: bob cannot use alice\'s connection (404)', status == 404 and 'numbered log' not in raw, raw)
+check('Azure pager: file contents never logged', 'of a numbered log' not in service_logs('app'), 'contents in the app log')
 status, body, raw = req('POST', '/api/connections/', A, dict(az, name='msi', profile_name='msi'))
 check_r('cannot create from a managed-identity remote', status == 400, raw)
 status, body, raw = req('POST', '/api/connections/', A, dict(az, profile_source='aws', profile_name=PROFILE))

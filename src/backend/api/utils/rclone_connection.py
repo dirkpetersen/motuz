@@ -109,6 +109,63 @@ class RcloneConnection(AbstractConnection):
         connection's credentials (see file_view). `rclone cat` of a folder would print
         every file in it, so the path is checked with `lsjson --stat` first.
         """
+        credentials, base, remote = self._view_base(data, path)
+        size = self._view_stat(base, remote, credentials, path)
+
+        command = base + ['cat', '--count', str(file_view.MAX_VIEW_BYTES + 1), remote]
+        self._log_command(command, credentials)
+        content = self._run_view_command(command, credentials, path)
+        try:
+            return file_view.view_result(path, content, size)
+        except file_view.NotTextError:
+            raise file_view.NotTextError("'{}' is not a text file".format(path.rstrip('/').split('/')[-1]))
+
+
+    def view_chunk(self, data, path, request):
+        """
+        One chunk of a text file for the pager (file_view.ChunkRequest), read by rclone
+        as the user with the connection's credentials: `lsjson --stat` (size; a folder
+        is refused), `cat --offset --count` for the range and, unless the range starts
+        at the beginning of the file, `cat --count` for the first bytes (text check).
+        """
+        credentials, base, remote = self._view_base(data, path)
+        size = self._view_stat(base, remote, credentials, path)
+
+        start, count = request.read_range()
+        if size is None:
+            if request.backward:
+                raise file_view.ViewError("The size of '{}' is unknown, it can only be read from the start".format(path))
+        else:
+            if request.backward and request.before is not None and request.before > size:
+                raise file_view.ViewError('Offset {} is beyond the end of the file ({} bytes)'.format(request.before, size))
+            if not request.backward and request.offset > size:
+                raise file_view.ViewError('Offset {} is beyond the end of the file ({} bytes)'.format(request.offset, size))
+            if start < 0: # tail
+                start = max(0, size + start)
+            count = max(0, min(count, size - start))
+
+        content = b''
+        if count > 0:
+            command = base + ['cat', '--offset', str(start), '--count', str(count), remote]
+            self._log_command(command, credentials)
+            content = self._run_view_command(command, credentials, path)
+
+        head_needed = file_view.HEAD_CHECK_BYTES if size is None else min(size, file_view.HEAD_CHECK_BYTES)
+        if start == 0 and len(content) >= head_needed:
+            head = content[:file_view.HEAD_CHECK_BYTES]
+        else:
+            command = base + ['cat', '--count', str(file_view.HEAD_CHECK_BYTES), remote]
+            self._log_command(command, credentials)
+            head = self._run_view_command(command, credentials, path)
+
+        try:
+            return file_view.chunk_result(path, request, size, head, start, content)
+        except file_view.NotTextError:
+            raise file_view.NotTextError("'{}' is not a text file".format(path.rstrip('/').split('/')[-1]))
+
+
+    def _view_base(self, data, path):
+        """(credentials, rclone command prefix run as the user, remote path) for the viewer"""
         credentials = self._formatCredentials(data, name='current')
         user = data.owner
         remote = 'current:{}'.format(path) # never an option: always prefixed
@@ -120,7 +177,14 @@ class RcloneConnection(AbstractConnection):
             '--config=/dev/null',
             *_rate_limit_flags(credentials),
         ]
+        return credentials, base, remote
 
+
+    def _view_stat(self, base, remote, credentials, path):
+        """
+        The size of a file (None if the backend does not know it). A folder is refused:
+        `rclone cat` of a folder would print every file in it.
+        """
         command = base + ['lsjson', '--stat', remote]
         self._log_command(command, credentials)
         stdout = self._run_view_command(command, credentials, path)
@@ -134,16 +198,9 @@ class RcloneConnection(AbstractConnection):
             # Bucket storage (S3, Azure, GCS) reports a missing path as a virtual folder
             raise file_view.ViewError("'{}' is a folder or does not exist".format(path))
         size = info.get('Size')
-        if not isinstance(size, int) or size < 0:
+        if isinstance(size, bool) or not isinstance(size, int) or size < 0:
             size = None
-
-        command = base + ['cat', '--count', str(file_view.MAX_VIEW_BYTES + 1), remote]
-        self._log_command(command, credentials)
-        content = self._run_view_command(command, credentials, path)
-        try:
-            return file_view.view_result(path, content, size)
-        except file_view.NotTextError:
-            raise file_view.NotTextError("'{}' is not a text file".format(path.rstrip('/').split('/')[-1]))
+        return size
 
 
     def _run_view_command(self, command, credentials, path):

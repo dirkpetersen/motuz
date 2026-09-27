@@ -84,3 +84,85 @@ def finish():
     passed, failed, skipped = (_results.count(s) for s in ('PASS', 'FAIL', 'SKIP'))
     print(f"\n{passed}/{passed + failed} passed" + (f", {skipped} skipped" if skipped else ''))
     sys.exit(1 if failed else 0)
+
+
+# ---------------------------------------------------------------- viewer (pager) fixtures and checks
+# A ~5 MiB log of numbered lines ("line 000001 ...") of varying length, some with
+# multibyte characters. The same code writes it in a container (as a user, run with
+# `python3 - <path>`) and builds the expected bytes here.
+NUMBERED_LOG_LINES = 105000
+NUMBERED_LOG_CODE = f'''
+import sys
+def numbered_log():
+    return b"".join(("line %06d %s of a numbered log\\n" % (i, "\\u00fc" * (i % 5) + "x" * (i % 29))).encode()
+                    for i in range(1, {NUMBERED_LOG_LINES} + 1))
+if __name__ == "__main__" and len(sys.argv) > 1:
+    with open(sys.argv[1], "wb") as f:
+        f.write(numbered_log())
+'''
+CHUNK_BYTES = 256 * 1024
+
+
+def numbered_log():
+    namespace = {'__name__': 'numbered_log'}
+    exec(NUMBERED_LOG_CODE, namespace)
+    return namespace['numbered_log']()
+
+
+def check_chunked_reads(req, token, path, connection_id, data, label):
+    """
+    Reads `path` through /api/system/files/view/chunk/ forward from the start, the
+    tail, and backward from the tail to the start; checks that the chunks are
+    contiguous, hold whole lines and together are the file (`data`).
+    """
+    def chunk(**params):
+        status, body, raw = req('POST', '/api/system/files/view/chunk/', token,
+                                dict(path=path, connection_id=connection_id, **params))
+        return (body if status == 200 else None), (status, str(raw)[:300])
+
+    def whole(chunks, data):
+        contiguous = all(a['end'] == b['offset'] for a, b in zip(chunks, chunks[1:]))
+        lines = all(c['content'].startswith('line ') and c['content'].endswith('\n') for c in chunks)
+        small = all(0 < c['end'] - c['offset'] <= CHUNK_BYTES for c in chunks)
+        exact = all(c['content'].encode() == data[c['offset']:c['end']] for c in chunks)
+        return (bool(chunks) and chunks[0]['offset'] == 0 and chunks[0]['bof'] and chunks[-1]['end'] == len(data)
+                and chunks[-1]['eof'] and contiguous and lines and small and exact
+                and ''.join(c['content'] for c in chunks).encode() == data)
+
+    def summary(chunks, error):
+        return error or [(c['offset'], c['end'], c['bof'], c['eof']) for c in chunks[:3]] + ['...', len(chunks)]
+
+    forward, error = [], None
+    while len(forward) < 200:
+        c, error = chunk(offset=forward[-1]['end'] if forward else 0)
+        if c is None:
+            break
+        forward.append(c)
+        error = None
+        if c['eof']:
+            break
+    first = forward[0] if forward else {}
+    check(f'{label}: first chunk: whole lines from line 000001, at most 256 KiB, bof, not eof, file size',
+          first.get('offset') == 0 and first.get('bof') is True and first.get('eof') is False and first.get('size') == len(data)
+          and first['content'].startswith('line 000001 ') and first['content'].endswith('\n')
+          and CHUNK_BYTES - 200 < first['end'] <= CHUNK_BYTES and first.get('encoding') == 'utf-8', summary(forward, error))
+    check(f'{label}: read forward chunk by chunk: contiguous offsets, no line split, together the file',
+          error is None and len(forward) >= len(data) // CHUNK_BYTES and whole(forward, data), summary(forward, error))
+
+    tail, error = chunk(from_end=True)
+    last_line = f'line {NUMBERED_LOG_LINES:06d} '
+    check(f'{label}: tail read: the last lines, bof false, eof true',
+          tail is not None and tail['eof'] is True and tail['bof'] is False and tail['end'] == len(data)
+          and tail['content'].startswith('line ') and tail['content'].rstrip('\n').split('\n')[-1].startswith(last_line)
+          and len(data) - CHUNK_BYTES <= tail['offset'] < len(data) - CHUNK_BYTES + 200
+          and tail['content'].encode() == data[tail['offset']:],
+          error if tail is None else {k: tail[k] for k in tail if k != 'content'})
+
+    backward = [tail] if tail else []
+    while backward and not backward[0]['bof'] and len(backward) < 200:
+        c, error = chunk(before=backward[0]['offset'])
+        if c is None:
+            break
+        backward.insert(0, c)
+    check(f'{label}: read backward from the tail to the beginning: contiguous, no line split, together the file',
+          whole(backward, data), summary(backward, error))
