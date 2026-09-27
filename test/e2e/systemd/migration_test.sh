@@ -24,7 +24,8 @@ die() { echo "ERROR: $*" >&2; exit 1; }
 "$VM" status | grep -q running || die "no VM (run test/e2e/run_systemd.sh --keep first)"
 
 echo "==> docker e2e stack with data (run.sh --keep --no-build e2e)"
-MOTUZ_E2E_UI=skip "$E2E/run.sh" --keep --no-build e2e > "$LOGS/migration-docker.log" 2>&1
+MOTUZ_E2E_UI=skip "$E2E/run.sh" --keep --no-build e2e > "$LOGS/migration-docker.log" 2>&1 \
+    || { tail -5 "$LOGS/migration-docker.log"; die "the docker e2e stack did not start or its e2e suite failed"; }
 grep -E '^e2e ' "$LOGS/migration-docker.log" | tail -1
 trap '"$E2E/run.sh" --down >/dev/null 2>&1' EXIT
 
