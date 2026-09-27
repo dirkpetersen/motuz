@@ -6,7 +6,7 @@ import re
 import subprocess
 
 from ..exceptions import *
-from .abstract_connection import AbstractConnection, RcloneException
+from .abstract_connection import AbstractConnection, RcloneException, check_output
 from .file_times import epoch_to_iso_utc
 from . import file_view
 
@@ -190,7 +190,7 @@ def _ls_with_impersonation(path, user):
     ]
 
     try:
-        byteOutput = subprocess.check_output(command)
+        byteOutput = check_output(command)
         output = byteOutput.decode('UTF-8').rstrip('\n') # names may end in spaces
         return output
     except subprocess.CalledProcessError as err:
@@ -216,7 +216,7 @@ def _mkdir_with_impersonation(path, user):
         path,
     ]
 
-    byteOutput = subprocess.check_output(command)
+    byteOutput = check_output(command)
     output = byteOutput.decode('UTF-8').rstrip()
     return output
 

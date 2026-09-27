@@ -96,6 +96,11 @@ BASE=https://localhost
 OWN_APP_CLIENT_ID=motuz-own-app  # expected by oauth_test.py (PHASE=callback)
 source "$HERE/_suites.sh"
 mkdir -p "$WORK" "$LOGS"
+# Playwright 1.58 has no build for Ubuntu 26.04; its 24.04 chromium works there
+. /etc/os-release
+if [ "${ID:-}" = ubuntu ] && [ "${VERSION_ID:-}" = 26.04 ]; then
+    export PLAYWRIGHT_HOST_PLATFORM_OVERRIDE="${PLAYWRIGHT_HOST_PLATFORM_OVERRIDE:-ubuntu24.04-x64}"
+fi
 HOME_DIR=$(getent passwd "$ACCOUNT" | cut -d: -f6 2>/dev/null || true)
 CONFIG="$HOME_DIR/.config/motuz"
 

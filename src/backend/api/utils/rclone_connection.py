@@ -5,7 +5,7 @@ import os
 import subprocess
 from collections import defaultdict
 
-from .abstract_connection import AbstractConnection, RcloneException, sudo_as, user_process_env
+from .abstract_connection import AbstractConnection, RcloneException, check_output, sudo_as, user_process_env
 from . import local_credentials
 from .file_times import rfc3339_to_iso_utc
 from . import file_view
@@ -686,11 +686,7 @@ class RcloneConnection(AbstractConnection):
 
         full_env = user_process_env(env)
         try:
-            byteOutput = subprocess.check_output(
-                command,
-                stderr=subprocess.PIPE,
-                env=full_env
-            )
+            byteOutput = check_output(command, stderr=subprocess.PIPE, env=full_env)
             output = byteOutput.decode('UTF-8').rstrip()
             return output
         except subprocess.CalledProcessError as err:

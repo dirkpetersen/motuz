@@ -49,7 +49,7 @@ class TestAbsoluteCommands(unittest.TestCase):
     """The sudoers rule allows /usr/local/bin/rclone, /usr/bin/ls, /usr/bin/mkdir, /usr/bin/env"""
 
     def test_ls_and_mkdir(self):
-        with mock.patch.object(local_connection.subprocess, 'check_output', return_value=b'') as run:
+        with mock.patch.object(local_connection, 'check_output', return_value=b'') as run:
             local_connection._ls_with_impersonation('/data', 'alice')
             local_connection._mkdir_with_impersonation('/data/new', 'alice')
         ls, mkdir = run.call_args_list[0][0][0], run.call_args_list[1][0][0]
@@ -70,12 +70,42 @@ class TestAbsoluteCommands(unittest.TestCase):
         self.assertEqual(rclone_connection.RCLONE, '/usr/local/bin/rclone')
 
 
+class TestSignalMask(unittest.TestCase):
+    """uWSGI blocks signals in its worker threads; sudo-rs keeps an inherited mask and hangs"""
+
+    def in_blocking_thread(self, function):
+        import signal
+        import threading
+        result = {}
+
+        def run():
+            signal.pthread_sigmask(signal.SIG_BLOCK, set(signal.Signals) - {signal.SIGKILL, signal.SIGSTOP})
+            result['value'] = function()
+            result['mask_after'] = signal.pthread_sigmask(signal.SIG_BLOCK, [])
+        thread = threading.Thread(target=run)
+        thread.start()
+        thread.join(30)
+        return result
+
+    @unittest.skipUnless(os.path.exists('/proc/self/status'), 'needs /proc')
+    def test_children_start_with_no_blocked_signals(self):
+        from api.utils import file_view
+        command = ['grep', '^SigBlk:', '/proc/self/status']
+        for name, function in (
+                ('check_output', lambda: abstract_connection.check_output(command).decode()),
+                ('run', lambda: abstract_connection.run(command, timeout=10).stdout.decode()),
+                ('run_limited', lambda: file_view.run_limited(command, 10)[1].decode())):
+            result = self.in_blocking_thread(function)
+            self.assertEqual(result['value'].split()[-1], '0' * 16, name)
+            self.assertGreater(len(result['mask_after']), 30, name) # the thread's own mask is restored
+
+
 class TestHomeDirectory(unittest.TestCase):
 
     def test_from_the_user_database_without_a_shell(self):
         entry = pwd.struct_passwd(('alice', 'x', 1501, 1501, '', '/home/alice', '/bin/bash'))
         with mock.patch.object(local_connection.pwd, 'getpwnam', return_value=entry), \
-                mock.patch.object(local_connection.subprocess, 'check_output', side_effect=AssertionError('no subprocess')):
+                mock.patch.object(local_connection, 'check_output', side_effect=AssertionError('no subprocess')):
             self.assertEqual(local_connection._homepath_with_impersonation('alice'), '/home/alice')
             self.assertEqual(local_credentials.home_directory('alice'), '/home/alice')
 
