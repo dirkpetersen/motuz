@@ -3,8 +3,8 @@ Can this node run jobs? A worker must see the same storage as the app, at the sa
 paths: a job that starts on a node where a mount is missing would copy from an empty
 directory or into the local disk below the mount point.
 
-- MOTUZ_REQUIRED_PATHS / MOTUZ_REQUIRED_MOUNTS: colon-separated absolute paths that must
-  be directories / directories that are mount points (e.g. /fh/fast:/fh/scratch).
+- MOTUZ_REQUIRED_PATHS: mount points that must be mounted, separated by commas or colons
+  (e.g. /fh/fast,/fh/scratch), the same setting as the remote worker's (src/worker).
   Checked before every job (tasks/celery_tasks.py: the job fails with the reason instead
   of running) and when the worker starts (ExecStartPre of the systemd install's
   motuz-celery.service: the unit fails and says why). Unset: nothing is checked (the
@@ -30,7 +30,7 @@ CHECK_TIMEOUT = 15 # seconds; a hung network mount must not hang the check
 
 
 def _paths(value):
-    return [p for p in (value or '').split(':') if p.strip()]
+    return [p.strip() for p in (value or '').replace(':', ',').split(',') if p.strip()]
 
 
 def _check_path(path, mount):
@@ -49,8 +49,7 @@ def _check_path(path, mount):
 def required_paths_problems(environ=None, timeout=CHECK_TIMEOUT):
     """A list of problems (empty if all required paths and mounts are there)"""
     environ = os.environ if environ is None else environ
-    checks = [(p, False) for p in _paths(environ.get('MOTUZ_REQUIRED_PATHS'))]
-    checks += [(p, True) for p in _paths(environ.get('MOTUZ_REQUIRED_MOUNTS'))]
+    checks = [(p, True) for p in _paths(environ.get('MOTUZ_REQUIRED_PATHS'))]
     problems = []
     for path, mount in checks:
         result = []

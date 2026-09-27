@@ -717,6 +717,137 @@ postgresql://your_user:your_password@your_host.com:5432/your_database_name
 ```
 
 
+### Remote workers (HTTPS only)
+
+Jobs can run on other machines than the Motuz server: **remote workers** run
+`motuz-worker` (`src/worker/motuz_worker.py`), which needs nothing but outbound HTTPS to
+the Motuz server (port 443, optionally through an HTTP proxy). Workers have no database
+access, open no ports and need no VPN. Typical setups:
+
+- Motuz in the cloud (e.g. a small EC2 instance), workers on-prem next to the file systems
+  (Proxmox VMs with the same mounts, users and versions as each other).
+- Later: temporary cloud workers for large cloud-to-cloud jobs (see "Ephemeral workers").
+
+A worker runs the same job code as the Motuz server's Celery worker: rclone as the job's
+owner (`sudo -E -u <owner>`), the same output parsing, Stop, progress and final state in
+the UI. Local paths are the worker's own mounts.
+
+**Which jobs go where** (`.env` of the Motuz server, passed to the `app` container):
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `MOTUZ_LOCAL_JOB_POOL` | `central` | Pool of jobs with a local path: `central` runs them on the Motuz server (Celery), e.g. `onprem` queues them for on-prem workers |
+| `MOTUZ_LARGE_JOB_POOL` | `central` | Pool of large cloud-to-cloud jobs, e.g. `aws`; other cloud-to-cloud jobs run centrally |
+| `MOTUZ_LARGE_JOB_BYTES`, `MOTUZ_LARGE_JOB_FILES` | 300 GB, 50000 | "Large": the source has at least this many bytes or files (`rclone size`, at most `MOTUZ_JOB_SIZE_TIMEOUT` = 60 s; slower counts as large) |
+| `MOTUZ_WORKER_LEASE_SECONDS` | 120 | A claimed job fails when its worker has not reported for this long |
+| `MOTUZ_PUBLIC_URL` | the address the worker used | `https://` address of the Motuz server for the token broker URL in job tickets |
+
+With the defaults nothing changes: every job runs on the Motuz server. A job queued for a
+pool without workers waits ("Waiting for a worker of pool ..." in its details).
+
+**Security model**
+
+- Each worker has a credential: `manage.py workers add <name> --pool onprem` prints a
+  secret once; the server stores only its SHA-256. The worker exchanges it at
+  `POST /api/workers/auth` for an access token (10 minutes) that is signed with a key of
+  its own and has the audience `motuz-worker`: user endpoints never accept it, and worker
+  endpoints never accept user tokens. Secrets are compared in constant time.
+- A worker claims jobs of its own pool only (`POST /api/workers/claim`, long poll). A claim
+  hands out one job atomically (`SELECT ... FOR UPDATE SKIP LOCKED` plus a compare-and-set)
+  with a **job ticket**: the job's parameters (type, owner, paths, options), the rclone
+  configuration of that job's own connections (the same `_formatCredentials` as the
+  server; connections using credentials from the home directory are read on the worker,
+  as the owner), the job's rclone performance flags (from the server's `MOTUZ_RCLONE_*`
+  settings and the job's overrides, see "Performance tuning"; workers need no such
+  settings), an expiry and a ticket token. Nothing about other
+  jobs, connections or users. A ticket is returned once and never again.
+- Progress (`POST /api/workers/jobs/<ticket>/progress`, every few seconds) and the result
+  (`.../finish`) need the worker's access token and the ticket token (`X-Motuz-Ticket`) of
+  a job that worker claimed. Progress renews the **lease**; its answer is `continue` or
+  `stop` (the user pressed Stop: the worker kills rclone). A job whose lease expires (the
+  worker died or lost its connection) is marked FAILED with the reason; it is not
+  requeued, because the worker might still be running rclone. A worker that reports after
+  that gets `410 Gone` and stops rclone.
+- OneDrive and Google Drive: rclone on the worker gets a **job-scoped broker token**
+  instead of the connection's broker handle, and the token URL
+  `https://<Motuz server>/api/workers/oauth/token`. That endpoint refreshes only the
+  connection on that side of that running job, with the same broker code as the loopback
+  broker (locking, caching, rotation, own-app credentials); the real refresh token never
+  leaves the server. `/internal` stays unreachable from outside.
+- Tickets and broker tokens die when the job ends, its lease expires or its worker is
+  revoked (`manage.py workers revoke <name>`, which also fails the worker's running jobs).
+- Sign-in, claims and the broker are rate limited; sign-ins, claims, ticket and broker use
+  are logged (logger `motuz.audit`) without secrets.
+
+**On the Motuz server**
+
+```bash
+# .env: send jobs with local paths to the on-prem workers, then ./bin/prod/start.sh
+MOTUZ_LOCAL_JOB_POOL=onprem
+
+# One credential per worker; the secret is printed once
+docker exec motuz_app bash -c 'source ./load-secrets.sh >/dev/null && python3 manage.py workers add proxmox-1 --pool onprem'
+docker exec motuz_app bash -c 'source ./load-secrets.sh >/dev/null && python3 manage.py workers list'
+docker exec motuz_app bash -c 'source ./load-secrets.sh >/dev/null && python3 manage.py workers revoke proxmox-1'
+```
+
+**Installing a worker** (Ubuntu; the same Motuz release and rclone version as the server,
+the same users (SSSD/LDAP) and mounts as the other workers):
+
+```bash
+sudo apt-get install -y python3 sudo unzip curl
+# rclone: the version pinned in deployment/docker/app/Dockerfile, at /usr/local/bin/rclone
+sudo git clone https://github.com/FredHutch/motuz /opt/motuz   # check out the server's release
+
+# An unprivileged account that may run commands as any user except root (rclone as the
+# job's owner, like the server's containers do). Keep sudo's environment (sudo -E):
+# the ALL command implies SETENV.
+sudo useradd --system --create-home --home-dir /var/lib/motuz --shell /usr/sbin/nologin motuz
+echo 'motuz ALL=(ALL,!root) NOPASSWD: ALL' | sudo tee /etc/sudoers.d/motuz-worker
+sudo chmod 440 /etc/sudoers.d/motuz-worker
+sudo loginctl enable-linger motuz          # user services without a login
+
+# Configuration and the secret from `manage.py workers add` (mode 600)
+sudo -u motuz install -d -m 700 /var/lib/motuz/.config/motuz-worker /var/lib/motuz/.config/systemd/user
+sudo -u motuz sh -c 'umask 077; cat > ~/.config/motuz-worker/credential'   # paste, Ctrl-D
+sudo -u motuz install -m 600 /opt/motuz/src/worker/worker.env.example /var/lib/motuz/.config/motuz-worker/worker.env
+sudo -u motuz editor /var/lib/motuz/.config/motuz-worker/worker.env   # MOTUZ_CENTRAL_URL, proxy, mounts
+sudo -u motuz install -m 644 /opt/motuz/src/worker/motuz-worker.service /var/lib/motuz/.config/systemd/user/
+
+# Check (mounts, sign-in, version), then start
+sudo -u motuz bash -c 'set -a; . ~/.config/motuz-worker/worker.env; python3 $MOTUZ_HOME/src/worker/motuz_worker.py --check'
+sudo -u motuz XDG_RUNTIME_DIR=/run/user/$(id -u motuz) systemctl --user enable --now motuz-worker
+sudo -u motuz XDG_RUNTIME_DIR=/run/user/$(id -u motuz) journalctl --user -u motuz-worker -f
+```
+
+Worker settings (`worker.env`, see `src/worker/worker.env.example`): `MOTUZ_CENTRAL_URL`
+(https only), `MOTUZ_WORKER_CREDENTIAL_FILE` (must be mode 600), `MOTUZ_WORKER_POOL`
+(optional check), `MOTUZ_REQUIRED_PATHS` (mount points that must be mounted before the
+worker claims jobs), `HTTPS_PROXY`/`NO_PROXY` (used by the worker and passed to rclone)
+and `MOTUZ_CA_BUNDLE` (a PEM bundle for the server's certificate, also given to rclone as
+`SSL_CERT_FILE`; it replaces the system roots, so it must contain them, and it must be
+readable by every user, e.g. `/etc/motuz-worker/ca.pem`, because rclone runs as the job's
+owner). Before claiming,
+the worker checks its mounts and that its release (`src/backend/api/version.py`: `VERSION`,
+`WORKER_PROTOCOL`) equals the server's; otherwise it logs why and waits. On SIGTERM it
+stops rclone and reports the job as failed. Exit code 78 (configuration error, revoked
+credential) stops systemd from restarting it.
+
+**Ephemeral workers** (for the later EC2 launcher): a single-use bootstrap token, valid
+for minutes and optionally bound to one job queued for the same pool, replaces the
+credential:
+
+```bash
+python3 manage.py workers bootstrap --pool aws --job copy:123 --ttl 15m   # prints mzb1....
+# on the new instance (token e.g. from its user data; a file keeps it out of `ps`):
+python3 /opt/motuz/src/worker/motuz_worker.py --bootstrap-token-file /run/motuz-bootstrap --once
+```
+
+The worker exchanges the token (it cannot be used again), claims exactly its job, runs it,
+reports the result and exits; the server then revokes the ephemeral worker. Code can call
+`worker_manager.create_bootstrap_token(pool, job='copy:123', ttl_seconds=900)`.
+
+
 
 ## Install without Docker (Ubuntu 26.04)
 
@@ -834,9 +965,9 @@ keeps using `login`).
 ### Storage
 
 Mount the shared filesystems on the host (the `/fh/...` mounts of
-`docker-compose.override.yml`) at the same paths. `MOTUZ_REQUIRED_MOUNTS` (and
-`MOTUZ_REQUIRED_PATHS` for plain directories), colon-separated, in `motuz.env`: the
-worker does not start while one is missing (`systemctl --user status motuz-celery` says
+`docker-compose.override.yml`) at the same paths and list them in `MOTUZ_REQUIRED_PATHS`
+(commas or colons) in `motuz.env`, as for a remote worker: the worker does not start
+while one is not mounted (`systemctl --user status motuz-celery` says
 which; it retries every 30 seconds), and a job fails with the reason instead of running
 on a half-mounted tree.
 
@@ -958,7 +1089,7 @@ Backend unit tests (no database needed):
 End-to-end tests build the Docker images, start a production-like stack (Traefik on ports
 80/443, test users `alice`/`bob`, a fake Microsoft sign-in and Graph, Azurite), run all
 suites (API, token broker, OneDrive sign-in, Traefik, credentials from the home directory,
-UI with playwright) and remove the stack again. Nothing else may use ports 80, 443, 5000,
+UI with playwright, a remote worker behind an HTTP proxy) and remove the stack again. Nothing else may use ports 80, 443, 5000,
 5001, 5432, 5672, 5999 or 10000, so do not run them on a Motuz server.
 
 ```bash

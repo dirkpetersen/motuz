@@ -10,12 +10,14 @@ from ..models import CopyJob
 from ..managers.auth_manager import token_required, get_logged_in_user
 from ..managers import cloud_connection_manager
 from ..utils import rclone_tuning
+from ..managers import job_routing, worker_manager
 from ..utils.email_utils import Email
 
 
 @token_required
 def list(page_size=50, page=1):
     owner = get_logged_in_user(request)
+    worker_manager.expire_leases()
     try:
         query = (CopyJob.query
                  .filter_by(owner=owner)
@@ -101,9 +103,13 @@ def create(data):
 
     task_id = copy_job.id
     try:
-        tasks.copy_job.apply_async(task_id=_celery_task_id(task_id), kwargs={
-            'task_id': task_id,
-        })
+        pool = job_routing.choose_pool(copy_job.src_cloud, copy_job.src_resource_path, copy_job.dst_cloud)
+        if pool == job_routing.CENTRAL:
+            tasks.copy_job.apply_async(task_id=_celery_task_id(task_id), kwargs={
+                'task_id': task_id,
+            })
+        else: # a remote worker of that pool claims it (managers/worker_manager.py)
+            worker_manager.queue_job('copy', copy_job, pool)
     except Exception as e:
         # Otherwise the job would stay in PROGRESS forever
         copy_job.progress_state = 'FAILED'
@@ -126,6 +132,10 @@ def retrieve(id):
     if copy_job.owner != owner:
         raise HTTP_404_NOT_FOUND('Copy Job with id {} not found'.format(id))
 
+    worker_manager.expire_leases()
+    if worker_manager.apply_remote_progress('copy', copy_job):
+        return copy_job
+
     for _ in range(2):  # Sometimes rabbitmq closes the connection!
         try:
             task = _async_result(copy_job.id)
@@ -144,8 +154,9 @@ def retrieve(id):
 def stop(id):
     copy_job = retrieve(id)
 
-    task = _async_result(copy_job.id)
-    task.revoke(terminate=True)
+    if not worker_manager.request_stop('copy', copy_job.id):
+        task = _async_result(copy_job.id)
+        task.revoke(terminate=True)
 
     copy_job = db.session.get(CopyJob, id)  # Avoid race conditions
     if copy_job.progress_state == 'PROGRESS':

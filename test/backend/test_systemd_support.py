@@ -207,7 +207,7 @@ class TestNodeCheck(unittest.TestCase):
     def test_required_paths(self):
         tmp = tempfile.mkdtemp()
         self.addCleanup(os.rmdir, tmp)
-        env = {'MOTUZ_REQUIRED_PATHS': tmp + ':/nonexistent/motuz', 'MOTUZ_REQUIRED_MOUNTS': '/:' + tmp + ':relative'}
+        env = {'MOTUZ_REQUIRED_PATHS': '/nonexistent/motuz, /:' + tmp + ',relative'}
         problems = node_check.required_paths_problems(env)
         self.assertEqual(len(problems), 3, problems)
         self.assertIn('/nonexistent/motuz is not a directory', problems[0])
@@ -219,17 +219,17 @@ class TestNodeCheck(unittest.TestCase):
         def hang(path, mount):
             time.sleep(5)
         with mock.patch.object(node_check, '_check_path', side_effect=hang):
-            problems = node_check.required_paths_problems({'MOTUZ_REQUIRED_MOUNTS': '/fh/fast'}, timeout=0.2)
+            problems = node_check.required_paths_problems({'MOTUZ_REQUIRED_PATHS': '/fh/fast'}, timeout=0.2)
         self.assertEqual(problems, ['/fh/fast does not respond (hung mount?)'])
 
     def test_script_refuses_to_start(self):
-        env = dict(os.environ, MOTUZ_REQUIRED_MOUNTS='/nonexistent/motuz')
+        env = dict(os.environ, MOTUZ_REQUIRED_PATHS='/nonexistent/motuz')
         out = subprocess.run([sys.executable, '-I', os.path.join(BACKEND, 'api', 'utils', 'node_check.py'), 'start'],
                              env=env, capture_output=True, text=True)
         self.assertEqual(out.returncode, 1)
         self.assertIn('/nonexistent/motuz is not a directory', out.stderr)
         self.assertIn('refusing to start the worker', out.stderr)
-        env['MOTUZ_REQUIRED_MOUNTS'] = '/'
+        env['MOTUZ_REQUIRED_PATHS'] = '/'
         out = subprocess.run([sys.executable, '-I', os.path.join(BACKEND, 'api', 'utils', 'node_check.py'), 'start'],
                              env=env, capture_output=True, text=True)
         self.assertEqual(out.returncode, 0, out.stderr)
@@ -245,12 +245,11 @@ class TestNodeCheck(unittest.TestCase):
 
     def test_jobs_fail_on_a_node_without_its_mounts(self):
         from api.tasks import celery_tasks
-        with mock.patch.dict(os.environ, {'MOTUZ_REQUIRED_MOUNTS': '/nonexistent/motuz'}):
+        with mock.patch.dict(os.environ, {'MOTUZ_REQUIRED_PATHS': '/nonexistent/motuz'}):
             with self.assertRaises(RuntimeError) as cm:
                 celery_tasks._ensure_node_ready()
         self.assertIn('cannot run jobs: /nonexistent/motuz is not a directory', str(cm.exception))
         with mock.patch.dict(os.environ, {}):
-            os.environ.pop('MOTUZ_REQUIRED_MOUNTS', None)
             os.environ.pop('MOTUZ_REQUIRED_PATHS', None)
             celery_tasks._ensure_node_ready()
 
