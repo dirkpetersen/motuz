@@ -41,6 +41,8 @@ check "$ACCOUNT cannot run other commands as a user" bash -c "! runuser -u $ACCO
 check "$ACCOUNT cannot get a shell as a user" bash -c "! runuser -u $ACCOUNT -- sudo -n -i -u alice true"
 check "$ACCOUNT runs the allowed commands as alice" \
     bash -c "[ \"\$(runuser -u $ACCOUNT -- sudo -n -u alice /usr/bin/env id -un)\" = alice ]"
+check "sudo never logged rclone's credentials (ENV=RCLONE_CONFIG_...)" \
+    bash -c "! journalctl --no-pager -o cat _COMM=sudo | grep -q 'RCLONE_CONFIG_'"
 check "$ACCOUNT has no password (locked)" bash -c "passwd -S $ACCOUNT | awk '{print \$2}' | grep -qE '^(L|LK)$'"
 
 # --- ports and files

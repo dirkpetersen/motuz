@@ -159,6 +159,13 @@ cat > "$TMP/sudoers" <<EOF
 # Motuz (bin/systemd/install.sh): file and rclone operations as the logged-in user
 $ACCOUNT ALL=($RUNAS) NOPASSWD:SETENV: /usr/local/bin/rclone, /usr/bin/ls, /usr/bin/mkdir, /usr/bin/env
 EOF
+# The classic sudo (Amazon Linux; sudo-rs on Ubuntu does not) logs the variables of
+# --preserve-env with every allowed command ("ENV=RCLONE_CONFIG_..."), i.e. the
+# connections' secrets would go to the journal. Allowed commands are not logged for the
+# account (Motuz logs them, masked); refused ones still are.
+if sudo -V 2>/dev/null | head -1 | grep -q '^Sudo version'; then
+    echo "Defaults:$ACCOUNT !log_allowed" >> "$TMP/sudoers"
+fi
 visudo -c -q -f "$TMP/sudoers" || die "the sudoers rule does not parse"
 install -m 440 -o root -g root "$TMP/sudoers" /etc/sudoers.d/motuz
 visudo -c -q || die "sudoers is invalid after installing /etc/sudoers.d/motuz"
