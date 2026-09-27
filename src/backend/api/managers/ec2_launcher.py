@@ -538,7 +538,9 @@ def _reap_row(ec2, s, row, by_id, by_token, now, summary):
     if row.state in ENDED_INSTANCE_STATES and row.terminated_at is None:
         row.terminated_at = now
     name = 'The EC2 worker {} ({})'.format(row.instance_id, row.instance_type)
-    console = 'aws ec2 get-console-output --instance-id {}'.format(row.instance_id)
+    # EC2 keeps the console output only while the instance exists (MOTUZ_EC2_HALT_DELAY keeps
+    # a worker whose setup or job failed running for a while)
+    console = 'aws ec2 get-console-output --latest --instance-id {}'.format(row.instance_id)
 
     if row.state in ALIVE_INSTANCE_STATES:
         runtime = now - (row.launched_at or row.created_at)

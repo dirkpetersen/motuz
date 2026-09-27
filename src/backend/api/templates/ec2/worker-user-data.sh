@@ -65,9 +65,10 @@ NFT
         return 1
     fi
 }
-imds_root_only || { dnf -y -q install nftables >/dev/null 2>&1 && imds_root_only; } \
+FIREWALL=preinstalled
+imds_root_only || { FIREWALL='installed with dnf'; dnf -y -q install nftables >/dev/null 2>&1 && imds_root_only; } \
     || halt "cannot restrict instance metadata to root (neither nft nor iptables)"
-say "instance metadata firewall: $(command -v nft >/dev/null 2>&1 && echo nftables || echo iptables) rule for non-root users"
+say "instance metadata firewall: $(command -v nft >/dev/null 2>&1 && echo nftables || echo iptables) ($FIREWALL) rule for non-root users"
 
 # 2. Backstop for the central node's MOTUZ_EC2_MAX_RUNTIME (its reaper acts first)
 shutdown -h "+$MAX_RUNTIME_MINUTES" "motuz: maximum runtime reached" >/dev/null 2>&1 \

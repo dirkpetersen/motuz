@@ -378,7 +378,7 @@ class TestCapacityFallback(Ec2TestBase):
         stored = self.job_state(job)
         self.assertEqual(stored.progress_state, 'FAILED')
         self.assertIn('ended before it started the job (Server.InsufficientInstanceCapacity', stored.progress_error)
-        self.assertIn('get-console-output --instance-id ' + new_id, stored.progress_error)
+        self.assertIn('get-console-output --latest --instance-id ' + new_id, stored.progress_error)
 
     def test_fallback_order(self):
         rules = ec2_config.parse_instance_types('1T:c7gn.large,10T:c7gn.2xlarge,*:c7gn.4xlarge')
