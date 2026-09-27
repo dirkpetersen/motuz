@@ -1,7 +1,7 @@
 import datetime
 import os
 
-from .utils import rclone_tuning
+from .utils import image_view, rclone_tuning
 
 basedir = os.path.abspath(os.path.dirname(__file__))
 
@@ -32,6 +32,10 @@ except KeyError as e:
 # value stops the app and the worker here, with a message naming the variable
 RCLONE_TUNING = rclone_tuning.settings()
 
+# Largest image the file viewer shows (MOTUZ_VIEW_IMAGE_MAX_BYTES, default 25 MiB;
+# utils/image_view.py); an invalid value stops the app here
+VIEW_IMAGE_MAX_BYTES = image_view.max_bytes()
+
 
 class Config:
     SECRET_KEY = MOTUZ_FLASK_SECRET_KEY
@@ -44,6 +48,7 @@ class Config:
     JWT_ACCESS_TOKEN_EXPIRES = datetime.timedelta(minutes=15)
     JWT_REFRESH_TOKEN_EXPIRES = datetime.timedelta(days=30)
     CELERY_BROKER_URL = 'amqp://'
+    VIEW_IMAGE_MAX_BYTES = VIEW_IMAGE_MAX_BYTES
 
     DATABASE_PARAMS = ''
     if MOTUZ_DATABASE_REQUIRE_SSL.lower() in ('true', 't'):
