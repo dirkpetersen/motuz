@@ -127,8 +127,8 @@ class OauthSignIn extends React.Component {
 
     renderRow(label, content, required=true) {
         return (
-            <div className={`row form-group ${required ? 'required' : ''}`}>
-                <div className='col-4 text-right control-label'>
+            <div className={`row mb-3 ${required ? 'required' : ''}`}>
+                <div className='col-4 text-end control-label'>
                     <b className='form-label'>{label}</b>
                 </div>
                 <div className='col-8'>
@@ -165,14 +165,14 @@ class OauthSignIn extends React.Component {
                         Sign in with {provider.account} in the tab that just opened {openAgain}.
                         Motuz continues in that tab afterwards.
                     </p>
-                    {provider.warnings && <ul className='pl-3 small'>{provider.warnings}</ul>}
+                    {provider.warnings && <ul className='ps-3 small'>{provider.warnings}</ul>}
                     {this.renderStartOver()}
                 </React.Fragment>
             ));
         }
         return this.renderRow('Account', (
             <React.Fragment>
-                <ol className='pl-3 pt-2 mb-2'>
+                <ol className='ps-3 pt-2 mb-2'>
                     <li className='mb-1'>
                         Sign in with {provider.account} in the tab that just opened {openAgain}.
                     </li>
@@ -221,7 +221,7 @@ class OauthSignIn extends React.Component {
                 ))}
                 {this.renderRow('Drive', (
                     <select
-                        className='form-control'
+                        className='form-select'
                         aria-label='Drive'
                         value={driveId}
                         onChange={event => this.selectDrive(event.target.value)}
@@ -246,7 +246,7 @@ class OauthSignIn extends React.Component {
     }
 
     renderBusy() {
-        return this.state.busy ? <span className='text-muted ml-2'>Working...</span> : null;
+        return this.state.busy ? <span className='text-muted ms-2'>Working...</span> : null;
     }
 
     startOver() {

@@ -37,7 +37,7 @@ class NewHashsumJobDialog extends React.Component {
                                         <h5 className="text-primary mb-2">Compare</h5>
 
                                         <div className="row">
-                                            <div className="col-4 text-right">
+                                            <div className="col-4 text-end">
                                                 <b className='form-label'>Connection</b>
                                             </div>
                                             <div className="col-7">
@@ -48,7 +48,7 @@ class NewHashsumJobDialog extends React.Component {
                                             <div className="col-1"></div>
                                         </div>
                                         <div className="row">
-                                            <div className="col-4 text-right">
+                                            <div className="col-4 text-end">
                                                 <b className='form-label'>Resource</b>
                                             </div>
                                             <div className="col-7">
@@ -62,7 +62,7 @@ class NewHashsumJobDialog extends React.Component {
                                         <h5 className="text-primary mt-4 mb-2">With</h5>
 
                                         <div className="row">
-                                            <div className="col-4 text-right">
+                                            <div className="col-4 text-end">
                                                 <b className='form-label'>Connection</b>
                                             </div>
                                             <div className="col-7">
@@ -73,7 +73,7 @@ class NewHashsumJobDialog extends React.Component {
                                             <div className="col-1"></div>
                                         </div>
                                         <div className="row">
-                                            <div className="col-4 text-right">
+                                            <div className="col-4 text-end">
                                                 <b className='form-label'>Path</b>
                                             </div>
                                             <div className="col-7">
@@ -89,11 +89,11 @@ class NewHashsumJobDialog extends React.Component {
                                                 Advanced
                                             </summary>
 
-                                            <div className="row form-group">
-                                                <div className="col-4 text-right">
+                                            <div className="row mb-3">
+                                                <div className="col-4 text-end">
                                                     <b className='form-label'>Double Check</b>
                                                     <ToggleInfo
-                                                        className='form-label ml-2'
+                                                        className='form-label ms-2'
                                                         off="Quick check. This option relies on the MD5 sums that clouds record for files at the time of transfer. This check is sufficient for most users, but it is not guaranteed to be correct."
                                                         on="Slow check. This option downloads all files from the cloud to ensure that the MD5 match. This option is guaranteed to always be correct."
                                                     />
@@ -108,11 +108,11 @@ class NewHashsumJobDialog extends React.Component {
                                                 <div className="col-1"></div>
                                             </div>
 
-                                            <div className="row form-group">
-                                                <div className="col-4 text-right">
+                                            <div className="row mb-3">
+                                                <div className="col-4 text-end">
                                                     <b className='form-label'>Email Notifications</b>
                                                     <ToggleInfo
-                                                        className='form-label ml-2'
+                                                        className='form-label ms-2'
                                                         on="Automatically receive an email when jobs are complete."
                                                         off="No automatic emails are send on when jobs are complete, unless manually specified in the job itself."
                                                     />
@@ -128,8 +128,8 @@ class NewHashsumJobDialog extends React.Component {
                                             </div>
 
                                             {this.state.emailNotifications && (
-                                                <div className="row form-group">
-                                                    <div className="col-4 text-right">
+                                                <div className="row mb-3">
+                                                    <div className="col-4 text-end">
                                                         <b className='form-label'>Email Address</b>
                                                     </div>
                                                     <div className="col-7">

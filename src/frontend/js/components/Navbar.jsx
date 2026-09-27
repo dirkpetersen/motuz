@@ -7,7 +7,7 @@ import UserMenu from 'components/UserMenu.jsx'
 export default class Navbar extends React.PureComponent {
     render() {
         return (
-            <nav className="navbar navbar-expand-sm navbar-light bg-light">
+            <nav className="navbar navbar-expand-sm navbar-light bg-light px-3">
                 <div className="nav navbar-nav">
                     <Link to='/'>
                         {this.props.brandIsBackArrow && (
@@ -23,7 +23,7 @@ export default class Navbar extends React.PureComponent {
                         )}
                     </Link>
                 </div>
-                <div className="nav navbar-nav ml-auto">
+                <div className="nav navbar-nav ms-auto">
                     <Link to="/clouds" className="nav-link">My Cloud Connections</Link>
                     <UserMenu />
                 </div>

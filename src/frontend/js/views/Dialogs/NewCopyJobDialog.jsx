@@ -34,7 +34,7 @@ class NewCopyJobDialog extends React.Component {
                                         <h5 className="text-primary mb-2">Source</h5>
 
                                         <div className="row">
-                                            <div className="col-4 text-right">
+                                            <div className="col-4 text-end">
                                                 <b className='form-label'>Connection</b>
                                             </div>
                                             <div className="col-7">
@@ -45,7 +45,7 @@ class NewCopyJobDialog extends React.Component {
                                             <div className="col-1"></div>
                                         </div>
                                         <div className="row">
-                                            <div className="col-4 text-right">
+                                            <div className="col-4 text-end">
                                                 <b className='form-label'>Resource</b>
                                             </div>
                                             <div className="col-7">
@@ -59,7 +59,7 @@ class NewCopyJobDialog extends React.Component {
                                         <h5 className="text-primary mt-4 mb-2">Destination</h5>
 
                                         <div className="row">
-                                            <div className="col-4 text-right">
+                                            <div className="col-4 text-end">
                                                 <b className='form-label'>Connection</b>
                                             </div>
                                             <div className="col-7">
@@ -70,7 +70,7 @@ class NewCopyJobDialog extends React.Component {
                                             <div className="col-1"></div>
                                         </div>
                                         <div className="row">
-                                            <div className="col-4 text-right">
+                                            <div className="col-4 text-end">
                                                 <b className='form-label'>Path</b>
                                             </div>
                                             <div className="col-7">
@@ -87,8 +87,8 @@ class NewCopyJobDialog extends React.Component {
 
                                 <h5 className='text-primary mb-2'>Details</h5>
 
-                                <div className="row form-group">
-                                    <div className="col-4 text-right">
+                                <div className="row mb-3">
+                                    <div className="col-4 text-end">
                                         <b className='form-label'>Owner</b>
                                     </div>
                                     <div className="col-7">
@@ -99,8 +99,8 @@ class NewCopyJobDialog extends React.Component {
                                     <div className="col-1"></div>
                                 </div>
 
-                                <div className="row form-group">
-                                    <div className="col-4 text-right">
+                                <div className="row mb-3">
+                                    <div className="col-4 text-end">
                                         <b className='form-label'>Description</b>
                                     </div>
                                     <div className="col-7">
@@ -119,8 +119,8 @@ class NewCopyJobDialog extends React.Component {
                                         Advanced
                                     </summary>
 
-                                    <div className="row form-group">
-                                        <div className="col-4 text-right">
+                                    <div className="row mb-3">
+                                        <div className="col-4 text-end">
                                             <b className='form-label'>Follow symlinks</b>
                                         </div>
                                         <div className="col-7">
@@ -133,8 +133,8 @@ class NewCopyJobDialog extends React.Component {
                                         <div className="col-1"></div>
                                     </div>
 
-                                    <div className="row form-group">
-                                        <div className="col-4 text-right">
+                                    <div className="row mb-3">
+                                        <div className="col-4 text-end">
                                             <b className='form-label'>Email Notifications</b>
                                         </div>
                                         <div className="col-7">
@@ -148,8 +148,8 @@ class NewCopyJobDialog extends React.Component {
                                     </div>
 
                                     {this.state.emailNotifications && (
-                                        <div className="row form-group">
-                                            <div className="col-4 text-right">
+                                        <div className="row mb-3">
+                                            <div className="col-4 text-end">
                                                 <b className='form-label'>Email Address</b>
                                             </div>
                                             <div className="col-7">

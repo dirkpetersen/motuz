@@ -10,20 +10,20 @@ class VerifyStatusButton extends React.PureComponent {
         const {loading, success} = this.props;
 
         if (loading) {
-            return <span className='ml-2 text-muted verify-status'>Testing...</span>;
+            return <span className='ms-2 text-muted verify-status'>Testing...</span>;
         }
         if (success == null) {
             return null;
         }
         if (success) {
             return (
-                <span className='ml-2 text-success verify-status'>
+                <span className='ms-2 text-success verify-status'>
                     <Icon name='check'/> Connection works
                 </span>
             );
         }
         return (
-            <span className='ml-2 text-danger verify-status'>
+            <span className='ms-2 text-danger verify-status'>
                 <Icon name='x'/> Test failed
             </span>
         );

@@ -63,14 +63,14 @@ class LocalCredentialPicker extends React.Component {
         const unusable = profiles.filter(p => !p.usable);
 
         return (
-            <div className='row form-group local-credentials'>
-                <div className='col-4 text-right control-label'>
+            <div className='row mb-3 local-credentials'>
+                <div className='col-4 text-end control-label'>
                     <b className='form-label'>Credentials</b>
                 </div>
                 <div className='col-8'>
                     {profiles.length > 0 &&
                         <select
-                            className='form-control'
+                            className='form-select'
                             aria-label='Credentials found in your home directory'
                             value={profileKey(selected)}
                             onChange={event => this.handleChange(event.target.value)}
@@ -118,7 +118,7 @@ class LocalCredentialPicker extends React.Component {
                                     ? `Why ${unusable.length === 1 ? 'one entry' : unusable.length + ' entries'} cannot be used`
                                     : 'Notes about your home directory'}
                             </summary>
-                            <ul className='mt-1 mb-0 pl-3'>
+                            <ul className='mt-1 mb-0 ps-3'>
                                 {unusable.map(profile => (
                                     <li key={profileKey(profile)}>
                                         <b>{profile.name}</b>: {profile.reason}

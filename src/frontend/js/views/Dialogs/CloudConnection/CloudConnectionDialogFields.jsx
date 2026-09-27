@@ -112,13 +112,13 @@ class CloudConnectionDialogFields extends React.Component {
             <div className="container">
                 <input type="hidden" name='id' value={data.id}/>
 
-                <div className="row form-group required">
-                    <div className="col-4 text-right control-label">
+                <div className="row mb-3 required">
+                    <div className="col-4 text-end control-label">
                         <b className='form-label'>Type</b>
                     </div>
                     <div className="col-8">
                         <select
-                            className="form-control"
+                            className="form-select"
                             name="type"
                             value={type}
                             onChange={event => this.onTypeChange(event.target.value)}
@@ -233,8 +233,8 @@ class CloudConnectionDialogFields extends React.Component {
                 <input type='hidden' name='profile_source' value={profile.source}/>
                 <input type='hidden' name='profile_name' value={profile.name}/>
                 {this.props.isSanitized &&
-                    <div className='row form-group'>
-                        <div className='col-4 text-right control-label'>
+                    <div className='row mb-3'>
+                        <div className='col-4 text-end control-label'>
                             <b className='form-label'>Credentials</b>
                         </div>
                         <div className='col-8 pt-2'>
@@ -248,13 +248,13 @@ class CloudConnectionDialogFields extends React.Component {
 
     _renderSubtypeSelect(label, options, subtype) {
         return (
-            <div className="row form-group required">
-                <div className="col-4 text-right control-label">
+            <div className="row mb-3 required">
+                <div className="col-4 text-end control-label">
                     <b className='form-label'>{label}</b>
                 </div>
                 <div className="col-8">
                     <select
-                        className="form-control"
+                        className="form-select"
                         name="subtype"
                         value={subtype}
                         onChange={(event => this.setState({subtype: event.target.value}))}
@@ -902,7 +902,7 @@ class CloudConnectionDialogFields extends React.Component {
                     error={this.props.errors.onedrive_drive_type}
                 >
                     <select
-                        className="form-control"
+                        className="form-select"
                         name="onedrive_drive_type"
                         defaultValue={this.props.data.onedrive_drive_type || 'business'}
                     >
@@ -1032,8 +1032,8 @@ class CloudConnectionField extends React.PureComponent {
         } = this.props;
 
         return (
-            <div className={`row form-group ${input.required ? 'required' : ''}`}>
-                <div className="col-4 text-right control-label">
+            <div className={`row mb-3 ${input.required ? 'required' : ''}`}>
+                <div className="col-4 text-end control-label">
                     <b className='form-label'>{label}</b>
                 </div>
                 <div className="col-8">

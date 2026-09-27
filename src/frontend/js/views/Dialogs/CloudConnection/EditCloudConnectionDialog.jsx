@@ -30,7 +30,7 @@ class EditCloudConnectionDialog extends React.Component {
                             <a
                                 target="_blank"
                                 href="https://sciwiki.fredhutch.org/compdemos/motuz/#add-a-new-cloud-connection-to-motuz"
-                                className='ml-2'
+                                className='ms-2'
                             >
                                 <Icon name='question' verticalAlign='middle'></Icon>
                             </a>
@@ -49,7 +49,7 @@ class EditCloudConnectionDialog extends React.Component {
                         <Button variant="outline-danger" onClick={() => this.handleDelete()}>
                             Delete
                         </Button>
-                        <div className="mr-auto">
+                        <div className="me-auto">
                             <Button variant="outline-secondary" onClick={() => this.handleVerify()}>
                                 Test connection
                             </Button>

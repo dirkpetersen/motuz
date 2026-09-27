@@ -2,11 +2,58 @@
 
 /* Bootstrap addons */
 
+/* Keep the Bootstrap 4 look where Bootstrap 5 changed it */
+
+/* Bootstrap 4's font stack: Bootstrap 5 puts system-ui first, a different font on Linux */
+:root {
+    --bs-font-sans-serif: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", "Liberation Sans", sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+}
+
+/* Links underlined only on hover */
+a, .btn-link {
+    text-decoration: none;
+}
+
+a:not(.btn):not(.nav-link):not(.dropdown-item):not(.navbar-brand):not(.page-link):hover,
+.btn-link:hover {
+    text-decoration: underline;
+}
+
+/* 30px gutters */
+.container, .container-fluid, .row {
+    --bs-gutter-x: 30px;
+}
+
+/* Help texts on their own line */
+.form-text {
+    display: block;
+}
+
+/* Alerts: Bootstrap 4's padding */
+.alert {
+    --bs-alert-padding-x: 1.25rem;
+    --bs-alert-padding-y: .75rem;
+}
+
+/* Tables: Bootstrap 4's cell padding, and lines above and (thicker) below the header */
+.table > :not(caption) > * > * {
+    padding: .75rem;
+}
+
+.table-sm > :not(caption) > * > * {
+    padding: .3rem;
+}
+
+.table > thead > tr > * {
+    border-top-width: 1px;
+    border-bottom-width: 2px;
+}
+
 .table-hover td {
     cursor: pointer;
 }
 
-.form-group.required .control-label:after {
+.required .control-label:after {
     content: " *";
     color: red;
 }
@@ -20,10 +67,6 @@
 pre {
     background-color: rgba(27,31,35,.05);
     padding: 10px;
-}
-
-.octicon {
-    width: 16px;
 }
 
 /* rc-tree addons */
@@ -258,13 +301,14 @@ pre {
     user-select: none;
 }
 
-#zone-job-progress .table-striped tbody tr:nth-of-type(odd) {
-    background-color: white;
+/* Bootstrap 5 colours the cells, not the rows: white odd rows, grey even rows and header */
+#zone-job-progress .table-striped > tbody > tr:nth-of-type(odd) > * {
+    --bs-table-bg-type: transparent;
 }
 
-#zone-job-progress .table-striped tbody tr:nth-of-type(even),
-#zone-job-progress .table-striped thead tr {
-    background-color: rgba(0,0,0,.05);
+#zone-job-progress .table-striped > tbody > tr:nth-of-type(even) > *,
+#zone-job-progress .table-striped > thead > tr > * {
+    --bs-table-bg-type: rgba(0,0,0,.05);
 }
 
 #copy-job-section-header {
@@ -311,7 +355,9 @@ pre {
     justify-content: center;
 }
 
+/* Used for vertical alignment only, without the margin Bootstrap 5 gives .form-label */
 .form-label {
+    margin-bottom: 0;
     vertical-align: baseline-middle;
     vertical-align: -webkit-baseline-middle;
 }

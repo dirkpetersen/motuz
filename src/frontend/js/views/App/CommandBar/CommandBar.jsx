@@ -103,12 +103,12 @@ class CommandBar extends React.Component {
                             </div>
                         </div>
                         <div className="row">
-                            <div className="col-2 pr-0">
+                            <div className="col-2 pe-0">
                                 <label className="col-form-label">Path</label>
                                 <OverlayTrigger overlay={<Tooltip id='copy-tooltip'>Click to copy path</Tooltip>}>
                                     <button
                                         type='button'
-                                        className="btn btn-link px-0 ml-3 pb-3"
+                                        className="btn btn-link px-0 ms-3 pb-3"
                                         onClick={() => navigator.clipboard.writeText(this.props.path)}
                                         aria-label='Press to copy to clipboard'
                                     >
@@ -141,13 +141,13 @@ class CommandBar extends React.Component {
                 <div className="row">
                     <div className="col-12">
                         <button
-                            className="btn btn-link px-0 ml-0 mr-2 my-0"
+                            className="btn btn-link px-0 ms-0 me-2 my-0"
                             onClick={event => this.props.onShowMkdirDialog(side)}
                             alt='Press to create folder'
                             title='Press to create folder'
                             aria-label='Press to create folder'
                         >
-                            <Icon name='file-submodule' className='mr-2'/>
+                            <Icon name='file-submodule' className='me-2'/>
                             <span>Create Folder</span>
                         </button>
                         <button
@@ -157,7 +157,7 @@ class CommandBar extends React.Component {
                             title='Press to refresh panes'
                             aria-label='Press to refresh panes'
                         >
-                            <Icon name='sync' className='mr-2'/>
+                            <Icon name='sync' className='me-2'/>
                             <span>Refresh Window</span>
                         </button>
                     </div>

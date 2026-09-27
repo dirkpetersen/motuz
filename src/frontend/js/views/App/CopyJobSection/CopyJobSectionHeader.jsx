@@ -16,7 +16,7 @@ class CopyJobSectionHeader extends React.PureComponent {
                 <div
                     className={classnames({
                         'section-tab': true,
-                        'pr-4': true,
+                        'pe-4': true,
                         'active': this.props.value === 0,
                     })}
                     onClick={() => this.props.onChange(0)}
@@ -26,7 +26,7 @@ class CopyJobSectionHeader extends React.PureComponent {
                 <div
                     className={classnames({
                         'section-tab': true,
-                        'pr-4': true,
+                        'pe-4': true,
                         'active': this.props.value === 1,
                     })}
                     onClick={() => this.props.onChange(1)}
@@ -34,7 +34,7 @@ class CopyJobSectionHeader extends React.PureComponent {
                     Verifications
                 </div>
                 <div
-                    className='ml-auto section-tab'
+                    className='ms-auto section-tab'
                     onClick={() => this.props.onResizeToggle()}
                 >
                     <span>
@@ -42,7 +42,7 @@ class CopyJobSectionHeader extends React.PureComponent {
                     </span>
                     <Icon
                         name={this.props.isMinimized ? 'chevron-up' : 'chevron-down'}
-                        className='ml-2'
+                        className='ms-2'
                     />
                 </div>
             </div>

@@ -114,7 +114,7 @@ class EditHashsumJobDialog extends React.Component {
                         </Modal.Header>
                         <Modal.Body>
                             <div className="container">
-                                <div className="form-group">
+                                <div className="mb-3">
                                     <div className="text-center">
                                         <b className={`text-${statusColor}`}>{executionTime}</b>
                                     </div>
@@ -168,25 +168,25 @@ class EditHashsumJobDialog extends React.Component {
                                 <div className="row mt-5">
                                     <div className="col-12">
                                         <b>Legend:</b>
-                                        <span className="rc-node-color-insert ml-2">
+                                        <span className="rc-node-color-insert ms-2">
                                             <span className="rc-tree-node-content-wrapper p-1">
                                                 New File
                                             </span>
                                         </span>
                                         ,
-                                        <span className="rc-node-color-modify ml-2">
+                                        <span className="rc-node-color-modify ms-2">
                                             <span className="rc-tree-node-content-wrapper p-1">
                                                 Different Files
                                             </span>
                                         </span>
                                         ,
-                                        <span className="rc-node-color-initial ml-2">
+                                        <span className="rc-node-color-initial ms-2">
                                             <span className="rc-tree-node-content-wrapper p-1">
                                                 Identical Files
                                             </span>
                                         </span>
                                         ,
-                                        <span className="rc-node-color-missing ml-2">
+                                        <span className="rc-node-color-missing ms-2">
                                             <span className="rc-tree-node-content-wrapper p-1">
                                                 Missing MD5 Hash
                                             </span>
@@ -227,7 +227,7 @@ class EditHashsumJobDialog extends React.Component {
                         </Modal.Body>
                         <Modal.Footer>
                             {isInProgress && (
-                                <Button className='mr-auto' variant="danger" onClick={() => this.stopJob()}>
+                                <Button className='me-auto' variant="danger" onClick={() => this.stopJob()}>
                                     Stop Job
                                 </Button>
                             )}
@@ -256,7 +256,7 @@ class EditHashsumJobDialog extends React.Component {
                             className="rc-tree-left"
                         >{node.title}</span>
                         <span
-                            className="rc-tree-right text-monospace"
+                            className="rc-tree-right font-monospace"
                         >{node.hash}</span>
                     </React.Fragment>
                 }

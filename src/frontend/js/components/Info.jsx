@@ -10,17 +10,15 @@ class Info extends React.PureComponent {
                 trigger="focus"
                 placement="bottom"
                 overlay={props => (
-                    <Popover
-                        {...props }
-                        show={props.show.toString()}
-                    >
+                    <Popover {...props}>
                         {this.props.children}
                     </Popover>
                 )}
             >
                 <a
                     className={this.props.className}
-                    href="javascript:void(0);"
+                    href="#"
+                    onClick={event => event.preventDefault()}
                 >
                     <Icon name='question' verticalAlign='top' />
                 </a>

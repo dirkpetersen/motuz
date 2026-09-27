@@ -31,16 +31,16 @@ class SettingsDialog extends React.Component {
 
                                 <h5 className="text-primary mb-2">Files</h5>
 
-                                <div className="row form-group">
-                                    <div className="col-6 text-right">
+                                <div className="row mb-3">
+                                    <div className="col-6 text-end">
                                         <b>Show Hidden Files</b>
                                         <ToggleInfo
-                                            className='ml-2'
+                                            className='ms-2'
                                             on="Show UNIX hidden files and directories. Hidden files are prefixed with dot (eg. .bashrc)"
                                             off="Hide UNIX hidden files and directories. This is the default option on most systems."
                                         />
                                     </div>
-                                    <div className="col-6 text-left">
+                                    <div className="col-6 text-start">
                                         <Toggle
                                             name='showHiddenFiles'
                                             defaultChecked={this.props.data.showHiddenFiles}
@@ -48,16 +48,16 @@ class SettingsDialog extends React.Component {
                                     </div>
                                 </div>
 
-                                <div className="row form-group">
-                                    <div className="col-6 text-right">
+                                <div className="row mb-3">
+                                    <div className="col-6 text-end">
                                         <b>Use SI units for File Sizes</b>
                                         <ToggleInfo
-                                            className='ml-2'
+                                            className='ms-2'
                                             on="File sizes will use SI system (KB, MB, GB, TB). 1 KB = 1000 B. This is the default on macOS Finder."
                                             off="File sizes will use the byte system (KiB, MiB, GiB, TiB). 1 KiB = 1024 B. This is the default on Windows Explorer."
                                         />
                                     </div>
-                                    <div className="col-6 text-left">
+                                    <div className="col-6 text-start">
                                         <Toggle
                                             name='useSiUnits'
                                             defaultChecked={this.props.data.useSiUnits}
@@ -67,16 +67,16 @@ class SettingsDialog extends React.Component {
 
                                 <h5 className="text-primary mb-2">Transfers</h5>
 
-                                <div className="row form-group">
-                                    <div className="col-6 text-right">
+                                <div className="row mb-3">
+                                    <div className="col-6 text-end">
                                         <b>Always Follow Symlinks</b>
                                         <ToggleInfo
-                                            className='ml-2'
+                                            className='ms-2'
                                             on="When copying files, symlinks to directories will be resolved and followed, as if they were regular directories."
                                             off="When copying files, symlinks to directories will be ignored."
                                         />
                                     </div>
-                                    <div className="col-6 text-left">
+                                    <div className="col-6 text-start">
                                         <Toggle
                                             name='followSymlinks'
                                             defaultChecked={this.props.data.followSymlinks}
@@ -84,16 +84,16 @@ class SettingsDialog extends React.Component {
                                     </div>
                                 </div>
 
-                                <div className="row form-group">
-                                    <div className="col-6 text-right">
+                                <div className="row mb-3">
+                                    <div className="col-6 text-end">
                                         <b>Email Notifications</b>
                                         <ToggleInfo
-                                            className='ml-2'
+                                            className='ms-2'
                                             on="Automatically receive an email when jobs are complete."
                                             off="No automatic emails are send on when jobs are complete, unless manually specified in the job itself."
                                         />
                                     </div>
-                                    <div className="col-6 text-left">
+                                    <div className="col-6 text-start">
                                         <Toggle
                                             name='emailNotifications'
                                             defaultChecked={this.props.data.emailNotifications}
@@ -103,8 +103,8 @@ class SettingsDialog extends React.Component {
                                 </div>
 
                                 {this.state.emailNotifications && (
-                                    <div className="row form-group">
-                                        <div className="col-6 text-right">
+                                    <div className="row mb-3">
+                                        <div className="col-6 text-end">
                                             <b className='form-label'>Email Address</b>
                                         </div>
                                         <div className="col-6">
