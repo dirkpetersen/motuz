@@ -799,12 +799,16 @@ sudo apt-get install -y python3 sudo unzip curl
 # rclone: the version pinned in deployment/docker/app/Dockerfile, at /usr/local/bin/rclone
 sudo git clone https://github.com/FredHutch/motuz /opt/motuz   # check out the server's release
 
-# An unprivileged account that may run commands as any user except root (rclone as the
-# job's owner, like the server's containers do). Keep sudo's environment (sudo -E):
-# the ALL command implies SETENV.
+# An unprivileged account that may run rclone, ls, mkdir and env as any user except root
+# (rclone as the job's owner, like the server's containers do); SETENV: rclone gets its
+# configuration, proxy and CA bundle as variables (sudo --preserve-env=<names>).
+# On Ubuntu 26.04, `sudo bin/systemd/install.sh --worker-only` does this and the rclone
+# download (README, "Install without Docker").
 sudo useradd --system --create-home --home-dir /var/lib/motuz --shell /usr/sbin/nologin motuz
-echo 'motuz ALL=(ALL,!root) NOPASSWD: ALL' | sudo tee /etc/sudoers.d/motuz-worker
+echo 'motuz ALL=(ALL, !root) NOPASSWD:SETENV: /usr/local/bin/rclone, /usr/bin/ls, /usr/bin/mkdir, /usr/bin/env' \
+    | sudo tee /etc/sudoers.d/motuz-worker
 sudo chmod 440 /etc/sudoers.d/motuz-worker
+sudo visudo -c
 sudo loginctl enable-linger motuz          # user services without a login
 
 # Configuration and the secret from `manage.py workers add` (mode 600)
