@@ -8,7 +8,7 @@ import time
 import urllib.error
 import urllib.request
 
-from common import BASE, CTX, check, finish, psql, sh
+from common import BASE, CTX, check, finish, psql, service_logs, sh
 
 
 def req(method, path, token=None, body=None):
@@ -94,6 +94,58 @@ check('path "-la" not treated as option', status == 403, (status, body))
 status, body, _ = req('POST', '/api/system/files/', A, {'path': '/home/alice/src/f1.txt/x', 'connection_id': 0})
 check('bad path is an error, not 500', status in (400, 403), (status, body))
 
+# --- read-only viewer: read as the user, text only, first 1 MiB
+VIEW_FIXTURES = r"""
+import os
+os.chdir('/home/alice')
+open('view.txt', 'w').write('hello viewer\nline 2 ü <b>not html</b>\n')
+open('view.bin', 'wb').write(b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR' + bytes(range(256)))
+open('big.txt', 'w').write(('0123456789abcdef' * 4 + '\n') * 40000)
+os.symlink('/etc/shadow', 'shadow-link')
+"""
+sh('app', 'sudo -u alice python3 -', stdin=VIEW_FIXTURES)
+sh('app', "sudo -u bob sh -c 'echo only bob > /tmp/bob-only.txt; chmod 600 /tmp/bob-only.txt; echo bob > /home/bob/bob.txt'")
+
+
+def msg(body):
+    return body.get('message', '') if isinstance(body, dict) else str(body)
+
+
+def view(token, path, connection_id=0):
+    return req('POST', '/api/system/files/view/', token, {'path': path, 'connection_id': connection_id})
+
+
+status, v, _ = view(A, '/home/alice/view.txt')
+check('view text file', status == 200 and v == {'path': '/home/alice/view.txt', 'content': 'hello viewer\nline 2 ü <b>not html</b>\n',
+                                                 'truncated': False, 'size': 39, 'encoding': 'utf-8'}, (status, v))
+status, v, _ = view(A, '/home/alice/view.bin')
+check('view binary file: 415 not a text file', status == 415 and 'not a text file' in msg(v), (status, v))
+status, v, _ = view(A, '/home/alice/big.txt')
+check('view large file: first 1 MiB, truncated', status == 200 and v['truncated'] is True and len(v['content']) == 1024 * 1024
+      and v['size'] == 65 * 40000 and v['content'].startswith('0123456789abcdef'), (status, {k: v[k] for k in v if k != 'content'} if status == 200 else v))
+status, v, _ = view(A, '/tmp/bob-only.txt')
+check('alice cannot view a file only bob can read', status == 403 and 'only bob' not in json.dumps(v), (status, v))
+status, v, _ = view(A, '/home/bob/bob.txt')
+check('alice cannot view a file in bob\'s home', status == 403, (status, v))
+status, v, _ = view(B, '/tmp/bob-only.txt')
+check('bob can view his own file', status == 200 and v['content'] == 'only bob\n', (status, v))
+status, v, _ = view(A, '/home/alice/shadow-link')
+check('symlink to /etc/shadow fails (read as the user)', status == 403 and 'root:' not in json.dumps(v), (status, v))
+status, v, _ = view(A, '/etc/shadow')
+check('/etc/shadow fails', status == 403 and 'root:' not in json.dumps(v), (status, v))
+status, v, _ = view(A, '/home/alice/src')
+check('view a folder: 400', status == 400 and 'folder' in msg(v), (status, v))
+status, v, _ = view(A, '/home/alice/missing.txt')
+check('view a missing file: 404', status == 404, (status, v))
+for bad in ('view.txt', '-la', '--help', ''):
+    status, v, _ = view(A, bad)
+    check(f'view relative path {bad!r} refused', status == 400 and 'absolute' in msg(v), (status, v))
+status, v, _ = view(A, '/dev/zero')
+check('view a device: refused, not read', status == 400 and 'regular file' in msg(v), (status, v))
+status, v, _ = view(None, '/home/alice/view.txt')
+check('view needs a token', status == 401, status)
+check('file contents never logged', 'hello viewer' not in service_logs('app'), 'contents in the app log')
+
 # --- connections, ownership and secrets
 conn = {'name': 'alice-s3', 'type': 's3', 'bucket': 'b', 's3_access_key_id': 'AKIAEXAMPLE',
         's3_secret_access_key': 'topsecret', 's3_region': 'us-west-2', 'owner': 'bob', 'id': 999}
@@ -119,6 +171,10 @@ status, body, _ = req('POST', '/api/copy-jobs/', B, job)
 check('bob cannot copy with alice connection', status == 404, (status, body))
 status, body, _ = req('POST', '/api/hashsum-jobs/', B, {'src_cloud_id': cid, 'src_resource_path': '/b', 'dst_resource_path': '/home/bob', 'option_download': False})
 check('bob cannot hashsum with alice connection', status == 404, (status, body))
+status, body, _ = view(B, '/b/x.txt', cid)
+check('bob cannot view a file with alice connection', status == 404, (status, body))
+status, body, _ = req('POST', '/api/system/files/', B, {'path': '/b', 'connection_id': cid})
+check('bob cannot list with alice connection', status == 404, (status, body))
 
 # --- local copy job
 job = {'description': 'local copy', 'src_resource_path': '/home/alice/src', 'dst_resource_path': '/home/alice/dst', 'copy_links': True}

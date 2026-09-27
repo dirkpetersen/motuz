@@ -8,6 +8,7 @@
 // of the connection dialog states to $MOTUZ_E2E_SCREENSHOTS (if set).
 import { chromium, request } from 'playwright';
 import { mkdirSync } from 'fs';
+import { execFileSync } from 'child_process';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 
@@ -25,7 +26,12 @@ function check(name, ok, detail = '') {
 }
 
 const browser = await chromium.launch({ executablePath: process.env.MOTUZ_E2E_CHROMIUM || undefined });
-const context = await browser.newContext({ ignoreHTTPSErrors: true, viewport: { width: 1400, height: 1300 } });
+// The browser is in Los Angeles, the server (containers) in UTC: file times must be
+// shown in the browser's zone
+const context = await browser.newContext({
+    ignoreHTTPSErrors: true, viewport: { width: 1400, height: 1300 },
+    timezoneId: 'America/Los_Angeles', locale: 'en-US',
+});
 const page = await context.newPage();
 const pageErrors = [];
 page.on('pageerror', e => pageErrors.push(e.message));
@@ -46,6 +52,39 @@ async function shot(name, p = page) {
         await p.waitForTimeout(200); // modal fade-in
         await p.locator('.modal-content').screenshot({ path: join(SHOTS, `${name}.png`) });
     }
+}
+
+async function pageShot(name) {
+    if (SHOTS) {
+        await page.screenshot({ path: join(SHOTS, `${name}.png`) });
+    }
+}
+
+// Runs a shell command in the app container (fixtures), like common.py's sh()
+function appShell(cmd, input) {
+    const compose = (process.env.MOTUZ_E2E_COMPOSE || 'docker compose').split(' ');
+    return execFileSync(compose[0], [...compose.slice(1), '-f', 'compose.yml', 'exec', '-T', 'app', 'sh', '-c', cmd],
+        { cwd: join(dirname(fileURLToPath(import.meta.url)), '..'), input, encoding: 'utf8' });
+}
+
+// What a pane shows: its rows (name, age, age tooltip, size, selected, name tooltip)
+// and the sort headers (aria-sort)
+async function paneState(zone) {
+    return page.evaluate(zone => {
+        const root = document.querySelector(zone);
+        const rows = [...root.querySelectorAll('.grid-file-name')].map(cell => {
+            const age = cell.nextElementSibling;
+            const size = age.nextElementSibling;
+            return {
+                name: cell.textContent.trim(), title: cell.getAttribute('title') || '',
+                age: age.textContent.trim(), ageTitle: age.getAttribute('title') || '',
+                size: size.textContent.trim(), active: cell.classList.contains('active'),
+            };
+        });
+        const sort = Object.fromEntries([...root.querySelectorAll('.pane-header [role=columnheader]')]
+            .map(h => [h.querySelector('button').dataset.sortColumn, h.getAttribute('aria-sort')]));
+        return { rows, names: rows.map(r => r.name), selected: rows.filter(r => r.active).map(r => r.name), sort };
+    }, zone);
 }
 
 async function openClouds() {
@@ -427,6 +466,194 @@ if (PHASE === 'paste') {
         check('local-credentials responses: masked key ids, no account key', profiles.length > 0
             && profiles.every(p => !p.access_key_id || p.access_key_id.startsWith('****'))
             && responses.every(r => !r.includes('Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6')), profiles.map(p => p.access_key_id));
+    });
+
+    // ---------------------------------------------------------------- file browser
+    // /home/alice/ui-sort: names, ages and sizes that sort differently by each column
+    //   name A-Z:  dira dirB | File1.txt file2.txt file10.txt image.bin
+    //   age:       dirB (1 day) dira (10 days) | file10.txt (now) file2.txt (2 h) File1.txt (3 days) image.bin (2023)
+    //   size:      File1.txt 10, file2.txt 100, image.bin 300, file10.txt 5000
+    const FILE2 = 'hello from file2\n<b>not bold</b>\n' + 'z'.repeat(66) + '\n';
+    appShell('sudo -u alice python3 -', `
+import os, time
+d = '/home/alice/ui-sort'
+for sub in ('dira', 'dirB'):
+    os.makedirs(os.path.join(d, sub), exist_ok=True)
+now = time.time()
+def put(name, data, mtime):
+    path = os.path.join(d, name)
+    with open(path, 'wb') as f:
+        f.write(data)
+    os.utime(path, (mtime, mtime))
+put('File1.txt', b'0123456789', now - 3 * 86400)
+put('file2.txt', ${JSON.stringify(FILE2)}.encode(), now - 7200)
+put('file10.txt', b'y' * 4999 + b'\\n', now - 5)
+put('dira/big.log', b''.join(b'line %07d of a large log file\\n' % i for i in range(80000)), now - 60)
+put('image.bin', b'\\x89PNG\\r\\n\\x1a\\n\\x00\\x00\\x00\\rIHDR' + bytes(range(256)) + b'\\x00' * 19, 1700000000)
+os.utime(os.path.join(d, 'dira'), (now - 10 * 86400,) * 2)
+os.utime(os.path.join(d, 'dirB'), (now - 86400,) * 2)
+`);
+    const LEFT = '#zone-left-pane';
+    const leftPane = page.locator(`${LEFT} .grid-files`);
+    const sortBy = async column => {
+        await page.click(`${LEFT} .pane-sort[data-sort-column=${column}]`);
+        await page.waitForTimeout(100);
+    };
+    const row = name => leftPane.locator('.grid-file-name', { hasText: new RegExp(`^${name.replace('.', '\\.')}$`) });
+    async function openUiSort() {
+        await page.goto(BASE + '/', { waitUntil: 'domcontentloaded' });
+        await leftPane.getByText('ui-sort', { exact: true }).waitFor({ timeout: 20000 });
+        await leftPane.getByText('ui-sort', { exact: true }).dblclick();
+        await leftPane.getByText('file10.txt', { exact: true }).waitFor({ timeout: 20000 });
+    }
+    async function copyDialogResources() {
+        await page.waitForSelector('.modal-content', { timeout: 10000 });
+        const resources = await page.$$eval('.modal-content .row', rows => rows
+            .filter(r => (r.querySelector('b') || {}).textContent === 'Resource')
+            .map(r => r.querySelector('.col-7 span').textContent.trim()));
+        await page.click('.modal-footer button:has-text("Close")');
+        await page.waitForSelector('.modal-content', { state: 'detached', timeout: 10000 });
+        return resources;
+    }
+
+    await flow('age-column', async () => {
+        await openUiSort();
+        const s = await paneState(LEFT);
+        const by = Object.fromEntries(s.rows.map(r => [r.name, r]));
+        check('age: sensible relative ages', /^(just now|\d+ sec ago)$/.test(by['file10.txt'].age) && by['file2.txt'].age === '2 h ago'
+            && by['File1.txt'].age === '3 days ago' && /^\d+ years? ago$/.test(by['image.bin'].age)
+            && by['dirB'].age === '1 day ago' && by['dira'].age === '10 days ago' && by['..'].age === '', s.rows);
+        check('age: tooltip is the exact time in the browser\'s zone (server in UTC, browser in Los Angeles)',
+            /^Nov 14, 2023, 2:13:20\sPM PST$/.test(by['image.bin'].ageTitle) && /PDT$/.test(by['file2.txt'].ageTitle), [by['image.bin'].ageTitle, by['file2.txt'].ageTitle]);
+        check('size column: bytes and "Folder"', by['file10.txt'].size === '5 KiB' && by['File1.txt'].size === '10 B' && by['dira'].size === 'Folder', s.rows);
+        check('rows explain double-click', by['file2.txt'].title.includes('Double-click to view') && by['dira'].title.includes('Double-click to open'), [by['file2.txt'].title, by['dira'].title]);
+        const tz = await page.evaluate(() => Intl.DateTimeFormat().resolvedOptions().timeZone);
+        check('browser runs in America/Los_Angeles', tz === 'America/Los_Angeles', tz);
+        // The name truncates with an ellipsis before the age and size columns shrink
+        const layout = await page.evaluate(zone => {
+            const cells = [...document.querySelector(zone).querySelectorAll('.grid-files > div')].slice(0, 3);
+            const header = [...document.querySelector(zone).querySelectorAll('.pane-header [role=columnheader]')];
+            return { widths: cells.map(c => Math.round(c.getBoundingClientRect().width)),
+                     lefts: cells.map(c => Math.round(c.getBoundingClientRect().left)),
+                     headerLefts: header.map(c => Math.round(c.getBoundingClientRect().left)),
+                     ellipsis: getComputedStyle(cells[0]).textOverflow };
+        }, LEFT);
+        check('age and size columns keep their width, aligned with their headers', layout.widths[1] === 120 && layout.widths[2] === 96
+            && layout.ellipsis === 'ellipsis' && JSON.stringify(layout.lefts) === JSON.stringify(layout.headerLefts), layout);
+        await pageShot('pane-age-sort-by-name');
+    });
+
+    await flow('sorting', async () => {
+        let s = await paneState(LEFT);
+        check('default sort: name A-Z, natural and case-insensitive, .. and folders first',
+            JSON.stringify(s.names) === '["..","dira","dirB","File1.txt","file2.txt","file10.txt","image.bin"]'
+            && s.sort.name === 'ascending' && s.sort.age === 'none', s);
+        await sortBy('age');
+        s = await paneState(LEFT);
+        check('sort by age: newest first', JSON.stringify(s.names) === '["..","dirB","dira","file10.txt","file2.txt","File1.txt","image.bin"]'
+            && s.sort.age === 'ascending' && s.sort.name === 'none', s);
+        await sortBy('age');
+        s = await paneState(LEFT);
+        check('sort by age again: oldest first, .. still on top', JSON.stringify(s.names) === '["..","dira","dirB","image.bin","File1.txt","file2.txt","file10.txt"]'
+            && s.sort.age === 'descending', s);
+        await sortBy('size');
+        s = await paneState(LEFT);
+        check('sort by size: smallest first, folders first', JSON.stringify(s.names) === '["..","dira","dirB","File1.txt","file2.txt","image.bin","file10.txt"]'
+            && s.sort.size === 'ascending', s);
+        await sortBy('size');
+        s = await paneState(LEFT);
+        check('sort by size again: largest first', JSON.stringify(s.names) === '["..","dira","dirB","file10.txt","image.bin","file2.txt","File1.txt"]'
+            && s.sort.size === 'descending', s);
+        check('sort arrow shown on the sorted column only', await page.locator(`${LEFT} .pane-sort-arrow`).count() === 1
+            && await page.locator(`${LEFT} .pane-sort.active[data-sort-column=size] .pane-sort-arrow`).count() === 1);
+        await pageShot('pane-sorted-by-size');
+
+        // Select two files in this order, re-sort: the same two stay selected and are copied
+        await row('file2.txt').click();
+        await row('file10.txt').click({ modifiers: ['Control'] });
+        s = await paneState(LEFT);
+        check('two files selected', JSON.stringify(s.selected) === '["file10.txt","file2.txt"]', s.selected);
+        await sortBy('name');
+        s = await paneState(LEFT);
+        check('after re-sorting, the same two files stay selected', JSON.stringify(s.selected) === '["file2.txt","file10.txt"]'
+            && s.sort.name === 'ascending', s);
+        await page.click('#zone-left-commands button.btn-lg');
+        let resources = await copyDialogResources();
+        check('copy arrow after sorting: exactly the two selected files', JSON.stringify(resources.slice().sort())
+            === '["/home/alice/ui-sort/file10.txt","/home/alice/ui-sort/file2.txt"]', resources);
+
+        await sortBy('age');
+        await sortBy('age'); // oldest first
+        s = await paneState(LEFT);
+        check('still the same two selected when sorted by age', JSON.stringify(s.selected) === '["file2.txt","file10.txt"]', s);
+        const right = page.locator('#zone-right-pane .grid-files');
+        const box = await right.boundingBox();
+        await row('file2.txt').dragTo(right, { targetPosition: { x: 40, y: box.height - 15 } });
+        resources = await copyDialogResources();
+        check('drag and drop after sorting: exactly the two selected files', JSON.stringify(resources.slice().sort())
+            === '["/home/alice/ui-sort/file10.txt","/home/alice/ui-sort/file2.txt"]', resources);
+
+        // Range selection in the displayed order: File1.txt .. file10.txt when sorted by name
+        await sortBy('name');
+        await row('File1.txt').click();
+        await row('file10.txt').click({ modifiers: ['Shift'] });
+        s = await paneState(LEFT);
+        check('shift-range selection follows the displayed order', JSON.stringify(s.selected) === '["File1.txt","file2.txt","file10.txt"]', s.selected);
+
+        await sortBy('size');
+        await sortBy('size');
+        await page.reload({ waitUntil: 'domcontentloaded' });
+        await page.waitForSelector(`${LEFT} .grid-files`, { timeout: 20000 });
+        await leftPane.getByText('ui-sort', { exact: true }).waitFor({ timeout: 20000 });
+        s = await paneState(LEFT);
+        const rightState = await paneState('#zone-right-pane');
+        check('each pane keeps its own sort, also after a reload', s.sort.size === 'descending' && rightState.sort.name === 'ascending',
+            [s.sort, rightState.sort]);
+        await sortBy('name'); // back to the default for the next flows
+    });
+
+    await flow('file-viewer', async () => {
+        await openUiSort();
+        await row('file2.txt').dblclick();
+        await page.waitForSelector('.file-viewer-content', { timeout: 20000 });
+        const text = await page.locator('.file-viewer-content').textContent();
+        check('double-click on a text file opens the viewer with its content', text === FILE2, text);
+        check('viewer: file name and path in the title', (await page.locator('.file-viewer-name').textContent()) === 'file2.txt'
+            && (await page.locator('.file-viewer-path').textContent()).includes('/home/alice/ui-sort/file2.txt'));
+        check('viewer: rendered as text, not HTML', await page.locator('.file-viewer-content b').count() === 0 && text.includes('<b>not bold</b>'));
+        check('viewer: read-only (no inputs, no editable content)', await page.locator('.modal-content textarea, .modal-content input, .modal-content [contenteditable=true]').count() === 0);
+        await shot('viewer-text');
+        await pageShot('viewer-text-page');
+        await page.keyboard.press('Escape');
+        await page.waitForSelector('.modal-content', { state: 'detached', timeout: 10000 });
+        check('viewer closes with Esc', true);
+
+        await row('image.bin').dblclick();
+        await page.waitForSelector('.file-viewer-error', { timeout: 20000 });
+        const error = await page.locator('.file-viewer-error').textContent();
+        check('double-click on a binary file: "not a text file"', error.includes('not a text file'), error);
+        await shot('viewer-binary');
+        await page.click('.modal-footer button:has-text("Close")');
+        await page.waitForSelector('.modal-content', { state: 'detached', timeout: 10000 });
+
+        await row('dira').dblclick();
+        await page.waitForSelector(`${LEFT} .grid-files >> text=".."`, { timeout: 20000 });
+        await page.waitForFunction(zone => !document.querySelector(zone).textContent.includes('file10.txt'), LEFT, { timeout: 20000 });
+        check('double-click on a folder still navigates', await page.locator('.modal-content').count() === 0
+            && (await page.textContent('#zone-left-commands')).includes('/home/alice/ui-sort/dira'));
+
+        await row('big.log').dblclick();
+        await page.waitForSelector('.file-viewer-content', { timeout: 20000 });
+        const note = await page.locator('.file-viewer-truncated').textContent();
+        const shown = await page.locator('.file-viewer-content').evaluate(pre => ({
+            length: pre.textContent.length, first: pre.textContent.slice(0, 32),
+            scrolls: pre.closest('.modal-body').scrollHeight > pre.closest('.modal-body').clientHeight,
+        }));
+        check('large file: the first 1 MiB with a note, scrollable', note === 'Showing the first 1 MiB of 3 MiB.'
+            && shown.length === 1024 * 1024 && shown.first === 'line 0000000 of a large log file' && shown.scrolls, [note, shown]);
+        await shot('viewer-truncated');
+        await page.keyboard.press('Escape');
+        await page.waitForSelector('.modal-content', { state: 'detached', timeout: 10000 });
     });
 } else {
     // Callback mode: Microsoft (fake_ms.py) sends the sign-in tab back to Motuz, which

@@ -16,6 +16,14 @@ const DRAG_SIDE_MIME_PREFIX = 'application/x-motuz-side-';
 const DROP_ON_PANE = -1; // dropTarget value for the pane itself (its current path)
 const AGE_REFRESH_MS = 30 * 1000; // how often the file ages are recomputed
 
+// Tooltip of a row's name: the full name, and what a double-click does
+function rowTitle(file) {
+    if (!isCopyableFile(file)) {
+        return file.name === '..' ? 'Double-click to open the parent folder' : '';
+    }
+    return `${file.name}\n${file.type === 'dir' ? 'Double-click to open' : 'Double-click to view (text files, read-only)'}`;
+}
+
 // Column headers; `asc`/`desc` describe the order in words (ascending age = newest first)
 const SORT_HEADERS = [
     {column: 'name', label: 'Name', asc: 'A to Z', desc: 'Z to A'},
@@ -48,7 +56,7 @@ class Pane extends React.Component {
                 size={file.size}
                 modified={file.modified}
                 now={now}
-                title={file.type ? file.name : ''}
+                title={rowTitle(file)}
                 useSiUnits={this.props.useSiUnits}
                 active={this.props.active && this.props.pane.fileMultiFocusIndexes[i]}
                 draggable={isCopyableFile(file)}
@@ -155,7 +163,10 @@ class Pane extends React.Component {
         const currPath = this.props.pane.path;
         const directoryToEnter = this.props.files[index]
         if (directoryToEnter.type !== 'dir') {
-            return; // We do not open files
+            if (isCopyableFile(directoryToEnter)) {
+                this.props.onViewFile(side, index) // read-only viewer; the server decides if it is text
+            }
+            return;
         }
 
         const path = upath.join(currPath, directoryToEnter.name)
@@ -321,6 +332,7 @@ Pane.defaultProps = {
     useSiUnits: false,
     sort: null,
     onSort: (side, column) => {},
+    onViewFile: (side, index) => {},
     onSelect: (side, index) => {},
     onMultiSelect: (side, index) => {},
     onRangeSelect: (side, index) => {},
@@ -338,6 +350,7 @@ import {
 } from 'actions/paneActions.jsx';
 import {showDropCopyJobDialog} from 'actions/dialogActions.jsx';
 import {showAlert} from 'actions/alertActions.jsx';
+import {viewFile} from 'actions/apiActions.jsx';
 
 const mapStateToProps = (state, ownProps) => ({
     useSiUnits: state.settings.useSiUnits,
@@ -346,6 +359,7 @@ const mapStateToProps = (state, ownProps) => ({
 
 const mapDispatchToProps = dispatch => ({
     onSort: (side, column) => dispatch(sortChange(side, column)),
+    onViewFile: (side, index) => dispatch(viewFile(side, index)),
     onSelect: (side, index) => dispatch(fileFocusIndex(side, index)),
     onMultiSelect: (side, index) => dispatch(fileMultiFocusIndexes(side, index)),
     onRangeSelect: (side, index) => dispatch(fileRangeFocusIndex(side, index)),

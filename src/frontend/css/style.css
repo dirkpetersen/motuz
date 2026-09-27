@@ -338,6 +338,43 @@ pre {
     background-color: #D4E3F2;
 }
 
+/* Read-only file viewer */
+
+.file-viewer-title {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    font-size: 1.1rem;
+}
+
+.file-viewer-name,
+.file-viewer-path {
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+.file-viewer-path {
+    font-size: 12px;
+    font-weight: normal;
+    color: #5f6368;
+}
+
+.file-viewer-content {
+    margin: 0;
+    font-family: SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    font-size: 12.5px;
+    line-height: 1.45;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    tab-size: 4;
+    user-select: text;
+}
+
+.file-viewer-info {
+    font-size: 13px;
+}
+
 /* Drag and drop */
 
 .grid-files.drop-target {

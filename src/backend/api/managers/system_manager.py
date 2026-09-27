@@ -15,6 +15,7 @@ from ..managers import cloud_connection_manager
 from ..utils.rclone_connection import RcloneConnection
 from ..utils.local_connection import LocalConnection
 from ..utils.abstract_connection import RcloneException
+from ..utils import file_view
 
 
 @token_required
@@ -98,6 +99,45 @@ def lshome():
     except RcloneException as e:
         raise HTTP_400_BAD_REQUEST(str(e))
 
+
+
+@token_required
+def view(data):
+    """
+    The first 1 MiB of a text file, read as the logged-in user, for the read-only
+    viewer: {path, content, truncated, size, encoding}. Contents are never logged.
+    """
+    user = get_logged_in_user(request)
+    path = data['path']
+    connection_id = data['connection_id']
+
+    if connection_id == 0:
+        cloud_connection = Dummy()
+        cloud_connection.owner = user
+        connection = LocalConnection()
+    else:
+        cloud_connection = cloud_connection_manager.retrieve(connection_id) # 404 for others' connections
+        if cloud_connection.owner != user:
+            # Should never happen
+            raise HTTP_404_NOT_FOUND('Cloud Connection with id {} not found'.format(connection_id))
+
+        connection = RcloneConnection()
+
+    try:
+        return connection.view(data=cloud_connection, path=path)
+    except file_view.ViewError as e:
+        raise _VIEW_EXCEPTIONS.get(e.status, HTTP_400_BAD_REQUEST)(str(e))
+    except RcloneException as e:
+        raise HTTP_400_BAD_REQUEST(str(e))
+
+
+_VIEW_EXCEPTIONS = {
+    400: HTTP_400_BAD_REQUEST,
+    403: HTTP_403_FORBIDDEN,
+    404: HTTP_404_NOT_FOUND,
+    415: HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+    504: HTTP_504_GATEWAY_TIMEOUT,
+}
 
 
 @token_required

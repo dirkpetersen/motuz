@@ -371,6 +371,27 @@ check_r('Azure listing: files have a UTC modification time', status == 200 and r
         and abs(datetime.datetime.fromisoformat(f1['modified'].replace('Z', '+00:00')).timestamp() - time.time()) < 900, raw)
 check_r('Azure listing: modified is ModTime in UTC', f1.get('ModTime') and f1['modified']
         == datetime.datetime.fromisoformat(re.sub(r'\.\d+', '', f1['ModTime']).replace('Z', '+00:00')).astimezone(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'), f1)
+# Cloud viewer: rclone (as alice, with the connection's credentials) reads the first 1 MiB
+def msg(body):
+    return body.get('message', '') if isinstance(body, dict) else str(body)
+
+
+def view(token, path, connection_id):
+    return req('POST', '/api/system/files/view/', token, {'path': path, 'connection_id': connection_id})
+
+
+status, v, raw = view(A, '/motuztest/copy/sub/d.txt', c5['id'])
+check_r('Azure view: text file', status == 200 and v == {'path': '/motuztest/copy/sub/d.txt', 'content': 'deep\n',
+                                                         'truncated': False, 'size': 5, 'encoding': 'utf-8'}, raw)
+status, v, raw = view(A, '/motuztest/copy/f1.bin', c5['id'])
+check_r('Azure view: binary file refused (415)', status == 415 and 'not a text file' in msg(v), raw)
+status, v, raw = view(A, '/motuztest/copy/sub', c5['id'])
+check_r('Azure view: a folder is refused, not concatenated', status == 400 and 'folder' in msg(v), raw)
+status, v, raw = view(A, '/motuztest/copy/nope.txt', c5['id'])
+# Bucket storage reports a missing path as a (virtual) folder, rclone lsjson --stat
+check_r('Azure view: missing file refused', status in (400, 404) and 'does not exist' in msg(v), raw)
+status, v, raw = view(B, '/motuztest/copy/sub/d.txt', c5['id'])
+check_r('Azure view: bob cannot use alice\'s connection (404)', status == 404 and 'deep' not in raw, raw)
 status, body, raw = req('POST', '/api/connections/', A, dict(az, name='msi', profile_name='msi'))
 check_r('cannot create from a managed-identity remote', status == 400, raw)
 status, body, raw = req('POST', '/api/connections/', A, dict(az, profile_source='aws', profile_name=PROFILE))

@@ -32,6 +32,9 @@ export const HIDE_EDIT_CLOUD_CONNECTION_DIALOG = '@@dialog/HIDE_EDIT_CLOUD_CONNE
 export const SHOW_MKDIR_DIALOG = '@@dialog/SHOW_MKDIR_DIALOG';
 export const HIDE_MKDIR_DIALOG = '@@dialog/HIDE_MKDIR_DIALOG';
 
+export const SHOW_FILE_VIEWER_DIALOG = '@@dialog/SHOW_FILE_VIEWER_DIALOG';
+export const HIDE_FILE_VIEWER_DIALOG = '@@dialog/HIDE_FILE_VIEWER_DIALOG';
+
 export const SHOW_SETTINGS_DIALOG = '@@dialog/SHOW_SETTINGS_DIALOG';
 export const HIDE_SETTINGS_DIALOG = '@@dialog/HIDE_SETTINGS_DIALOG';
 
@@ -220,6 +223,11 @@ export const showMkdirDialog = (side) => {
 
 export const hideMkdirDialog = () => ({
     type: HIDE_MKDIR_DIALOG,
+});
+
+// Opened by apiActions.viewFile, which also loads the file
+export const hideFileViewerDialog = () => ({
+    type: HIDE_FILE_VIEWER_DIALOG,
 });
 
 export const showSettingsDialog = () => ({
