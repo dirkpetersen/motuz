@@ -1280,6 +1280,15 @@ git clone --branch <release> https://github.com/<you>/motuz.git /opt/motuz
 context), deletes the token and exits with the worker's exit code (0 done, 1 error, 3 no
 job, 78 configuration error).
 
+`--run-as=NAME` makes a cloud-to-cloud worker like the [temporary EC2
+workers](#temporary-ec2-workers): rclone runs as the system account NAME (created, no
+shell) instead of the jobs' owners, the sudoers rule allows only `/usr/local/bin/rclone`
+as NAME, and `worker.env` gets `MOTUZ_WORKER_RUN_AS` (local jobs and credentials from a
+home directory are refused). A prebuilt AMI for those workers: `install.sh --worker-only
+--run-as=motuzjob` from a checkout in `/opt/motuz` at the server's release, plus
+`/opt/motuz/.motuz-source` with `<source url> <ref>`; the launcher's user data then skips
+its downloads.
+
 ### Tests on AL2027
 
 `test/e2e/run_systemd.sh --distro=al2027` runs the same suites as for Ubuntu against an
