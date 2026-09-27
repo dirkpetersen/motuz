@@ -17,6 +17,9 @@ class CopyJob(db.Model, TimestampMixin):
     # Options
     copy_links = db.Column(db.Boolean)
     notification_email = db.Column(db.String)
+    # rclone performance overrides of this job (utils/rclone_tuning.py), validated;
+    # NULL or {} = the installation's defaults
+    performance = db.Column(db.JSON, nullable=True)
 
     owner = db.Column(db.String, index=True)
 

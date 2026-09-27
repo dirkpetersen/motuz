@@ -3,6 +3,19 @@ import { Modal, Button } from 'react-bootstrap'
 import Toggle from 'react-toggle'
 
 import serializeForm from 'utils/serializeForm.jsx'
+import {
+    CUSTOM, describeSize, estimateMemory, matchPreset, presetValues, toRequest, validatePerformance,
+} from 'utils/copyPerformance.js'
+import CopyJobPerformance from 'views/Dialogs/CopyJobPerformance.jsx'
+import { DialogError } from 'views/Dialogs/CloudConnection/VerifyStatusButton.jsx'
+
+function apiErrorMessage(payload) {
+    const response = (payload && payload.response) || {};
+    if (typeof response.message === 'string' && response.message) {
+        return response.message;
+    }
+    return (payload && payload.message) || 'The job could not be created';
+}
 
 class NewCopyJobDialog extends React.Component {
     constructor(props) {
@@ -10,6 +23,14 @@ class NewCopyJobDialog extends React.Component {
         this.inputRef = React.createRef()
         this.state = {
             emailNotifications: props.emailNotificationsDefault,
+            // Performance section (GET /api/copy-jobs/performance/)
+            performanceInfo: null,
+            performanceLoadError: false,
+            performanceOpen: false,
+            performanceValues: {},
+            performancePreset: 'default',
+            performanceErrors: {},
+            submitError: null,
         };
     }
 
@@ -166,9 +187,22 @@ class NewCopyJobDialog extends React.Component {
                                     )}
                                 </details>
 
+                                <CopyJobPerformance
+                                    info={this.state.performanceInfo}
+                                    loadError={this.state.performanceLoadError}
+                                    open={this.state.performanceOpen}
+                                    values={this.state.performanceValues}
+                                    preset={this.state.performancePreset}
+                                    errors={this.state.performanceErrors}
+                                    onToggle={open => this.setState({performanceOpen: open})}
+                                    onChange={(name, value) => this.handlePerformanceChange(name, value)}
+                                    onPreset={id => this.handlePreset(id)}
+                                />
+
                             </div>
                         </Modal.Body>
                         <Modal.Footer>
+                            <DialogError message={this.state.submitError} />
                             <Button variant="secondary" onClick={() => this.handleClose()}>
                                 Close
                             </Button>
@@ -186,11 +220,65 @@ class NewCopyJobDialog extends React.Component {
         this.props.onClose();
     }
 
-    handleSubmit(event) {
+    handlePerformanceChange(name, value) {
+        const info = this.state.performanceInfo;
+        const values = {...this.state.performanceValues, [name]: value};
+        this.setState({
+            performanceValues: values,
+            performancePreset: matchPreset(values, info.presets, info.fields),
+            performanceErrors: validatePerformance(values, info.fields),
+            submitError: null,
+        });
+    }
+
+    handlePreset(id) {
+        const info = this.state.performanceInfo;
+        if (id === CUSTOM) {
+            this.setState({performancePreset: CUSTOM});
+            return;
+        }
+        const preset = info.presets.find(p => p.id === id);
+        this.setState({
+            performancePreset: id,
+            performanceValues: presetValues(preset, info.fields),
+            performanceErrors: {},
+            submitError: null,
+        });
+    }
+
+    /** The `performance` of the request; null for the defaults; false (and shows why) if invalid */
+    performanceRequest() {
+        const info = this.state.performanceInfo;
+        if (!info) {
+            return null;
+        }
+        const values = this.state.performanceValues;
+        const errors = validatePerformance(values, info.fields);
+        const memory = estimateMemory(values, info);
+        let message = null;
+        if (Object.keys(errors).length) {
+            message = Object.values(errors)[0];
+        } else if (memory !== null && memory > info.memory_budget) {
+            message = `These settings need about ${describeSize(memory)} of memory, more than the ` +
+                `${describeSize(info.memory_budget)} allowed per job. Use fewer transfers, streams or a smaller chunk size.`;
+        }
+        if (message) {
+            this.setState({performanceErrors: errors, performanceOpen: true, submitError: message});
+            return false;
+        }
+        return toRequest(values, info.fields);
+    }
+
+    async handleSubmit(event) {
         event.preventDefault();
 
         const propsData = this.props.data;
         const formData = serializeForm(event.target)
+        const performance = this.performanceRequest();
+        if (performance === false) {
+            return;
+        }
+        this.setState({submitError: null});
 
         for (let i in propsData.source_paths) {
             const src_resource_path = propsData.source_paths[i]
@@ -204,6 +292,9 @@ class NewCopyJobDialog extends React.Component {
                 "dst_resource_path": dst_resource_path,
                 "notification_email": formData['notification_email'],
             }
+            if (performance) {
+                data['performance'] = performance;
+            }
 
             if (data['src_cloud_id'] === 0) {
                 delete data['src_cloud_id'];
@@ -212,12 +303,46 @@ class NewCopyJobDialog extends React.Component {
                 delete data['dst_cloud_id'];
             }
 
-            this.props.onSubmit(data);
+            const result = await this.props.onSubmit(data);
+            if (result && result.error) {
+                if (!this.unmounted) {
+                    this.setState({submitError: apiErrorMessage(result.payload)});
+                }
+                return;
+            }
         }
     }
 
     componentDidMount() {
         this.inputRef.current.focus()
+        this.loadPerformance();
+    }
+
+    componentWillUnmount() {
+        this.unmounted = true;
+    }
+
+    async loadPerformance() {
+        const {data} = this.props;
+        const dstCloudId = data.destination_cloud ? data.destination_cloud.id : 0;
+        const action = await this.props.fetchPerformance(dstCloudId || 0);
+        if (this.unmounted) {
+            return;
+        }
+        const info = action && !action.error ? action.payload : null;
+        if (!info || !Array.isArray(info.fields) || !Array.isArray(info.presets)) {
+            this.setState({performanceLoadError: true});
+            return;
+        }
+        // Retry of a job: its own settings
+        const values = presetValues({values: data.performance || {}}, info.fields);
+        this.setState({
+            performanceInfo: info,
+            performanceValues: values,
+            performancePreset: matchPreset(values, info.presets, info.fields),
+            performanceErrors: validatePerformance(values, info.fields),
+            performanceOpen: this.state.performanceOpen || Boolean(toRequest(values, info.fields)),
+        });
     }
 }
 
@@ -232,12 +357,13 @@ NewCopyJobDialog.defaultProps = {
     emailAddressDefault: "",
 
     onClose: () => {},
-    onSubmit: (data) => {},
+    onSubmit: async (data) => {},
+    fetchPerformance: async (dstCloudId) => null,
 }
 
 import {connect} from 'react-redux';
 import {hideNewCopyJobDialog} from 'actions/dialogActions.jsx'
-import {createCopyJob} from 'actions/apiActions.jsx'
+import {createCopyJob, retrieveCopyJobPerformance} from 'actions/apiActions.jsx'
 import { getCurrentUser } from 'reducers/authReducer.jsx';
 
 const mapStateToProps = state => ({
@@ -254,6 +380,7 @@ const mapStateToProps = state => ({
 const mapDispatchToProps = dispatch => ({
     onClose: () => dispatch(hideNewCopyJobDialog()),
     onSubmit: data => dispatch(createCopyJob(data)),
+    fetchPerformance: dstCloudId => dispatch(retrieveCopyJobPerformance(dstCloudId)),
 });
 
 export default connect(mapStateToProps, mapDispatchToProps)(NewCopyJobDialog);

@@ -1,0 +1,45 @@
+{
+  "ImageId": "resolve:ssm:/aws/service/canonical/ubuntu/server/26.04/stable/current/amd64/hvm/ebs-gp3/ami-id",
+  "InstanceType": "c6in.large",
+  "IamInstanceProfile": { "Name": "motuz-worker" },
+  "SecurityGroupIds": ["${WORKER_SG_ID}"],
+  "InstanceInitiatedShutdownBehavior": "terminate",
+  "DisableApiStop": true,
+  "MetadataOptions": {
+    "HttpEndpoint": "enabled",
+    "HttpTokens": "required",
+    "HttpPutResponseHopLimit": 1,
+    "HttpProtocolIpv6": "disabled",
+    "InstanceMetadataTags": "disabled"
+  },
+  "BlockDeviceMappings": [
+    {
+      "DeviceName": "/dev/sda1",
+      "Ebs": {
+        "VolumeSize": 16,
+        "VolumeType": "gp3",
+        "Encrypted": true,
+        "DeleteOnTermination": true
+      }
+    }
+  ],
+  "Monitoring": { "Enabled": false },
+  "TagSpecifications": [
+    {
+      "ResourceType": "instance",
+      "Tags": [
+        { "Key": "Project", "Value": "motuz" },
+        { "Key": "Component", "Value": "worker" },
+        { "Key": "ManagedBy", "Value": "motuz-central" }
+      ]
+    },
+    {
+      "ResourceType": "volume",
+      "Tags": [
+        { "Key": "Project", "Value": "motuz" },
+        { "Key": "Component", "Value": "worker" },
+        { "Key": "ManagedBy", "Value": "motuz-central" }
+      ]
+    }
+  ]
+}

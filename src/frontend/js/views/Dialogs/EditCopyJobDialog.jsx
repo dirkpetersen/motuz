@@ -5,6 +5,7 @@ import { Modal, Button, ProgressBar } from 'react-bootstrap'
 import UriResource from 'components/UriResource.jsx';
 import parseTime from 'utils/parseTime.jsx'
 import serializeForm from 'utils/serializeForm.jsx'
+import {describePerformance} from 'utils/copyPerformance.js'
 
 class EditCopyJobDialog extends React.Component {
     constructor(props) {
@@ -93,6 +94,16 @@ class EditCopyJobDialog extends React.Component {
                                         path={data.dst_resource_path}
                                         canCopy={true}
                                     />
+                                </div>
+                                <div className="col-1"></div>
+                            </div>
+
+                            <div className="row mb-3">
+                                <div className="col-4 text-end">
+                                    <b>Performance</b>
+                                </div>
+                                <div className="col-7 text-start job-performance">
+                                    {describePerformance(data.performance) || "Server defaults"}
                                 </div>
                                 <div className="col-1"></div>
                             </div>
@@ -196,6 +207,9 @@ class EditCopyJobDialog extends React.Component {
 
     showNewHashsumJobDialog() {
         const data = this._generateDialogData();
+        // The integrity check compares as many files at once as the copy did
+        const performance = this.props.data.performance;
+        data.performance = performance && performance.checkers ? {checkers: performance.checkers} : null;
         this.props.onClose();
         this.props.onShowNewHashsumJobDialog(data)
     }
@@ -203,6 +217,7 @@ class EditCopyJobDialog extends React.Component {
     showNewCopyJobDialog() {
         if (confirm("You may overwrite files at the destination. Are you sure you want to continue?")) {
             const data = this._generateDialogData();
+            data.performance = this.props.data.performance || null; // a retry keeps the job's settings
             this.props.onClose()
             this.props.onShowNewCopyJobDialog(data)
         }

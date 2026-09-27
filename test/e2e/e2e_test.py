@@ -304,6 +304,51 @@ check('copy job pagination', status == 200 and len(page['data']) == 2 and page['
 status, page, _ = req('GET', '/api/copy-jobs/', B)
 check('bob sees no alice jobs', status == 200 and page['total'] == 0, page)
 
+# --- rclone performance settings (utils/rclone_tuning.py). compose.yml sets
+# MOTUZ_RCLONE_CHECKERS=16 and MOTUZ_RCLONE_MAX_TRANSFERS=48
+status, perf, _ = req('GET', '/api/copy-jobs/performance/?dst_cloud_id=0', A)
+fields = {f['name']: f for f in perf.get('fields', [])} if status == 200 else {}
+check('performance settings of a local destination', status == 200
+      and list(fields) == ['transfers', 'checkers', 'multi_thread_streams', 'multi_thread_cutoff']
+      and fields['transfers']['max'] == 48 and fields['checkers']['default'] == 16 and perf['memory_budget'] == 8 * 2**30,
+      (status, perf))
+presets = {p['id']: p for p in perf.get('presets', [])} if status == 200 else {}
+check('presets', list(presets) == ['default', 'small_files', 'large_files', 'maximum']
+      and presets['small_files']['values'] == {'transfers': 32, 'checkers': 64}
+      and presets['maximum']['values']['transfers'] <= 48, presets)
+status, body, _ = req('GET', f'/api/copy-jobs/performance/?dst_cloud_id={cid}', B)
+check('bob cannot read performance settings for alice connection', status == 404, (status, body))
+
+job = {'description': 'many small files', 'src_resource_path': '/home/alice/src', 'dst_resource_path': '/home/alice/dst-perf',
+       'copy_links': True, 'performance': presets.get('small_files', {}).get('values')}
+status, pj, _ = req('POST', '/api/copy-jobs/', A, job)
+check('create copy job with the "Many small files" preset', status == 201 and pj['performance'] == {'transfers': 32, 'checkers': 64},
+      (status, pj))
+pj = wait_job('copy-jobs', pj['id'], A)
+check('copy job with preset SUCCESS', pj['progress_state'] == 'SUCCESS', pj)
+check('job detail returns the settings', pj.get('performance') == {'transfers': 32, 'checkers': 64}, pj.get('performance'))
+check('settings stored on the job', json.loads(psql(f"select performance from copy_job where id={pj['id']}") or 'null')
+      == {'transfers': 32, 'checkers': 64})
+celery_log = service_logs('celery')
+check('rclone got the preset flags (celery log)', '--transfers=32 --checkers=64 copyto /home/alice/src /home/alice/dst-perf' in celery_log,
+      [line for line in celery_log.splitlines() if 'dst-perf' in line][-1:])
+check('a job without settings: the installation default only (celery log)',
+      '--contimeout=5m --checkers=16 copyto /home/alice/src /home/alice/dst ' in celery_log)
+
+jobs_before = psql("select count(*) from copy_job")
+for name, performance, expected in [
+        ('flag injection in a value', {'transfers': '4 --config=/etc/shadow'}, 'whole number'),
+        ('newline in a value', {'transfers': '4\n--rc'}, 'whole number'),
+        ('an option as a value', {'multi_thread_cutoff': '--foo'}, 'size like 64M'),
+        ('above the cap', {'transfers': 49}, 'at most 48'),
+        ('installation-only setting', {'buffer_size': '1G'}, 'Unknown performance setting'),
+        ('unknown setting', {'--config': '/etc/shadow'}, 'Unknown performance setting'),
+        ('above the memory budget', {'transfers': 48, 'multi_thread_streams': 32}, 'memory'),
+        ('not an object', '--transfers=64', '')]:
+    status, body, _ = req('POST', '/api/copy-jobs/', A, dict(job, performance=performance))
+    check(f'invalid performance rejected: {name}', status == 400 and expected in json.dumps(body), (status, body))
+check('no job created for invalid settings', psql("select count(*) from copy_job") == jobs_before)
+
 # --- integrity check
 status, hj, _ = req('POST', '/api/hashsum-jobs/', A, {'src_resource_path': '/home/alice/src', 'dst_resource_path': '/home/alice/dst', 'option_download': False})
 hj = wait_job('hashsum-jobs', hj['id'], A)
@@ -316,6 +361,19 @@ dst_tree = json.loads(hj.get('progress_dst_tree') or '[]')
 dst_names = sorted(n['title'] for n in dst_tree)
 check('hashsum with extra dst files finishes (no infinite loop)', hj['progress_state'] == 'SUCCESS', hj['progress_state'])
 check('hashsum reports differences', dst_names == ['f2.txt', 'zz1.txt', 'zz2.txt'], dst_tree)
+check('hashsum: rclone md5sum got the installation --checkers (celery log)',
+      '--checkers=16 md5sum /home/alice/src' in service_logs('celery'))
+
+status, hj, _ = req('POST', '/api/hashsum-jobs/', A, {'src_resource_path': '/home/alice/src', 'dst_resource_path': '/home/alice/dst-perf',
+                                                      'option_download': False, 'performance': {'checkers': 24}})
+check('hashsum with checkers accepted', status == 201 and hj.get('performance') == {'checkers': 24}, (status, hj))
+hj = wait_job('hashsum-jobs', hj['id'], A)
+check('hashsum with checkers SUCCESS and identical', hj['progress_state'] == 'SUCCESS' and json.loads(hj['progress_dst_tree']) == [], hj)
+check("hashsum: rclone md5sum got the job's --checkers (celery log)", '--checkers=24 md5sum /home/alice/dst-perf' in service_logs('celery'))
+for performance in ({'transfers': 4}, {'checkers': '8 --rc'}, {'checkers': 1000}):
+    status, body, _ = req('POST', '/api/hashsum-jobs/', A, {'src_resource_path': '/home/alice/src', 'dst_resource_path': '/home/alice/dst',
+                                                            'option_download': False, 'performance': performance})
+    check(f'hashsum rejects performance {performance}', status == 400, (status, body))
 
 # --- stop kills rclone
 sh('app', "sudo -u alice python3 -c \"import os; os.makedirs('/home/alice/many', exist_ok=True); [open(f'/home/alice/many/{i}', 'w').write('x' * 4096) for i in range(60000)]\"")

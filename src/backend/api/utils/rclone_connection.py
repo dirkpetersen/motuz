@@ -9,6 +9,7 @@ from .abstract_connection import AbstractConnection, RcloneException, sudo_as, u
 from . import local_credentials
 from .file_times import rfc3339_to_iso_utc
 from . import file_view
+from . import rclone_tuning
 from .copy_job_queue import CopyJobQueue
 from .hashsum_job_queue import HashsumJobQueue
 
@@ -252,8 +253,13 @@ class RcloneConnection(AbstractConnection):
             dst_resource_path,
             user,
             copy_links,
-            job_id
+            job_id,
+            performance=None,
     ):
+        """
+        `performance`: the job's validated overrides (rclone_tuning), on top of the
+        installation's MOTUZ_RCLONE_* defaults
+        """
         credentials = {}
         option_exclude_dot_snapshot = '' # HACKHACK: remove once https://github.com/rclone/rclone/issues/2425 is addressed
 
@@ -276,6 +282,10 @@ class RcloneConnection(AbstractConnection):
         else:
             option_copy_links = ''
 
+        # One argv item per flag (--transfers=32), formatted from parsed values
+        performance_flags = rclone_tuning.copy_flags(
+            performance, dst_data.type if dst_data is not None else None)
+
         command = [
             *sudo_as(user, credentials),
             RCLONE,
@@ -287,6 +297,7 @@ class RcloneConnection(AbstractConnection):
             'bucket-owner-full-control',
             option_exclude_dot_snapshot,
             '--contimeout=5m',
+            *performance_flags,
             'copyto',
             src,
             dst,
@@ -332,6 +343,7 @@ class RcloneConnection(AbstractConnection):
             user,
             job_id,
             download=False,
+            performance=None,
     ):
         credentials = {}
         option_exclude_dot_snapshot = '' # HACKHACK: remove once https://github.com/rclone/rclone/issues/2425 is addressed
@@ -354,6 +366,7 @@ class RcloneConnection(AbstractConnection):
             RCLONE,
             '--config=/dev/null',
             *_rate_limit_flags(credentials),
+            *rclone_tuning.hashsum_flags(performance), # --checkers
             'md5sum',
             src,
             option_exclude_dot_snapshot,

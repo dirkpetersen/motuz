@@ -1,0 +1,250 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "RunInstancesUseWorkerLaunchTemplates",
+      "Effect": "Allow",
+      "Action": "ec2:RunInstances",
+      "Resource": [
+        "arn:aws:ec2:${REGION}:${ACCOUNT_ID}:launch-template/${LT_AMD64_ID}",
+        "arn:aws:ec2:${REGION}:${ACCOUNT_ID}:launch-template/${LT_ARM64_ID}"
+      ]
+    },
+    {
+      "Sid": "RunInstancesWorkerInstanceAmd64",
+      "Effect": "Allow",
+      "Action": "ec2:RunInstances",
+      "Resource": "arn:aws:ec2:${REGION}:${ACCOUNT_ID}:instance/*",
+      "Condition": {
+        "ArnEquals": {
+          "ec2:LaunchTemplate": "arn:aws:ec2:${REGION}:${ACCOUNT_ID}:launch-template/${LT_AMD64_ID}"
+        },
+        "StringEquals": {
+          "ec2:InstanceType": [
+            "c6in.large",
+            "c6in.xlarge",
+            "c6in.2xlarge",
+            "c6in.4xlarge",
+            "c7i.large",
+            "c7i.xlarge",
+            "c7i.2xlarge"
+          ],
+          "aws:RequestTag/Project": "motuz",
+          "aws:RequestTag/Component": "worker",
+          "ec2:InstanceProfile": "arn:aws:iam::${ACCOUNT_ID}:instance-profile/motuz-worker",
+          "ec2:MetadataHttpTokens": "required",
+          "ec2:MetadataHttpEndpoint": "enabled",
+          "ec2:InstanceMetadataTags": "disabled",
+          "ec2:InstanceMarketType": "on-demand",
+          "ec2:Tenancy": "default"
+        },
+        "ForAllValues:StringEquals": {
+          "aws:TagKeys": [
+            "Project",
+            "Component",
+            "ManagedBy",
+            "Name",
+            "MotuzJob"
+          ]
+        },
+        "NumericLessThanEquals": {
+          "ec2:MetadataHttpPutResponseHopLimit": "1"
+        }
+      }
+    },
+    {
+      "Sid": "RunInstancesWorkerInstanceArm64",
+      "Effect": "Allow",
+      "Action": "ec2:RunInstances",
+      "Resource": "arn:aws:ec2:${REGION}:${ACCOUNT_ID}:instance/*",
+      "Condition": {
+        "ArnEquals": {
+          "ec2:LaunchTemplate": "arn:aws:ec2:${REGION}:${ACCOUNT_ID}:launch-template/${LT_ARM64_ID}"
+        },
+        "StringEquals": {
+          "ec2:InstanceType": [
+            "c7gn.large",
+            "c7gn.xlarge",
+            "c7gn.2xlarge",
+            "c7gn.4xlarge",
+            "c8gn.large",
+            "c8gn.xlarge",
+            "c8gn.2xlarge",
+            "c8gn.4xlarge"
+          ],
+          "aws:RequestTag/Project": "motuz",
+          "aws:RequestTag/Component": "worker",
+          "ec2:InstanceProfile": "arn:aws:iam::${ACCOUNT_ID}:instance-profile/motuz-worker",
+          "ec2:MetadataHttpTokens": "required",
+          "ec2:MetadataHttpEndpoint": "enabled",
+          "ec2:InstanceMetadataTags": "disabled",
+          "ec2:InstanceMarketType": "on-demand",
+          "ec2:Tenancy": "default"
+        },
+        "ForAllValues:StringEquals": {
+          "aws:TagKeys": [
+            "Project",
+            "Component",
+            "ManagedBy",
+            "Name",
+            "MotuzJob"
+          ]
+        },
+        "NumericLessThanEquals": {
+          "ec2:MetadataHttpPutResponseHopLimit": "1"
+        }
+      }
+    },
+    {
+      "Sid": "RunInstancesWorkerRootVolume",
+      "Effect": "Allow",
+      "Action": "ec2:RunInstances",
+      "Resource": "arn:aws:ec2:${REGION}:${ACCOUNT_ID}:volume/*",
+      "Condition": {
+        "ArnEquals": {
+          "ec2:LaunchTemplate": [
+            "arn:aws:ec2:${REGION}:${ACCOUNT_ID}:launch-template/${LT_AMD64_ID}",
+            "arn:aws:ec2:${REGION}:${ACCOUNT_ID}:launch-template/${LT_ARM64_ID}"
+          ]
+        },
+        "Bool": {
+          "ec2:Encrypted": "true"
+        },
+        "StringEquals": {
+          "ec2:VolumeType": "gp3"
+        },
+        "NumericLessThanEquals": {
+          "ec2:VolumeSize": "64"
+        }
+      }
+    },
+    {
+      "Sid": "RunInstancesDefaultVpcOnly",
+      "Effect": "Allow",
+      "Action": "ec2:RunInstances",
+      "Resource": [
+        "arn:aws:ec2:${REGION}:${ACCOUNT_ID}:subnet/*",
+        "arn:aws:ec2:${REGION}:${ACCOUNT_ID}:network-interface/*"
+      ],
+      "Condition": {
+        "ArnEquals": {
+          "ec2:LaunchTemplate": [
+            "arn:aws:ec2:${REGION}:${ACCOUNT_ID}:launch-template/${LT_AMD64_ID}",
+            "arn:aws:ec2:${REGION}:${ACCOUNT_ID}:launch-template/${LT_ARM64_ID}"
+          ],
+          "ec2:Vpc": "arn:aws:ec2:${REGION}:${ACCOUNT_ID}:vpc/${VPC_ID}"
+        }
+      }
+    },
+    {
+      "Sid": "RunInstancesWorkerSecurityGroupOnly",
+      "Effect": "Allow",
+      "Action": "ec2:RunInstances",
+      "Resource": "arn:aws:ec2:${REGION}:${ACCOUNT_ID}:security-group/${WORKER_SG_ID}",
+      "Condition": {
+        "ArnEquals": {
+          "ec2:LaunchTemplate": [
+            "arn:aws:ec2:${REGION}:${ACCOUNT_ID}:launch-template/${LT_AMD64_ID}",
+            "arn:aws:ec2:${REGION}:${ACCOUNT_ID}:launch-template/${LT_ARM64_ID}"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "RunInstancesTemplateImageOnly",
+      "Effect": "Allow",
+      "Action": "ec2:RunInstances",
+      "Resource": "arn:aws:ec2:${REGION}::image/*",
+      "Condition": {
+        "ArnEquals": {
+          "ec2:LaunchTemplate": [
+            "arn:aws:ec2:${REGION}:${ACCOUNT_ID}:launch-template/${LT_AMD64_ID}",
+            "arn:aws:ec2:${REGION}:${ACCOUNT_ID}:launch-template/${LT_ARM64_ID}"
+          ]
+        },
+        "Bool": {
+          "ec2:IsLaunchTemplateResource": "true"
+        },
+        "StringEquals": {
+          "aws:ResourceAccount": [
+            "137112412989",
+            "099720109477"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "TagWorkersOnlyWhileLaunching",
+      "Effect": "Allow",
+      "Action": "ec2:CreateTags",
+      "Resource": [
+        "arn:aws:ec2:${REGION}:${ACCOUNT_ID}:instance/*",
+        "arn:aws:ec2:${REGION}:${ACCOUNT_ID}:volume/*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "ec2:CreateAction": "RunInstances",
+          "aws:RequestTag/Project": "motuz",
+          "aws:RequestTag/Component": "worker"
+        },
+        "ForAllValues:StringEquals": {
+          "aws:TagKeys": [
+            "Project",
+            "Component",
+            "ManagedBy",
+            "Name",
+            "MotuzJob"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "PassOnlyTheWorkerRoleToEc2",
+      "Effect": "Allow",
+      "Action": "iam:PassRole",
+      "Resource": "arn:aws:iam::${ACCOUNT_ID}:role/motuz-worker",
+      "Condition": {
+        "StringEquals": {
+          "iam:PassedToService": "ec2.amazonaws.com"
+        }
+      }
+    },
+    {
+      "Sid": "TerminateOnlyMotuzWorkers",
+      "Effect": "Allow",
+      "Action": "ec2:TerminateInstances",
+      "Resource": "arn:aws:ec2:${REGION}:${ACCOUNT_ID}:instance/*",
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceTag/Project": "motuz",
+          "aws:ResourceTag/Component": "worker"
+        }
+      }
+    },
+    {
+      "Sid": "DescribeInstancesNotResourceScopable",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:DescribeInstances",
+        "ec2:DescribeInstanceStatus"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "${REGION}"
+        }
+      }
+    },
+    {
+      "Sid": "ResolveWorkerAmiParameters",
+      "Effect": "Allow",
+      "Action": "ssm:GetParameters",
+      "Resource": [
+        "arn:aws:ssm:${REGION}::parameter/aws/service/ami-amazon-linux-latest/al2027-preview-ami-kernel-default-x86_64",
+        "arn:aws:ssm:${REGION}::parameter/aws/service/ami-amazon-linux-latest/al2027-preview-ami-kernel-default-arm64",
+        "arn:aws:ssm:${REGION}::parameter/aws/service/canonical/ubuntu/server/26.04/stable/current/amd64/hvm/ebs-gp3/ami-id",
+        "arn:aws:ssm:${REGION}::parameter/aws/service/canonical/ubuntu/server/26.04/stable/current/arm64/hvm/ebs-gp3/ami-id"
+      ]
+    }
+  ]
+}

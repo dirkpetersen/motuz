@@ -34,7 +34,7 @@ export default (state=initialState, action) => {
     case api.LIST_FILES_FAILURE:
     case api.LIST_COPY_JOBS_FAILURE:
     case api.RETRIEVE_COPY_JOB_FAILURE:
-    case api.CREATE_COPY_JOB_FAILURE:
+    // CREATE_COPY_JOB_FAILURE: shown in the New Copy Job dialog, which stays open
     case api.STOP_COPY_JOB_FAILURE:
     case api.LIST_CLOUD_CONNECTIONS_FAILURE:
     // CREATE/UPDATE_CLOUD_CONNECTION_FAILURE: shown in the connection dialog (cloudErrorMessage)
