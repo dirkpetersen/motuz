@@ -41,6 +41,26 @@ x-variables:
         MOTUZ_LARGE_JOB_FILES: ${MOTUZ_LARGE_JOB_FILES:-}
         MOTUZ_WORKER_LEASE_SECONDS: ${MOTUZ_WORKER_LEASE_SECONDS:-}
         MOTUZ_PUBLIC_URL: ${MOTUZ_PUBLIC_URL:-}
+    - &ec2-environment
+        # Temporary EC2 workers for large cloud-to-cloud jobs (README, "Temporary EC2
+        # workers"). Off unless MOTUZ_EC2_WORKERS=true. AWS credentials come from this
+        # node's instance profile (IMDSv2; host networking keeps the hop limit of 1).
+        # The Celery container launches the workers and runs the reaper.
+        MOTUZ_EC2_WORKERS: ${MOTUZ_EC2_WORKERS:-}
+        MOTUZ_EC2_POOL: ${MOTUZ_EC2_POOL:-}
+        MOTUZ_AWS_REGION: ${MOTUZ_AWS_REGION:-}
+        MOTUZ_EC2_LAUNCH_TEMPLATE_ARM64: ${MOTUZ_EC2_LAUNCH_TEMPLATE_ARM64:-}
+        MOTUZ_EC2_LAUNCH_TEMPLATE_AMD64: ${MOTUZ_EC2_LAUNCH_TEMPLATE_AMD64:-}
+        MOTUZ_EC2_LAUNCH_TEMPLATE_VERSION: ${MOTUZ_EC2_LAUNCH_TEMPLATE_VERSION:-}
+        MOTUZ_EC2_SUBNET_ID: ${MOTUZ_EC2_SUBNET_ID:-}
+        MOTUZ_EC2_INSTANCE_TYPES: ${MOTUZ_EC2_INSTANCE_TYPES:-}
+        MOTUZ_EC2_MAX_WORKERS: ${MOTUZ_EC2_MAX_WORKERS:-}
+        MOTUZ_EC2_MAX_RUNTIME: ${MOTUZ_EC2_MAX_RUNTIME:-}
+        MOTUZ_EC2_BOOT_TIMEOUT: ${MOTUZ_EC2_BOOT_TIMEOUT:-}
+        MOTUZ_EC2_REAP_INTERVAL: ${MOTUZ_EC2_REAP_INTERVAL:-}
+        MOTUZ_EC2_HALT_DELAY: ${MOTUZ_EC2_HALT_DELAY:-}
+        MOTUZ_WORKER_SOURCE: ${MOTUZ_WORKER_SOURCE:-}
+        MOTUZ_WORKER_SOURCE_REF: ${MOTUZ_WORKER_SOURCE_REF:-}
     - &rclone-environment
         # rclone performance settings (README, "Performance tuning"). Empty means rclone's
         # default. The app validates them (and refuses to start with an invalid value)
@@ -142,7 +162,7 @@ services:
         network_mode: host
         <<: *shared-volumes
         environment:
-            <<: [*database-environment, *smtp-environment, *oauth-environment, *operator-environment, *rclone-environment, *worker-environment]
+            <<: [*database-environment, *smtp-environment, *oauth-environment, *operator-environment, *rclone-environment, *worker-environment, *ec2-environment]
         secrets:
             - MOTUZ_DATABASE_PASSWORD
             - MOTUZ_FLASK_SECRET_KEY
@@ -159,7 +179,9 @@ services:
         network_mode: host
         <<: *shared-volumes
         environment:
-            <<: [*database-environment, *smtp-environment, *oauth-environment, *operator-environment, *rclone-environment]
+            # The pool settings too: the EC2 launcher and reaper run here, and the
+            # configuration check (config.py) needs them
+            <<: [*database-environment, *smtp-environment, *oauth-environment, *operator-environment, *rclone-environment, *worker-environment, *ec2-environment]
         secrets:
             - MOTUZ_DATABASE_PASSWORD
             - MOTUZ_FLASK_SECRET_KEY

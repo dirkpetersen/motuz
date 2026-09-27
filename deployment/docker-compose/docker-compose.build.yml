@@ -12,6 +12,8 @@ services:
             args:
                 # Azure CLI for Azure CLI logins (+590 MB), see the Dockerfile
                 INSTALL_AZURE_CLI: ${MOTUZ_INSTALL_AZURE_CLI:-false}
+                # The commit temporary EC2 workers fetch (set by bin/prod/build.sh)
+                MOTUZ_SOURCE_COMMIT: ${MOTUZ_SOURCE_COMMIT:-}
 
     celery:
         build:
