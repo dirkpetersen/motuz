@@ -1166,6 +1166,10 @@ AL2027 container with systemd as PID 1 (`test/e2e/systemd/container.sh`,
 the host). There is no AL2027 VM image outside EC2 and a container cannot enforce SELinux,
 so SELinux is tested on an instance: the same `run_systemd.sh --inside-setup` and
 `--inside` run there as root, then `ausearch -m avc` must be empty.
+`test/e2e/systemd/worker_host_test.sh` (after `run_systemd.sh --distro=al2027 --keep`)
+installs a worker with `install.sh --worker-only` in a second container that shares the
+first one's network, runs a job there and one with `worker_once.sh`; `--inside` does the
+same on the server itself (e.g. on the instance).
 
 
 ## Developer Installation
