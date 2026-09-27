@@ -60,8 +60,12 @@ async function pageShot(name) {
     }
 }
 
-// Runs a shell command in the app container (fixtures), like common.py's sh()
+// Runs a shell command in the app container (fixtures), like common.py's sh(); with
+// MOTUZ_E2E_TARGET=systemd on this machine (as root, run_systemd.sh)
 function appShell(cmd, input) {
+    if (process.env.MOTUZ_E2E_TARGET === 'systemd') {
+        return execFileSync('sh', ['-c', cmd], { input, encoding: 'utf8' });
+    }
     const compose = (process.env.MOTUZ_E2E_COMPOSE || 'docker compose').split(' ');
     return execFileSync(compose[0], [...compose.slice(1), '-f', 'compose.yml', 'exec', '-T', 'app', 'sh', '-c', cmd],
         { cwd: join(dirname(fileURLToPath(import.meta.url)), '..'), input, encoding: 'utf8' });
