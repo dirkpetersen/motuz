@@ -265,7 +265,7 @@ async function loginUi() {
 }
 
 if (PHASE === 'paste') {
-    for (const path of ['/home/alice/ui-src/sub', '/home/alice/ui-dst']) {
+    for (const path of ['/home/alice/ui-src/sub', '/home/alice/ui-dst', '/home/alice/ui-perf-dst']) {
         await api.post('/api/system/files/mkdir/', { headers: auth, data: { path, connection_id: 0 } });
     }
 
@@ -320,6 +320,69 @@ if (PHASE === 'paste') {
         check('job table shows the job', true);
         // Submitting opens the job's progress dialog
         await page.click('.modal-content button:has-text("Close")');
+        await page.waitForSelector('.modal-content', { state: 'detached', timeout: 10000 });
+    });
+
+    // The collapsed Performance section of the New Copy Job dialog (utils/copyPerformance.js,
+    // GET /api/copy-jobs/performance/). compose.yml: MOTUZ_RCLONE_CHECKERS=16, MAX_TRANSFERS=48
+    await flow('copy performance', async () => {
+        const posts = [];
+        const listener = r => { if (r.url().endsWith('/api/copy-jobs/') && r.method() === 'POST') posts.push(r.postDataJSON()); };
+        page.on('request', listener);
+        const panes = page.locator('.grid-files');
+        const openDialog = async () => {
+            await panes.nth(0).getByText('ui-src', { exact: true }).dragTo(panes.nth(1).getByText('ui-perf-dst', { exact: true }));
+            await page.waitForSelector('.modal-content .performance-section #performance-preset', { state: 'attached', timeout: 10000 });
+        };
+        await openDialog();
+        check('performance: section collapsed, preset Default',
+            !(await page.locator('.performance-section').evaluate(d => d.open))
+            && (await page.textContent('.performance-summary')).trim() === 'Default');
+        await page.click('.performance-section summary');
+        const labels = await page.$$eval('.performance-section label', ls => ls.map(l => l.textContent.trim()));
+        check('performance: local destination has no S3/Azure fields', JSON.stringify(labels) === JSON.stringify(
+            ['Preset', 'Parallel transfers', 'Parallel checkers', 'Multi-thread streams', 'Multi-thread cutoff']), labels);
+        check('performance: server defaults as placeholders',
+            await page.getAttribute('#performance-checkers', 'placeholder') === 'default 16'
+            && await page.getAttribute('#performance-transfers', 'placeholder') === 'default 4');
+        await page.selectOption('#performance-preset', 'small_files');
+        check('performance: "Many small files" fills the fields',
+            await page.inputValue('#performance-transfers') === '32' && await page.inputValue('#performance-checkers') === '64'
+            && await page.inputValue('#performance-multi_thread_streams') === '');
+        await shot('copy-performance-small-files');
+
+        // Invalid values are shown and not posted
+        await page.fill('#performance-transfers', '4 --config=/etc/shadow');
+        check('performance: editing a field switches to Custom', await page.inputValue('#performance-preset') === 'custom');
+        await page.click('.modal-footer button[type=submit]');
+        await page.waitForSelector('.dialog-error', { timeout: 5000 });
+        check('performance: invalid value shown in the dialog, nothing posted',
+            (await page.textContent('.dialog-error')).includes('must be a whole number') && posts.length === 0
+            && await page.locator('#performance-transfers.is-invalid').count() === 1);
+        await page.fill('#performance-transfers', '49');
+        check('performance: above the cap is invalid',
+            (await page.textContent('.performance-section .invalid-feedback')).includes('between 1 and 48'));
+        await shot('copy-performance-invalid');
+
+        await page.selectOption('#performance-preset', 'small_files');
+        await page.click('.modal-footer button[type=submit]');
+        for (let i = 0; i < 50 && !posts.length; i++) await page.waitForTimeout(200);
+        check('performance: POST carries the preset', posts.length === 1
+            && JSON.stringify(posts[0].performance) === JSON.stringify({ transfers: 32, checkers: 64 }), posts);
+        await page.waitForSelector('.modal-content .job-performance', { timeout: 10000 });
+        check('performance: job detail shows the settings',
+            (await page.textContent('.modal-content .job-performance')).trim() === '32 transfers · 64 checkers');
+        let job = null;
+        for (let i = 0; i < 60; i++) {
+            const jobs = await (await api.get('/api/copy-jobs/', { headers: auth })).json();
+            job = jobs.data.find(j => (j.dst_resource_path || '').startsWith('/home/alice/ui-perf-dst'));
+            if (job && job.progress_state !== 'PROGRESS') break;
+            await page.waitForTimeout(1000);
+        }
+        check('performance: job SUCCESS with its settings', job && job.progress_state === 'SUCCESS'
+            && JSON.stringify(job.performance) === JSON.stringify({ transfers: 32, checkers: 64 }), job);
+        page.off('request', listener);
+        await page.click('.modal-footer button:has-text("Close")');
         await page.waitForSelector('.modal-content', { state: 'detached', timeout: 10000 });
     });
 

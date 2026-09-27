@@ -27,6 +27,9 @@ x-env: &env
     MOTUZ_ONEDRIVE_CLIENT_ID: ${OD_CLIENT_ID:-}
     MOTUZ_ONEDRIVE_REDIRECT_URI: ${OD_REDIRECT_URI:-}
     # /privacy and /terms (traefik_test.sh checks that the values are escaped)
+    # rclone performance (e2e_test.py): an installation default and a cap
+    MOTUZ_RCLONE_CHECKERS: "16"
+    MOTUZ_RCLONE_MAX_TRANSFERS: "48"
     MOTUZ_OPERATOR_NAME: "E2E Lab <R&D>"
     MOTUZ_CONTACT_EMAIL: "motuz-admin@example.org"
     MOTUZ_OPERATOR_URL: "https://example.org/?a=1&b=2"
