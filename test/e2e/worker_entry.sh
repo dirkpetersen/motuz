@@ -5,8 +5,9 @@
 # stack's self-signed certificate; then motuz-worker as `motuz`, with the arguments given.
 set -e
 id motuz >/dev/null 2>&1 || useradd --system --create-home --home-dir /var/lib/motuz --shell /usr/sbin/nologin motuz
-# rclone runs as the job's owner: `sudo -E -u <owner>` (ALL implies SETENV), never as root
-echo 'motuz ALL=(ALL,!root) NOPASSWD: ALL' > /etc/sudoers.d/motuz-worker
+# rclone runs as the job's owner, never as root: the one rule of bin/systemd/install.sh
+# (sudo --preserve-env=<names> needs SETENV)
+echo 'motuz ALL=(ALL, !root) NOPASSWD:SETENV: /usr/local/bin/rclone, /usr/bin/ls, /usr/bin/mkdir, /usr/bin/env' > /etc/sudoers.d/motuz-worker
 chmod 440 /etc/sudoers.d/motuz-worker
 CONF=/var/lib/motuz/.config/motuz-worker
 install -d -o motuz -g motuz -m 700 /var/lib/motuz/.config "$CONF"
