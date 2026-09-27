@@ -413,6 +413,76 @@ check_r('Azure pager: length below 256 bytes refused (400)', status == 400, raw)
 status, v, raw = chunk(B, '/motuztest/copy/numbered.log', from_end=True)
 check_r('Azure pager: bob cannot use alice\'s connection (404)', status == 404 and 'numbered log' not in raw, raw)
 check('Azure pager: file contents never logged', 'of a numbered log' not in service_logs('app'), 'contents in the app log')
+
+# Follow mode (tail -f) on Azure: a poll without news is only `rclone lsjson --stat`, a
+# poll with news one `rclone cat` of the new range (no second cat for the text check)
+AZ_FOLLOW = '/motuztest/follow/f.log'
+
+
+def az_write(content):
+    """Uploads the whole file (blob storage has no append), as alice with her rclone.conf"""
+    out = sh('app', "sudo -u alice /usr/local/bin/rclone --config /home/alice/.config/rclone/rclone.conf "
+                    "rcat azurite:motuztest/follow/f.log", stdin=content)
+    if out.returncode != 0:
+        print('rcat failed:', out.stderr)
+
+
+def rclone_calls():
+    """How often the app has run `rclone lsjson` and `rclone cat` on the followed file"""
+    time.sleep(0.5) # docker logs
+    lines = [line for line in service_logs('app').splitlines() if f'current:{AZ_FOLLOW}' in line]
+    return {'lsjson': sum(' lsjson ' in line for line in lines), 'cat': sum(' cat ' in line for line in lines),
+            'head': sum(' cat --count 8192 ' in line for line in lines)}
+
+
+def az_follow(offset):
+    status, v, raw = chunk(A, AZ_FOLLOW, offset=offset, follow=True)
+    return status, ({k: v.get(k) for k in ('content', 'offset', 'end', 'size', 'eof')} if isinstance(v, dict) else v), raw
+
+
+def calls_since(before):
+    now = rclone_calls()
+    return {k: now[k] - before[k] for k in now}
+
+
+az_write('one\ntwo\n')
+before = rclone_calls()
+status, v, raw = az_follow(8)
+check_r('Azure follow: a read at offset=size is empty, eof', status == 200 and v == {
+    'content': '', 'offset': 8, 'end': 8, 'size': 8, 'eof': True}, raw)
+status, v2, raw2 = chunk(A, AZ_FOLLOW, offset=8)
+check_r('Azure follow: also without follow', status == 200 and v2['content'] == '' and v2['eof'], raw2)
+calls = calls_since(before)
+check('Azure follow: no news costs only lsjson --stat, no rclone cat', calls == {'lsjson': 2, 'cat': 0, 'head': 0}, calls)
+az_write('one\ntwo\nthree\nfour\n')
+before = rclone_calls()
+status, v, raw = az_follow(8)
+check_r('Azure follow: after appending, exactly the new lines', status == 200 and v == {
+    'content': 'three\nfour\n', 'offset': 8, 'end': 19, 'size': 19, 'eof': True}, raw)
+calls = calls_since(before)
+check('Azure follow: news cost lsjson and one cat of the range, no second cat for the text check',
+      calls == {'lsjson': 1, 'cat': 1, 'head': 0}, calls)
+before = rclone_calls()
+status, v, raw = chunk(A, AZ_FOLLOW, offset=8)
+calls = calls_since(before)
+check('Azure follow: without follow the text check still runs', status == 200 and calls == {'lsjson': 1, 'cat': 2, 'head': 1}, calls)
+az_write('one\ntwo\nthree\nfour\npartial')
+status, v, raw = az_follow(19)
+check_r('Azure follow: an incomplete line is withheld', status == 200 and v == {
+    'content': '', 'offset': 19, 'end': 19, 'size': 26, 'eof': True}, raw)
+az_write('one\ntwo\nthree\nfour\npartial done\n')
+status, v, raw = az_follow(19)
+check_r('Azure follow: the completed line arrives whole', status == 200 and v == {
+    'content': 'partial done\n', 'offset': 19, 'end': 32, 'size': 32, 'eof': True}, raw)
+az_write('new\n')
+before = rclone_calls()
+status, v, raw = az_follow(32)
+check_r('Azure follow: truncated: the new size, no content', status == 200 and v == {
+    'content': '', 'offset': 4, 'end': 4, 'size': 4, 'eof': True}, raw)
+calls = calls_since(before)
+check('Azure follow: truncated costs only lsjson', calls == {'lsjson': 1, 'cat': 0, 'head': 0}, calls)
+status, v, raw = chunk(B, AZ_FOLLOW, offset=0, follow=True)
+check_r('Azure follow: bob cannot use alice\'s connection (404)', status == 404 and 'new' not in str(v.get('content', '')), raw)
 status, body, raw = req('POST', '/api/connections/', A, dict(az, name='msi', profile_name='msi'))
 check_r('cannot create from a managed-identity remote', status == 400, raw)
 status, body, raw = req('POST', '/api/connections/', A, dict(az, profile_source='aws', profile_name=PROFILE))

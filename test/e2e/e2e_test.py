@@ -191,6 +191,58 @@ status, v, _ = chunk(A, '/dev/zero', from_end=True)
 check('pager: a device is refused, not read', status == 400 and 'regular file' in msg(v), (status, v))
 status, v, _ = chunk(None, '/home/alice/numbered.log')
 check('pager: needs a token', status == 401, status)
+
+# --- follow mode (tail -f): polls from the end of what the viewer has, with follow=true
+FOLLOW = '/home/alice/follow.log'
+
+
+def write_follow(content, append=True):
+    sh('app', f"sudo -u alice sh -c 'cat {'>>' if append else '>'} {FOLLOW}'", stdin=content)
+
+
+def follow(offset, **params):
+    return chunk(A, FOLLOW, offset=offset, follow=True, **params)
+
+
+def fields(v):
+    return {k: v.get(k) for k in ('content', 'offset', 'end', 'size', 'eof')} if isinstance(v, dict) else v
+
+
+write_follow('one\ntwo\n', append=False)
+status, v, _ = follow(8)
+check('follow: a read at offset=size is empty, eof, same offset', status == 200 and fields(v) == {
+    'content': '', 'offset': 8, 'end': 8, 'size': 8, 'eof': True}, (status, v))
+status, v, _ = chunk(A, FOLLOW, offset=8)
+check('follow: also without follow, offset=size is empty with eof', status == 200 and v['content'] == '' and v['eof'], (status, v))
+status, v, _ = chunk(A, '/home/alice/view.bin', offset=272)
+check('follow: at the end nothing is read (no text check: a binary file\'s end is empty, not 415)',
+      status == 200 and v['content'] == '' and v['eof'] and v['size'] == 272, (status, v))
+write_follow('three\nfour\n')
+status, v, _ = follow(8)
+check('follow: after appending, the next read returns exactly the new lines', status == 200 and fields(v) == {
+    'content': 'three\nfour\n', 'offset': 8, 'end': 19, 'size': 19, 'eof': True}, (status, v))
+write_follow('partial')
+status, v, _ = follow(19)
+check('follow: an incomplete line (no newline yet) is withheld', status == 200 and fields(v) == {
+    'content': '', 'offset': 19, 'end': 19, 'size': 26, 'eof': True}, (status, v))
+write_follow(' done\nfive\n')
+status, v, _ = follow(19)
+check('follow: the completed line arrives whole', status == 200 and fields(v) == {
+    'content': 'partial done\nfive\n', 'offset': 19, 'end': 37, 'size': 37, 'eof': True}, (status, v))
+write_follow('new\n', append=False)
+status, v, _ = follow(37)
+check('follow: truncated file: no content, the new size (the viewer reloads the tail)', status == 200 and fields(v) == {
+    'content': '', 'offset': 4, 'end': 4, 'size': 4, 'eof': True}, (status, v))
+status, v, _ = chunk(A, FOLLOW, offset=37)
+check('follow: without follow an offset past the end is still 400', status == 400 and 'beyond the end' in msg(v), (status, v))
+for name, params in (('with from_end', {'from_end': True}), ('with before', {'before': 4}), ('not a bool', {'offset': 0, 'follow': 'yes'})):
+    status, v, _ = chunk(A, FOLLOW, follow=params.pop('follow', True), **params)
+    check(f'follow: {name} refused (400)', status == 400, (status, v))
+status, v, _ = chunk(B, FOLLOW, offset=0, follow=True)
+check('follow: bob cannot follow alice\'s file (403)', status == 403 and 'new' not in json.dumps(v), (status, v))
+sh('app', f'rm -f {FOLLOW}')
+status, v, _ = follow(4)
+check('follow: a deleted file is 404', status == 404, (status, v))
 logs = service_logs('app')
 check('pager: file contents never logged', 'of a numbered log' not in logs and 'line 000001' not in logs, 'contents in the app log')
 

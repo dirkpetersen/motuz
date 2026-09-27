@@ -8,7 +8,7 @@ from unittest import mock
 
 from api.utils import file_view
 from api.utils.file_view import (CHUNK_BYTES, HEAD_CHECK_BYTES, MAX_VIEW_BYTES, ChunkRequest, NotTextError,
-                                 align_backward, align_forward, chunk_result, decode_chunk, decode_text,
+                                 align_backward, align_complete_lines, align_forward, chunk_result, decode_chunk, decode_text,
                                  parse_chunk_request, view_result)
 from api.utils.local_connection import LocalConnection
 from api.utils.rclone_connection import RcloneConnection
@@ -171,6 +171,60 @@ class TestChunkAlignment(unittest.TestCase):
             with self.assertRaisesRegex(file_view.ViewError, 'beyond the end'):
                 simulate(b'abc\n', request)
 
+    def test_follow_returns_complete_lines_only(self):
+        log = b'one\ntwo\n'
+        first = simulate(log, ChunkRequest(offset=0, follow=True))
+        self.assertEqual((first['content'], first['end'], first['eof']), ('one\ntwo\n', 8, True))
+        # nothing new: empty, eof, at the same offset
+        same = simulate(log, ChunkRequest(offset=8, follow=True))
+        self.assertEqual((same['content'], same['offset'], same['end'], same['size'], same['eof']), ('', 8, 8, 8, True))
+        # an incomplete line is withheld (end < size, still eof) until its newline arrives
+        log += b'three\nfou'
+        grown = simulate(log, ChunkRequest(offset=8, follow=True))
+        self.assertEqual((grown['content'], grown['offset'], grown['end'], grown['size'], grown['eof']),
+                         ('three\n', 8, 14, 17, True))
+        partial = simulate(log, ChunkRequest(offset=14, follow=True))
+        self.assertEqual((partial['content'], partial['end'], partial['eof']), ('', 14, True))
+        log += b'r\n'
+        done = simulate(log, ChunkRequest(offset=14, follow=True))
+        self.assertEqual((done['content'], done['offset'], done['end'], done['eof']), ('four\n', 14, 19, True))
+        # without follow, the end of the file is returned as it is
+        self.assertEqual(simulate(b'one\nfou', ChunkRequest(offset=0))['content'], 'one\nfou')
+
+    def test_follow_more_than_a_chunk_behind(self):
+        data = b''.join(b'line %04d\n' % i for i in range(100)) # 1000 bytes
+        chunk = simulate(data, ChunkRequest(offset=0, length=300, follow=True))
+        self.assertEqual((chunk['end'], chunk['eof']), (300, False)) # the poll continues at once
+        chunks = [chunk]
+        while not chunks[-1]['eof']:
+            chunks.append(simulate(data, ChunkRequest(offset=chunks[-1]['end'], length=300, follow=True)))
+        self.assertEqual(''.join(c['content'] for c in chunks).encode(), data)
+        # a line longer than a chunk is still split
+        long_line = simulate(b'x' * 400, ChunkRequest(offset=0, length=300, follow=True))
+        self.assertEqual((long_line['end'], long_line['eof']), (300, False))
+        self.assertEqual(simulate(b'x' * 299, ChunkRequest(offset=0, length=300, follow=True))['end'], 0)
+
+    def test_follow_beyond_the_end_reports_the_new_size(self):
+        chunk = simulate(b'new\n', ChunkRequest(offset=5000, follow=True))
+        self.assertEqual((chunk['content'], chunk['offset'], chunk['end'], chunk['size'], chunk['eof'], chunk['bof']),
+                         ('', 4, 4, 4, True, False))
+        chunk = simulate(b'', ChunkRequest(offset=10, follow=True))
+        self.assertEqual((chunk['size'], chunk['bof'], chunk['eof']), (0, True, True))
+
+    def test_nothing_is_checked_or_read_at_the_end(self):
+        # A forward read at the end needs neither the first bytes nor data
+        data = b'\x89PNG\x00\x00' + b'text\n' * 100
+        chunk = chunk_result('/f', ChunkRequest(offset=len(data)), len(data), b'', len(data), b'')
+        self.assertEqual((chunk['content'], chunk['eof'], chunk['size']), ('', True, len(data)))
+
+    def test_align_complete_lines(self):
+        self.assertEqual(align_complete_lines(b'ab\ncd', 300), 3)
+        self.assertEqual(align_complete_lines(b'abcd', 300), 0)
+        self.assertEqual(align_complete_lines(b'', 300), 0)
+        self.assertEqual(align_complete_lines(b'x' * 300, 300), 300)
+        self.assertEqual(align_complete_lines(('x\u20ac' * 75).encode(), 300), 300)
+        self.assertEqual(align_complete_lines(('x\u20ac' * 75).encode()[:299], 299), 297) # never inside a character
+
     def test_binary_is_refused_also_from_the_end(self):
         data = b'\x89PNG\r\n\x1a\n\x00\x00' + b'text\n' * 100000
         for request in (ChunkRequest(from_end=True), ChunkRequest(offset=len(data) // 2), ChunkRequest(before=len(data))):
@@ -219,8 +273,16 @@ class TestParseChunkRequest(unittest.TestCase):
         self.assertEqual(parse_chunk_request({'before': 500, 'length': 1000}).read_range(), (0, 500))
         self.assertEqual(parse_chunk_request({'offset': 7, 'length': 300}).read_range(), (7, 300))
 
+    def test_follow(self):
+        r = parse_chunk_request({'offset': 100, 'follow': True})
+        self.assertEqual((r.offset, r.follow, r.skips_text_check), (100, True, True))
+        self.assertFalse(parse_chunk_request({'offset': 0, 'follow': True}).skips_text_check)
+        self.assertFalse(parse_chunk_request({'offset': 100}).skips_text_check)
+        self.assertFalse(parse_chunk_request({'offset': 100, 'follow': None}).follow)
+
     def test_invalid(self):
-        for data in ({'offset': -1}, {'offset': '5'}, {'offset': 1.5}, {'offset': True}, {'length': 0},
+        for data in ({'follow': 'yes'}, {'follow': 1}, {'from_end': True, 'follow': True},
+                     {'before': 100, 'follow': True}, {'offset': -1}, {'offset': '5'}, {'offset': 1.5}, {'offset': True}, {'length': 0},
                      {'length': CHUNK_BYTES + 1}, {'length': 10}, {'before': -3}, {'from_end': 'yes'},
                      {'offset': 5, 'from_end': True}, {'offset': 5, 'before': 9}, {'before': 5, 'from_end': True}):
             with self.assertRaises(file_view.ViewError, msg=data):
@@ -341,6 +403,27 @@ class TestLocalView(unittest.TestCase):
         before = self.chunk(path, before=tail['offset'], length=1000)
         self.assertEqual(before['end'], tail['offset'])
         self.assertEqual(before['content'].encode(), data[before['offset']:before['end']])
+
+    def test_follow(self):
+        path = self.write('app.log', b'one\ntwo\n')
+        with _without_sudo(self), mock.patch('api.utils.local_connection.file_view.chunk_result',
+                                             wraps=file_view.chunk_result) as result:
+            same = LocalConnection().view_chunk(Owner(), path, ChunkRequest(offset=8, follow=True))
+        self.assertEqual((same['content'], same['end'], same['size'], same['eof']), ('', 8, 8, True))
+        self.assertEqual((result.call_args[0][3], result.call_args[0][5]), (b'', b'')) # nothing read at the end
+        with open(path, 'ab') as f:
+            f.write(b'three\nfou')
+        grown = self.chunk(path, offset=8, follow=True)
+        self.assertEqual((grown['content'], grown['end'], grown['size']), ('three\n', 14, 17))
+        with open(path, 'ab') as f:
+            f.write(b'r\n')
+        self.assertEqual(self.chunk(path, offset=14, follow=True)['content'], 'four\n')
+        with open(path, 'wb') as f:
+            f.write(b'new\n')
+        shrunk = self.chunk(path, offset=19, follow=True)
+        self.assertEqual((shrunk['content'], shrunk['size'], shrunk['end']), ('', 4, 4))
+        with self.assertRaisesRegex(file_view.ViewError, 'beyond the end'):
+            self.chunk(path, offset=19)
 
     def test_chunk_errors(self):
         text = self.write('t.txt', b'abc\n')
@@ -467,3 +550,26 @@ class TestCloudView(unittest.TestCase):
         result, _ = self.run_chunk([(0, b'{"Size":100000,"IsDir":false}', b''), (0, b'text\n' * 50, b''),
                                     (0, b'\x00\x01binary', b'')], from_end=True, length=256)
         self.assertIsInstance(result, file_view.NotTextError)
+
+    def test_forward_read_at_the_end_is_only_a_stat(self):
+        result, calls = self.run_chunk([(0, b'{"Size":500,"IsDir":false}', b'')], offset=500, follow=True)
+        self.assertEqual((result['content'], result['offset'], result['end'], result['size'], result['eof']),
+                         ('', 500, 500, 500, True))
+        self.assertEqual(len(calls), 1) # lsjson --stat, no cat
+        result, calls = self.run_chunk([(0, b'{"Size":500,"IsDir":false}', b'')], offset=500)
+        self.assertEqual((result['content'], result['eof'], len(calls)), ('', True, 1))
+
+    def test_follow_skips_the_second_text_check(self):
+        result, calls = self.run_chunk([(0, b'{"Size":519,"IsDir":false}', b''), (0, b'new line\npart', b'')],
+                                       offset=506, follow=True)
+        self.assertEqual((result['content'], result['offset'], result['end'], result['size'], result['eof']),
+                         ('new line\n', 506, 515, 519, True))
+        self.assertEqual(len(calls), 2) # lsjson --stat and the range, no cat --count 8192
+        self.assertEqual(calls[1][-6:], ['cat', '--offset', '506', '--count', '13', 'current:/dir/log.txt'])
+
+    def test_follow_after_the_file_shrank(self):
+        result, calls = self.run_chunk([(0, b'{"Size":40,"IsDir":false}', b'')], offset=500, follow=True)
+        self.assertEqual((result['content'], result['end'], result['size'], result['eof']), ('', 40, 40, True))
+        self.assertEqual(len(calls), 1)
+        result, calls = self.run_chunk([(0, b'{"Size":40,"IsDir":false}', b'')], offset=500)
+        self.assertIn('beyond the end', str(result))

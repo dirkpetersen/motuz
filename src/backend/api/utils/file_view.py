@@ -109,16 +109,31 @@ class ChunkRequest:
     A validated pager request: a forward read of `length` bytes from `offset`, or a
     backward read of the chunk that ends at `before` (the previous chunk), or with
     `from_end` the last chunk of the file (tail).
+    `follow` (forward reads only) is the viewer's live follow mode (like `tail -f`):
+    it polls with `offset` at the end of what it has. An incomplete last line is
+    withheld until its newline arrives, and an offset beyond the end of the file (the
+    file was truncated or replaced) returns its new size instead of an error.
     """
-    def __init__(self, offset=None, before=None, from_end=False, length=CHUNK_BYTES):
+    def __init__(self, offset=None, before=None, from_end=False, length=CHUNK_BYTES, follow=False):
         self.offset = offset
         self.before = before
         self.from_end = from_end
         self.length = length
+        self.follow = follow
 
     @property
     def backward(self):
         return self.from_end or self.before is not None
+
+    @property
+    def skips_text_check(self):
+        """
+        A follow read past the start of the file: the viewer opened the file (and the
+        text check passed) before it follows it, so a cloud read needs no second
+        `rclone cat` of the first bytes. A file that shrank is reported without data,
+        and the viewer then reloads its tail with the check.
+        """
+        return self.follow and not self.backward and self.offset > 0
 
     def read_range(self):
         """
@@ -160,11 +175,18 @@ def parse_chunk_request(data):
     offset = _int_param(data, 'offset')
     before = _int_param(data, 'before')
     length = _int_param(data, 'length', CHUNK_BYTES, MIN_CHUNK_BYTES, CHUNK_BYTES)
+    follow = data.get('follow', False)
+    if follow is None:
+        follow = False
+    if not isinstance(follow, bool):
+        raise ViewError("'follow' must be true or false")
     if sum((offset is not None, before is not None, from_end)) > 1:
         raise ViewError("Use only one of 'offset', 'before' and 'from_end'")
+    if follow and (before is not None or from_end):
+        raise ViewError("'follow' reads forward from 'offset'")
     if offset is None and before is None and not from_end:
         offset = 0
-    return ChunkRequest(offset=offset, before=before, from_end=from_end, length=length)
+    return ChunkRequest(offset=offset, before=before, from_end=from_end, length=length, follow=follow)
 
 
 def _utf8_incomplete_tail(data):
@@ -201,6 +223,21 @@ def align_forward(data, at_eof):
         return newline + 1
     keep = len(data) - _utf8_incomplete_tail(data)
     return keep if keep > 0 else len(data)
+
+
+def align_complete_lines(data, length):
+    """
+    How many bytes of `data` (read forward up to the end of the file) a follow read
+    keeps: up to and including the last newline, so an incomplete last line is
+    withheld until its newline arrives. Only a line longer than a whole chunk
+    (`length`) is split, like align_forward does.
+    """
+    newline = data.rfind(b'\n')
+    if newline >= 0:
+        return newline + 1
+    if len(data) >= length:
+        return align_forward(data, False)
+    return 0
 
 
 def align_backward(data, data_start, lo):
@@ -249,10 +286,18 @@ def chunk_result(path, request, size, head, data_start, data):
     `head` is the first bytes of the file (text check), `data` the bytes read from
     `data_start` (request.read_range(), with a tail read's start resolved). `size` may
     be None when a cloud backend does not know it (forward reads only).
+    A forward read at the end of the file returns no content and eof without a text
+    check (the readers read nothing then): the viewer's cheap "nothing new" poll.
     """
     requested = request.before if request.before is not None else request.offset
     if size is not None and requested is not None and requested > size:
-        raise ViewError('Offset {} is beyond the end of the file ({} bytes)'.format(requested, size))
+        if not request.follow:
+            raise ViewError('Offset {} is beyond the end of the file ({} bytes)'.format(requested, size))
+        # Following a file that shrank (truncated, or replaced by a shorter one): its
+        # new size and no content; the viewer reloads the tail
+        return _empty_result(path, size, size)
+    if not request.backward and size is not None and request.offset == size and not data:
+        return _empty_result(path, size, size)
     if size is not None and data:
         # A file that grew while it was read
         size = max(size, data_start + len(data))
@@ -270,12 +315,24 @@ def chunk_result(path, request, size, head, data_start, data):
             at_eof = data_start + len(data) >= size
         else:
             at_eof = len(data) < request.length # fewer bytes than asked for
-        chunk = data[:align_forward(data, at_eof)]
+        if request.follow and at_eof:
+            chunk = data[:align_complete_lines(data, request.length)]
+        else:
+            chunk = data[:align_forward(data, at_eof)]
         end = start + len(chunk)
         if size is None and at_eof:
-            size = end
+            size = data_start + len(data)
+        if request.follow:
+            # All complete lines up to the end of the file: an incomplete last line
+            # (end < size) follows once it is complete
+            content, encoding = decode_chunk(chunk, start == 0)
+            return _result(path, content, start, end, size, at_eof, encoding)
 
     content, encoding = decode_chunk(chunk, start == 0)
+    return _result(path, content, start, end, size, size is not None and end >= size, encoding)
+
+
+def _result(path, content, start, end, size, eof, encoding):
     return {
         'path': path,
         'content': content,
@@ -283,9 +340,14 @@ def chunk_result(path, request, size, head, data_start, data):
         'end': end,
         'size': size,
         'bof': start == 0,
-        'eof': size is not None and end >= size,
+        'eof': eof,
         'encoding': encoding,
     }
+
+
+def _empty_result(path, offset, size):
+    """No content at `offset`, the end of the file (a forward read with nothing new)"""
+    return _result(path, '', offset, offset, size, True, 'utf-8')
 
 
 def run_limited(command, timeout, env=None):

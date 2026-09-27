@@ -536,6 +536,8 @@ if (PHASE === 'paste') {
     //   size:      File1.txt 10, file2.txt 100, image.bin 300, file10.txt 5000
     const FILE2 = 'hello from file2\n<b>not bold</b>\n' + 'z'.repeat(66) + '\n';
     const NUMBERED_LINES = 105000; // dira/numbered.log, 5,144,930 bytes
+    const FOLLOW_LINES = 300; // dirB/follow.log, "line NNNNNN of the followed log"
+    const FOLLOW_LOG = '/home/alice/ui-sort/dirB/follow.log';
     appShell('sudo -u alice python3 -', `
 import os, time
 d = '/home/alice/ui-sort'
@@ -554,6 +556,8 @@ put('file10.txt', b'y' * 4999 + b'\\n', now - 5)
 put('dira/numbered.log', b''.join(('line %06d %s of a numbered log\\n' % (i, '\\u00fc' * (i % 5) + 'x' * (i % 29))).encode()
                                   for i in range(1, ${NUMBERED_LINES} + 1)), now - 60)
 put('image.bin', b'\\x89PNG\\r\\n\\x1a\\n\\x00\\x00\\x00\\rIHDR' + bytes(range(256)) + b'\\x00' * 19, 1700000000)
+# a log for the follow mode (tail -f), appended to while the viewer follows it
+put('dirB/follow.log', b''.join(b'line %06d of the followed log\\n' % i for i in range(1, ${FOLLOW_LINES} + 1)), now - 60)
 os.utime(os.path.join(d, 'dira'), (now - 10 * 86400,) * 2)
 os.utime(os.path.join(d, 'dirB'), (now - 86400,) * 2)
 `);
@@ -806,6 +810,179 @@ os.utime(os.path.join(d, 'dirB'), (now - 86400,) * 2)
         await page.keyboard.press('Escape');
         await page.waitForSelector('.modal-content', { state: 'detached', timeout: 10000 });
         check('pager: no page errors', pageErrors.length === 0, pageErrors);
+    });
+
+    // ------------------------------------------------ follow mode (tail -f) on a growing log
+    await flow('file-viewer-follow', async () => {
+        let nextLine = FOLLOW_LINES + 1;
+        // Appends numbered lines to the log as alice, like a program writing it
+        const append = (n = 1) => {
+            const lines = [];
+            for (let i = 0; i < n; i++) {
+                lines.push(`line ${String(nextLine++).padStart(6, '0')} of the followed log`);
+            }
+            appShell(`sudo -u alice sh -c 'cat >> ${FOLLOW_LOG}'`, lines.join('\n') + '\n');
+            return nextLine - 1;
+        };
+        const chunkRequests = [];
+        let inFlight = 0, maxInFlight = 0;
+        const isChunk = r => r.url().includes('/api/system/files/view/chunk/');
+        page.on('request', r => {
+            if (isChunk(r)) {
+                chunkRequests.push({ t: Date.now(), body: r.postData() || '' });
+                maxInFlight = Math.max(maxInFlight, ++inFlight);
+            }
+        });
+        const done = r => { if (isChunk(r)) inFlight--; };
+        page.on('requestfinished', done);
+        page.on('requestfailed', done);
+        const hasLine = n => page.waitForFunction(n => (document.querySelector('.file-viewer-content') || {}).textContent
+            ?.includes(`line ${String(n).padStart(6, '0')} of`), n, { timeout: 15000 });
+        const followState = () => page.evaluate(() => ({
+            pressed: document.querySelector('.file-viewer-follow')?.getAttribute('aria-pressed'),
+            status: document.querySelector('.file-viewer-follow-status')?.textContent || '',
+            paused: document.querySelector('.file-viewer-paused')?.textContent || '',
+            newLines: Number((document.querySelector('.file-viewer-new-lines')?.textContent || '-1').replace(/\D/g, '')),
+            notice: document.querySelector('.file-viewer-notice')?.textContent || '',
+        }));
+
+        await openUiSort();
+        await row('dirB').dblclick();
+        await leftPane.getByText('follow.log', { exact: true }).waitFor({ timeout: 20000 });
+        await row('follow.log').dblclick();
+        await page.waitForSelector('.file-viewer-content span', { timeout: 20000 });
+        await waitPagerIdle();
+        check('follow: a "Follow" button next to Jump to top/bottom', await page.locator('.file-viewer-jumps .file-viewer-follow').count() === 1
+            && (await followState()).pressed === 'false');
+
+        // F (the content has the focus): the end of the file, polling for new lines
+        await page.keyboard.press('Shift+F');
+        await page.waitForSelector('.file-viewer-follow-status', { timeout: 10000 });
+        let fs = await followState();
+        let st = await pagerState();
+        check('follow: F turns it on: "Following… (updated …)", the button pressed, at the end of the file',
+            fs.pressed === 'true' && /^Following… \(updated (just now|\d+ s ago)\)$/.test(fs.status) && st.atBottom && st.bottom === FOLLOW_LINES, [fs, st]);
+
+        // A program appends lines over several seconds: each shows up within ~5 s, at the bottom
+        const delays = [];
+        let last = 0;
+        for (let i = 0; i < 4; i++) {
+            last = append(i + 1);
+            const t0 = Date.now();
+            await hasLine(last);
+            delays.push(Date.now() - t0);
+            await page.waitForTimeout(700);
+        }
+        await page.waitForTimeout(300); // scrolled after the render
+        st = await pagerState();
+        fs = await followState();
+        check('follow: appended lines appear within ~5 s', delays.every(d => d < 5500), delays);
+        check('follow: auto-scroll: the newest line is visible at the bottom', st.atBottom && st.bottom === last && st.last === last
+            && st.sequential, st);
+        check('follow: the appended lines join the last chunk (no chunk per poll)', st.chunks <= 2, st.chunks);
+        check('follow: status says when it last got new lines', /^Following… \(updated (just now|[0-5] s ago)\)$/.test(fs.status), fs.status);
+        const polls = chunkRequests.filter(r => r.body.includes('"follow":true'));
+        check('follow: polls are forward reads with follow=true from the end of what is shown', polls.length >= 3
+            && polls.every(r => /"offset":\d+/.test(r.body)), polls.map(r => r.body).slice(0, 3));
+        await shot('viewer-follow-following');
+        await pageShot('viewer-follow-following-page');
+
+        // Scroll up: auto-scroll pauses, the new lines are still received and counted
+        const box = await page.locator('.file-viewer-scroll').boundingBox();
+        await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+        await page.mouse.wheel(0, -700);
+        await page.waitForSelector('.file-viewer-paused', { timeout: 5000 });
+        await page.waitForTimeout(400); // smooth scrolling
+        const pausedAt = await pagerState();
+        fs = await followState();
+        check('follow: scrolling up pauses: "Paused: 0 new lines below · Resume"', /^Paused: 0 new lines below · Resume$/.test(fs.paused)
+            && !pausedAt.atBottom && fs.status === 'Following paused', [fs, pausedAt.scrollTop]);
+        const counts = [];
+        for (let i = 0; i < 3; i++) {
+            last = append(2);
+            const expected = 2 * (i + 1);
+            await page.waitForFunction(n => Number((document.querySelector('.file-viewer-new-lines')?.textContent || '').replace(/\D/g, '')) >= n,
+                expected, { timeout: 15000 });
+            counts.push((await followState()).newLines);
+        }
+        st = await pagerState();
+        check('follow: while paused, "N new lines below" counts up as lines are appended', JSON.stringify(counts) === '[2,4,6]', counts);
+        check('follow: while paused the view stays where it was (no auto-scroll)', Math.abs(st.scrollTop - pausedAt.scrollTop) < 2
+            && st.top === pausedAt.top && !st.atBottom, [pausedAt.scrollTop, st.scrollTop, pausedAt.top, st.top]);
+        await shot('viewer-follow-paused');
+        await pageShot('viewer-follow-paused-page');
+
+        await page.click('.file-viewer-resume');
+        await page.waitForSelector('.file-viewer-paused', { state: 'detached', timeout: 10000 });
+        await page.waitForTimeout(300);
+        st = await pagerState();
+        fs = await followState();
+        check('follow: Resume jumps to the newest line and follows again', st.atBottom && st.bottom === last
+            && fs.status.startsWith('Following…'), [st, fs]);
+        last = append(1);
+        await hasLine(last);
+        await page.waitForTimeout(300);
+        st = await pagerState();
+        check('follow: after Resume new lines scroll into view again', st.atBottom && st.bottom === last, st);
+
+        // The log is truncated (rotated): a notice, and the new end is shown
+        appShell(`sudo -u alice sh -c 'cat > ${FOLLOW_LOG}'`,
+            [1, 2, 3].map(i => `line ${String(i).padStart(6, '0')} after the truncation`).join('\n') + '\n');
+        await page.waitForSelector('.file-viewer-notice-truncated', { timeout: 15000 });
+        await page.waitForFunction(() => (document.querySelector('.file-viewer-content') || {}).textContent
+            === 'line 000001 after the truncation\nline 000002 after the truncation\nline 000003 after the truncation\n', null, { timeout: 15000 });
+        await page.waitForTimeout(300);
+        fs = await followState();
+        st = await pagerState();
+        check('follow: truncated file: "File was truncated, showing the new end", the tail reloaded', fs.notice.startsWith('File was truncated, showing the new end')
+            && st.lines === 3 && st.status.includes('of 99') && fs.status.startsWith('Following…'), [fs, st]);
+        await shot('viewer-follow-truncated');
+        await pageShot('viewer-follow-truncated-page');
+        nextLine = 4;
+        last = append(1);
+        await hasLine(last);
+        check('follow: after the truncation new lines are followed again', (await pagerState()).last === 4);
+
+        // Hidden tab: no polls; visible again: polls at once
+        await page.evaluate(() => {
+            Object.defineProperty(document, 'hidden', { configurable: true, get: () => true });
+            document.dispatchEvent(new Event('visibilitychange'));
+        });
+        await page.waitForTimeout(1000); // an answer on its way
+        let before = chunkRequests.length;
+        await page.waitForTimeout(5000);
+        check('follow: no polls while the tab is hidden', chunkRequests.length === before, chunkRequests.length - before);
+        await page.evaluate(() => {
+            delete document.hidden;
+            document.dispatchEvent(new Event('visibilitychange'));
+        });
+        await page.waitForTimeout(1000);
+        check('follow: polls again as soon as the tab is visible', chunkRequests.length > before, chunkRequests.length - before);
+
+        // The F key toggles it off and on again
+        await page.locator('.file-viewer-scroll').focus();
+        await page.keyboard.press('f');
+        await page.waitForSelector('.file-viewer-follow-status', { state: 'detached', timeout: 5000 });
+        fs = await followState();
+        check('follow: F again turns it off', fs.pressed === 'false', fs);
+        await page.waitForTimeout(1000);
+        before = chunkRequests.length;
+        await page.waitForTimeout(4500);
+        check('follow: off: no more polls', chunkRequests.length === before, chunkRequests.length - before);
+        await page.keyboard.press('F');
+        await page.waitForSelector('.file-viewer-follow-status', { timeout: 5000 });
+        check('follow: F turns it on again', (await followState()).pressed === 'true');
+
+        // Closing the dialog stops polling
+        await page.waitForTimeout(2500);
+        await page.keyboard.press('Escape');
+        await page.waitForSelector('.modal-content', { state: 'detached', timeout: 10000 });
+        const closedAt = Date.now();
+        await page.waitForTimeout(7000);
+        const after = chunkRequests.filter(r => r.t > closedAt);
+        check('follow: closing the dialog stops polling (0 requests to /files/view/chunk/ afterwards)', after.length === 0, after);
+        check('follow: never two chunk requests at once', maxInFlight === 1, maxInFlight);
+        check('follow: no page errors', pageErrors.length === 0, pageErrors);
     });
 } else {
     // Callback mode: Microsoft (fake_ms.py) sends the sign-in tab back to Motuz, which

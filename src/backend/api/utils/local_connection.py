@@ -223,6 +223,7 @@ def _mkdir_with_impersonation(path, user):
 # open file) and prints a JSON header line ({"size", "start", "head"}) followed by the
 # first `head` bytes of the file (at most, for the text check) and at most `count` bytes
 # from `start` (a negative start counts from the end of the file, for a tail read).
+# Nothing is read when `start` is at (or past) the end of the file.
 # Errors: exit status 3 and {"error": kind} on stdout.
 _VIEW_READER = r'''
 import json, os, stat, sys
@@ -247,6 +248,8 @@ st = os.fstat(fd)
 if not stat.S_ISREG(st.st_mode): fail("special")
 if start < 0:
     start = max(0, st.st_size + start)
+if start >= st.st_size:
+    head_cap = count = 0 # at the end: nothing to read (a follow poll without news)
 def read_at(pos, n):
     chunks, size = [], 0
     while size < n:

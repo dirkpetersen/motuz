@@ -122,7 +122,8 @@ def view_chunk(data):
     One chunk of a text file for the pager, read as the logged-in user:
     {path, content, offset, end, size, bof, eof, encoding}. Parameters: `offset` (a
     forward read), `before` (the chunk that ends there) or `from_end` (the last
-    chunk), and `length` (at most file_view.CHUNK_BYTES). Contents are never logged.
+    chunk), `length` (at most file_view.CHUNK_BYTES) and `follow` (the viewer's
+    follow mode, see file_view.ChunkRequest). Contents are never logged.
     """
     try:
         request_ = file_view.parse_chunk_request(data)

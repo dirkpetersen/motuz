@@ -127,6 +127,8 @@ class RcloneConnection(AbstractConnection):
         as the user with the connection's credentials: `lsjson --stat` (size; a folder
         is refused), `cat --offset --count` for the range and, unless the range starts
         at the beginning of the file, `cat --count` for the first bytes (text check).
+        A forward read at the end of the file needs only `lsjson --stat`, and a follow
+        read (request.skips_text_check) no text check.
         """
         credentials, base, remote = self._view_base(data, path)
         size = self._view_stat(base, remote, credentials, path)
@@ -138,8 +140,10 @@ class RcloneConnection(AbstractConnection):
         else:
             if request.backward and request.before is not None and request.before > size:
                 raise file_view.ViewError('Offset {} is beyond the end of the file ({} bytes)'.format(request.before, size))
-            if not request.backward and request.offset > size:
-                raise file_view.ViewError('Offset {} is beyond the end of the file ({} bytes)'.format(request.offset, size))
+            if not request.backward and request.offset >= size:
+                # At the end (a follow poll without news) or past it (400, or for a
+                # follow read the new size of a file that shrank): no `cat` at all
+                return file_view.chunk_result(path, request, size, b'', request.offset, b'')
             if start < 0: # tail
                 start = max(0, size + start)
             count = max(0, min(count, size - start))
@@ -153,6 +157,8 @@ class RcloneConnection(AbstractConnection):
         head_needed = file_view.HEAD_CHECK_BYTES if size is None else min(size, file_view.HEAD_CHECK_BYTES)
         if start == 0 and len(content) >= head_needed:
             head = content[:file_view.HEAD_CHECK_BYTES]
+        elif request.skips_text_check:
+            head = b'' # following: the viewer checked the first bytes when it opened the file
         else:
             command = base + ['cat', '--count', str(file_view.HEAD_CHECK_BYTES), remote]
             self._log_command(command, credentials)
