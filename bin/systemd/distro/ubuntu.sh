@@ -44,12 +44,12 @@ distro_install_packages() {
     fi
 }
 
-# A remote worker (install.sh --worker-only): motuz_worker.py runs on the system python3
-# with the standard library only; rclone is the pinned one
+# A remote worker host (install.sh --worker-only): rclone runs as the users, the worker
+# (src/worker/motuz_worker.py) with the distribution's python3
 distro_install_worker_packages() {
     export DEBIAN_FRONTEND=noninteractive
     apt-get update -y -q
-    apt-get install -y -q --no-install-recommends python3 sudo curl ca-certificates unzip
+    apt-get install -y -q --no-install-recommends git curl ca-certificates unzip python3 sudo
 }
 
 # Only Traefik listens beyond loopback

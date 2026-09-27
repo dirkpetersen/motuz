@@ -45,7 +45,7 @@ import subprocess
 import tempfile
 import urllib.parse
 
-from .abstract_connection import RcloneException
+from .abstract_connection import RcloneException, run as run_command
 
 
 class LocalCredentialsError(RcloneException):
@@ -194,7 +194,7 @@ def read_home_files(user, relpaths, home=None):
     command += [_python(), '-I', '-S', '-c', _READER, str(MAX_FILE_SIZE), home, *relpaths]
 
     try:
-        result = subprocess.run(command, stdin=subprocess.DEVNULL, capture_output=True, timeout=READ_TIMEOUT)
+        result = run_command(command, timeout=READ_TIMEOUT)
     except subprocess.TimeoutExpired:
         logging.error("Reading credential files of %s timed out", user)
         raise LocalCredentialsError('Reading your home directory timed out')

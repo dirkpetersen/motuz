@@ -57,7 +57,7 @@ distro_install_packages() {
 # A remote worker (install.sh --worker-only): motuz_worker.py runs on the system python3
 # with the standard library only; rclone is the pinned one
 distro_install_worker_packages() {
-    local pkgs=(python3 sudo unzip tar gzip shadow-utils util-linux policycoreutils ca-certificates)
+    local pkgs=(python3 sudo git unzip tar gzip shadow-utils util-linux policycoreutils ca-certificates)
     command -v curl >/dev/null || pkgs+=(curl)
     dnf -y -q install "${pkgs[@]}"
 }

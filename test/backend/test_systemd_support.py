@@ -49,7 +49,7 @@ class TestAbsoluteCommands(unittest.TestCase):
     """The sudoers rule allows /usr/local/bin/rclone, /usr/bin/ls, /usr/bin/mkdir, /usr/bin/env"""
 
     def test_ls_and_mkdir(self):
-        with mock.patch.object(local_connection.subprocess, 'check_output', return_value=b'') as run:
+        with mock.patch.object(local_connection, 'check_output', return_value=b'') as run:
             local_connection._ls_with_impersonation('/data', 'alice')
             local_connection._mkdir_with_impersonation('/data/new', 'alice')
         ls, mkdir = run.call_args_list[0][0][0], run.call_args_list[1][0][0]
@@ -70,12 +70,42 @@ class TestAbsoluteCommands(unittest.TestCase):
         self.assertEqual(rclone_connection.RCLONE, '/usr/local/bin/rclone')
 
 
+class TestSignalMask(unittest.TestCase):
+    """uWSGI blocks signals in its worker threads; sudo-rs keeps an inherited mask and hangs"""
+
+    def in_blocking_thread(self, function):
+        import signal
+        import threading
+        result = {}
+
+        def run():
+            signal.pthread_sigmask(signal.SIG_BLOCK, set(signal.Signals) - {signal.SIGKILL, signal.SIGSTOP})
+            result['value'] = function()
+            result['mask_after'] = signal.pthread_sigmask(signal.SIG_BLOCK, [])
+        thread = threading.Thread(target=run)
+        thread.start()
+        thread.join(30)
+        return result
+
+    @unittest.skipUnless(os.path.exists('/proc/self/status'), 'needs /proc')
+    def test_children_start_with_no_blocked_signals(self):
+        from api.utils import file_view
+        command = ['grep', '^SigBlk:', '/proc/self/status']
+        for name, function in (
+                ('check_output', lambda: abstract_connection.check_output(command).decode()),
+                ('run', lambda: abstract_connection.run(command, timeout=10).stdout.decode()),
+                ('run_limited', lambda: file_view.run_limited(command, 10)[1].decode())):
+            result = self.in_blocking_thread(function)
+            self.assertEqual(result['value'].split()[-1], '0' * 16, name)
+            self.assertGreater(len(result['mask_after']), 30, name) # the thread's own mask is restored
+
+
 class TestHomeDirectory(unittest.TestCase):
 
     def test_from_the_user_database_without_a_shell(self):
         entry = pwd.struct_passwd(('alice', 'x', 1501, 1501, '', '/home/alice', '/bin/bash'))
         with mock.patch.object(local_connection.pwd, 'getpwnam', return_value=entry), \
-                mock.patch.object(local_connection.subprocess, 'check_output', side_effect=AssertionError('no subprocess')):
+                mock.patch.object(local_connection, 'check_output', side_effect=AssertionError('no subprocess')):
             self.assertEqual(local_connection._homepath_with_impersonation('alice'), '/home/alice')
             self.assertEqual(local_credentials.home_directory('alice'), '/home/alice')
 
@@ -177,7 +207,7 @@ class TestNodeCheck(unittest.TestCase):
     def test_required_paths(self):
         tmp = tempfile.mkdtemp()
         self.addCleanup(os.rmdir, tmp)
-        env = {'MOTUZ_REQUIRED_PATHS': tmp + ':/nonexistent/motuz', 'MOTUZ_REQUIRED_MOUNTS': '/:' + tmp + ':relative'}
+        env = {'MOTUZ_REQUIRED_PATHS': '/nonexistent/motuz, /:' + tmp + ',relative'}
         problems = node_check.required_paths_problems(env)
         self.assertEqual(len(problems), 3, problems)
         self.assertIn('/nonexistent/motuz is not a directory', problems[0])
@@ -189,17 +219,17 @@ class TestNodeCheck(unittest.TestCase):
         def hang(path, mount):
             time.sleep(5)
         with mock.patch.object(node_check, '_check_path', side_effect=hang):
-            problems = node_check.required_paths_problems({'MOTUZ_REQUIRED_MOUNTS': '/fh/fast'}, timeout=0.2)
+            problems = node_check.required_paths_problems({'MOTUZ_REQUIRED_PATHS': '/fh/fast'}, timeout=0.2)
         self.assertEqual(problems, ['/fh/fast does not respond (hung mount?)'])
 
     def test_script_refuses_to_start(self):
-        env = dict(os.environ, MOTUZ_REQUIRED_MOUNTS='/nonexistent/motuz')
+        env = dict(os.environ, MOTUZ_REQUIRED_PATHS='/nonexistent/motuz')
         out = subprocess.run([sys.executable, '-I', os.path.join(BACKEND, 'api', 'utils', 'node_check.py'), 'start'],
                              env=env, capture_output=True, text=True)
         self.assertEqual(out.returncode, 1)
         self.assertIn('/nonexistent/motuz is not a directory', out.stderr)
         self.assertIn('refusing to start the worker', out.stderr)
-        env['MOTUZ_REQUIRED_MOUNTS'] = '/'
+        env['MOTUZ_REQUIRED_PATHS'] = '/'
         out = subprocess.run([sys.executable, '-I', os.path.join(BACKEND, 'api', 'utils', 'node_check.py'), 'start'],
                              env=env, capture_output=True, text=True)
         self.assertEqual(out.returncode, 0, out.stderr)
@@ -215,12 +245,11 @@ class TestNodeCheck(unittest.TestCase):
 
     def test_jobs_fail_on_a_node_without_its_mounts(self):
         from api.tasks import celery_tasks
-        with mock.patch.dict(os.environ, {'MOTUZ_REQUIRED_MOUNTS': '/nonexistent/motuz'}):
+        with mock.patch.dict(os.environ, {'MOTUZ_REQUIRED_PATHS': '/nonexistent/motuz'}):
             with self.assertRaises(RuntimeError) as cm:
                 celery_tasks._ensure_node_ready()
         self.assertIn('cannot run jobs: /nonexistent/motuz is not a directory', str(cm.exception))
         with mock.patch.dict(os.environ, {}):
-            os.environ.pop('MOTUZ_REQUIRED_MOUNTS', None)
             os.environ.pop('MOTUZ_REQUIRED_PATHS', None)
             celery_tasks._ensure_node_ready()
 

@@ -52,6 +52,11 @@ def create_app(config_name='dev'):
     if 'internal' not in app.blueprints:
         app.register_blueprint(internal_bp)
 
+    # Remote workers (/api/workers/..., worker credentials only; not in Swagger)
+    from .views.worker_views import bp as workers_bp
+    if 'workers' not in app.blueprints:
+        app.register_blueprint(workers_bp)
+
     # Public privacy policy and terms (no login, no JavaScript)
     from .views.legal_views import bp as legal_bp
     if 'legal' not in app.blueprints:

@@ -356,8 +356,10 @@ def run_limited(command, timeout, env=None):
     (returncode, stdout bytes, stderr bytes). On timeout the group is terminated and
     ViewTimeoutError raised.
     """
-    process = subprocess.Popen(
-        command,
+    from .abstract_connection import signals_unblocked
+    with signals_unblocked():
+        process = subprocess.Popen(
+            command,
         stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,

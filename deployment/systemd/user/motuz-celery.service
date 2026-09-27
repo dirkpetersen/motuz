@@ -18,8 +18,8 @@ EnvironmentFile=%h/.config/motuz/secrets.env
 EnvironmentFile=%h/.config/motuz/broker.env
 # Only the app signs in and refreshes OAuth tokens (token broker)
 UnsetEnvironment=MOTUZ_ONEDRIVE_CLIENT_SECRET MOTUZ_GDRIVE_CLIENT_SECRET
-# Refuses to start (the unit fails, the journal says why) while MOTUZ_REQUIRED_PATHS /
-# MOTUZ_REQUIRED_MOUNTS are missing (api/utils/node_check.py; jobs check them too).
+# Refuses to start (the unit fails, the journal says why) while a mount point of
+# MOTUZ_REQUIRED_PATHS is missing (api/utils/node_check.py; jobs check them too).
 # Retried every RestartSec, so the worker comes up once the mounts are there.
 ExecStartPre=%h/motuz/venv/bin/python -I %h/motuz/src/backend/api/utils/node_check.py start
 ExecStart=%h/motuz/venv/bin/celery -A api.tasks worker -l info

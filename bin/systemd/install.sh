@@ -14,7 +14,8 @@
 #   --sudo-group=GROUP  Motuz may act only as members of GROUP (default: any user but root)
 #   --user=NAME         the service account (default motuz)
 #   --home=DIR          its home directory, on local disk (default /var/lib/motuz)
-#   --worker-only       a remote worker (README, "Remote workers (HTTPS only)"), no server:
+#   --worker-only       a remote worker host (README, "Remote workers (HTTPS only)"); no
+#                       database, broker, web server or login helper:
 #                       python3, sudo, rclone, the account and its sudoers rule, and the
 #                       user unit motuz-worker.service with ~/.config/motuz-worker/worker.env
 #                       (MOTUZ_HOME = this checkout, which must stay readable by the

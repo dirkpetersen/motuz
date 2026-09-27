@@ -115,7 +115,7 @@ class TestListRealDirectory(unittest.TestCase):
 
         try:
             with mock.patch.dict(os.environ, {'TZ': tz}), \
-                    mock.patch('api.utils.local_connection.subprocess.check_output', side_effect=without_sudo):
+                    mock.patch('api.utils.local_connection.check_output', side_effect=without_sudo):
                 time.tzset()
                 return {f['name']: f for f in _parse_ls(_ls_with_impersonation(self.dir, 'someone'))}
         finally:

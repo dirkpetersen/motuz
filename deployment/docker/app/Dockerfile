@@ -113,6 +113,9 @@ RUN set -x \
 COPY --from=frontend-build /app/build /app/build
 
 COPY ./src/backend /app/src/backend
+# motuz-worker, the remote worker agent (README, "Remote workers (HTTPS only)"); it
+# imports the job code from /app/src/backend. Unused by the central node's containers.
+COPY ./src/worker /app/src/worker
 COPY \
     ./deployment/docker/app/app-entrypoint.sh \
     ./deployment/docker/wait-for-it.sh \

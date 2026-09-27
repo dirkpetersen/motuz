@@ -1,5 +1,7 @@
-import subprocess
+import contextlib
 import os
+import signal
+import subprocess
 
 
 # Only these variables of the server's environment reach rclone and other commands run
@@ -15,6 +17,60 @@ def user_process_env(extra=None):
     env.setdefault('PATH', '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin')
     env.update(extra or {})
     return env
+
+
+@contextlib.contextmanager
+def signals_unblocked():
+    """
+    Commands started inside this block begin with no blocked signals. A child inherits
+    the signal mask of the thread that forks it, and uWSGI blocks almost every signal in
+    its worker threads: classic sudo resets its mask, but sudo-rs (Ubuntu 26.04) keeps it,
+    never sees its command exit (SIGCHLD) and hangs, and the command (rclone) would ignore
+    SIGTERM from Stop. The mask is per thread and restored at once.
+    """
+    try:
+        previous = signal.pthread_sigmask(signal.SIG_SETMASK, [])
+    except (AttributeError, OSError, ValueError):
+        yield
+        return
+    try:
+        yield
+    finally:
+        signal.pthread_sigmask(signal.SIG_SETMASK, previous)
+
+
+def spawn(command, **kwargs):
+    """subprocess.Popen, the child starting with no blocked signals (signals_unblocked);
+    only the fork runs with the calling thread's signals unblocked"""
+    with signals_unblocked():
+        return subprocess.Popen(command, **kwargs)
+
+
+def check_output(command, stderr=None, env=None, timeout=None):
+    """subprocess.check_output through spawn(); returns stdout bytes"""
+    process = spawn(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=stderr, env=env)
+    try:
+        stdout, err = process.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.communicate()
+        raise
+    if process.returncode:
+        raise subprocess.CalledProcessError(process.returncode, command, stdout, err)
+    return stdout
+
+
+def run(command, timeout):
+    """subprocess.run(capture_output=True, stdin=DEVNULL) through spawn(); raises
+    subprocess.TimeoutExpired after killing the command"""
+    process = spawn(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    try:
+        stdout, stderr = process.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.communicate()
+        raise
+    return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
 
 
 def sudo_as(user, extra=None):
@@ -41,11 +97,7 @@ class AbstractConnection:
     def _execute(self, command, env={}):
         full_env = user_process_env(env)
         try:
-            byteOutput = subprocess.check_output(
-                command,
-                stderr=subprocess.PIPE,
-                env=full_env
-            )
+            byteOutput = check_output(command, stderr=subprocess.PIPE, env=full_env)
             output = byteOutput.decode('UTF-8').rstrip()
             return output
         except subprocess.CalledProcessError as err:
