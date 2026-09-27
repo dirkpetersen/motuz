@@ -285,6 +285,8 @@ check('create copy job', status in (200, 201), (status, cj))
 cj = wait_job('copy-jobs', cj['id'], A)
 check('copy job SUCCESS', cj['progress_state'] == 'SUCCESS' and cj['progress_current'] == 100, cj)
 check('copy progress text returned', 'Transferred' in (cj.get('progress_text') or ''), cj.get('progress_text'))
+check('job runs on the Motuz server (pool central, no worker status)',
+      cj.get('pool') == 'central' and cj.get('pool_status') is None, (cj.get('pool'), cj.get('pool_status')))
 owner = sh('app', "stat -c %U /home/alice/dst/f1.txt /home/alice/dst/sub/d.txt").stdout.split()
 check('copied files owned by alice', owner == ['alice', 'alice'], owner)
 

@@ -39,6 +39,10 @@ job_dto = api.model('copy-job', {
     'progress_total': fields.Integer(readonly=True, example=100),
     'progress_error': fields.String(readonly=True),
     'progress_execution_time': fields.Integer(readonly=True, example=3600),
+    # Where the job runs (managers/worker_manager.annotate_location): 'central' (this
+    # node) or a remote pool, and e.g. "starting worker (c7gn.2xlarge)"
+    'pool': fields.String(readonly=True, example='aws'),
+    'pool_status': fields.String(readonly=True, example='running on c7gn.2xlarge'),
 })
 
 list_dto = api.model('copy-job-list', {

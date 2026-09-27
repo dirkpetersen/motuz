@@ -122,5 +122,11 @@ COPY \
     ./deployment/docker/load-secrets.sh \
     /app/src/backend/
 
+# The commit this image is built from (bin/prod/build.sh). Temporary EC2 workers fetch
+# Motuz at this commit unless MOTUZ_WORKER_SOURCE_REF says otherwise. Last, so that a new
+# commit does not invalidate the layers above.
+ARG MOTUZ_SOURCE_COMMIT=
+ENV MOTUZ_SOURCE_COMMIT=${MOTUZ_SOURCE_COMMIT}
+
 WORKDIR /app/src/backend
 CMD ["/app/src/backend/app-entrypoint.sh"]

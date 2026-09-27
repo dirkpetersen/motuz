@@ -3,6 +3,7 @@ import {Pagination, ProgressBar, Table} from 'react-bootstrap';
 
 import UriResource from 'components/UriResource.jsx'
 import parseTime from 'utils/parseTime.jsx'
+import {describeJobLocation} from 'utils/jobLocation.js'
 
 
 class CopyJobTable extends React.Component {
@@ -82,10 +83,16 @@ class CopyJobTable extends React.Component {
                 color = 'primary'
             }
 
+            const location = describeJobLocation(job)
             const state = (
-                <b className={`text-${color}`}>
-                    {job.progress_state}
-                </b>
+                <>
+                    <b className={`text-${color}`}>
+                        {job.progress_state}
+                    </b>
+                    {location && (
+                        <div className="small text-muted job-location">{location}</div>
+                    )}
+                </>
             )
             const source = (
                 <UriResource protocol={job.src_cloud_type} path={job.src_resource_path} />

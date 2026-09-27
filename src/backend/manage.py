@@ -93,6 +93,62 @@ def workers_bootstrap(pool, job, ttl):
     click.echo(token)
 
 
+@cli.group('ec2')
+def ec2():
+    """Temporary EC2 workers (README, "Temporary EC2 workers")"""
+
+
+def _ec2_enabled():
+    from api.managers import ec2_launcher
+    if not ec2_launcher.settings().enabled:
+        raise click.ClickException('EC2 workers are off (MOTUZ_EC2_WORKERS is not true)')
+    return ec2_launcher
+
+
+@ec2.command('reap')
+@click.option('--loop', is_flag=True, help='Repeat every MOTUZ_EC2_REAP_INTERVAL (the Celery container runs this)')
+def ec2_reap(loop):
+    """Terminates finished, overdue and unknown workers, fails jobs of dead ones, launches queued jobs"""
+    ec2_launcher = _ec2_enabled()
+    if loop:
+        ec2_launcher.reap_loop()
+        return
+    click.echo(ec2_launcher._summary_text(ec2_launcher.reap()))
+
+
+@ec2.command('status')
+@click.option('--limit', default=20, help='Number of recent launches to show')
+def ec2_status(limit):
+    """Recent EC2 worker launches and the worker instances EC2 reports"""
+    from api.managers import ec2_launcher
+    from api.models import Ec2Worker
+    s = ec2_launcher.settings()
+    click.echo('EC2 workers {} (pool {}, region {}, at most {}, max runtime {}s, types {})'.format(
+        'on' if s.enabled else 'off', s.pool, s.region or '-', s.max_workers, s.max_runtime,
+        ', '.join('<{}:{}'.format(r.limit, r.instance_type) if r.limit else '*:' + r.instance_type
+                  for r in s.instance_types)))
+    for row in Ec2Worker.query.order_by(Ec2Worker.id.desc()).limit(limit):
+        click.echo('{:<20} {}:{:<6} #{} {:<14} {:<14} launched {} terminated {} {}'.format(
+            row.instance_id or '-', row.job_type, row.job_id, row.attempt, row.instance_type, row.state,
+            row.launched_at or '-', row.terminated_at or '-', row.last_error or ''))
+    if s.enabled:
+        for instance in ec2_launcher._describe_workers(ec2_launcher.client()):
+            tags = {t['Key']: t['Value'] for t in instance.get('Tags', [])}
+            click.echo('EC2: {} {} {} {} job {}'.format(instance['InstanceId'], instance['InstanceType'],
+                       instance['State']['Name'], instance.get('LaunchTime'), tags.get('MotuzJob', '-')))
+
+
+@ec2.command('check')
+def ec2_check():
+    """RunInstances with DryRun for each instance type: are this node's IAM permissions right?"""
+    ec2_launcher = _ec2_enabled()
+    failed = False
+    for instance_type, ok, message in ec2_launcher.check_permissions():
+        click.echo('{:<14} {} ({})'.format(instance_type, 'allowed' if ok else 'DENIED', message))
+        failed = failed or not ok
+    sys.exit(1 if failed else 0)
+
+
 @cli.command('test')
 def test():
     """Runs the unit tests."""

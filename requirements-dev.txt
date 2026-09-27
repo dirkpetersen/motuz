@@ -17,6 +17,12 @@ billiard==4.3.0
     # via celery
 blinker==1.9.0
     # via flask
+boto3==1.43.103
+    # via -r requirements.in
+botocore==1.43.103
+    # via
+    #   boto3
+    #   s3transfer
 celery==5.6.3
     # via -r requirements.in
 click==8.5.0
@@ -61,6 +67,10 @@ itsdangerous==2.2.0
     # via flask
 jinja2==3.1.6
     # via flask
+jmespath==1.1.0
+    # via
+    #   boto3
+    #   botocore
 jsonschema==4.26.0
     # via flask-restx
 jsonschema-specifications==2025.9.1
@@ -102,7 +112,9 @@ pylint==4.0.9
 pytest==9.1.1
     # via -r requirements-dev.in
 python-dateutil==2.9.0.post0
-    # via celery
+    # via
+    #   botocore
+    #   celery
 redis==6.4.0
     # via kombu
 referencing==0.37.0
@@ -114,6 +126,8 @@ rpds-py==2026.6.3
     # via
     #   jsonschema
     #   referencing
+s3transfer==0.19.2
+    # via boto3
 six==1.17.0
     # via python-dateutil
 sqlalchemy==2.1.0
@@ -134,6 +148,8 @@ tzdata==2026.4
     # via kombu
 tzlocal==5.4.4
     # via celery
+urllib3==2.8.0
+    # via botocore
 uwsgi==2.0.31
     # via -r requirements.in
 vine==5.1.0

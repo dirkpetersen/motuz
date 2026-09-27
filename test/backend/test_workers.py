@@ -717,5 +717,76 @@ class TestWorkerAgent(unittest.TestCase):
         self.assertFalse(any(p.startswith('required path / ') for p in problems), problems)
 
 
+    # ---- MOTUZ_WORKER_RUN_AS (temporary EC2 workers) and the --once deadline
+
+    def config(self, env=None, once=False):
+        args = mock.Mock(central_url=None, bootstrap_token='mzb1.1.x', bootstrap_token_file=None, once=once)
+        return self.agent.Config(dict({'MOTUZ_CENTRAL_URL': 'https://motuz.test'}, **(env or {})), args)
+
+    def ticket(self, src=None, dst=None):
+        remote = {'local': False, 'remote': 'src', 'path': 'bucket/a', 'rclone_env': {'RCLONE_CONFIG_SRC_TYPE': 's3'}}
+        return {'ticket_id': 1, 'ticket_token': 't', 'progress_interval': 1, 'job': {
+            'type': 'copy', 'id': 3, 'owner': 'alice', 'options': {},
+            'src': src or remote, 'dst': dst or dict(remote, remote='dst', rclone_env={'RCLONE_CONFIG_DST_TYPE': 's3'})}}
+
+    def test_run_as_must_be_an_unprivileged_name(self):
+        self.assertEqual(self.config({'MOTUZ_WORKER_RUN_AS': 'motuzjob'}).run_as, 'motuzjob')
+        self.assertIsNone(self.config().run_as)
+        for bad in ('root', 'a b', '-o', 'x' * 40):
+            with self.assertRaises(self.agent.ConfigError):
+                self.config({'MOTUZ_WORKER_RUN_AS': bad})
+
+    def test_rclone_runs_as_the_run_as_account(self):
+        config = self.config({'MOTUZ_WORKER_RUN_AS': 'motuzjob'})
+        run = self.agent.JobRun(mock.Mock(), config, self.ticket(), lambda: False)
+        with mock.patch.object(run.connection, 'copy_with_credentials') as copy, \
+                mock.patch.object(self.agent.job_runner, 'watch_copy', return_value=0), \
+                mock.patch.object(run.connection, 'copy_text', return_value=''), \
+                mock.patch.object(run.connection, 'copy_error_text', return_value=''), \
+                mock.patch.object(run, 'finish') as finish:
+            run.run()
+        self.assertEqual(copy.call_args.kwargs['user'], 'motuzjob')
+        self.assertEqual(finish.call_args.args[0]['state'], 'SUCCESS')
+        # Without it: the job's owner, as before
+        run = self.agent.JobRun(mock.Mock(), self.config(), self.ticket(), lambda: False)
+        with mock.patch.object(run.connection, 'copy_with_credentials') as copy, \
+                mock.patch.object(self.agent.job_runner, 'watch_copy', return_value=0), \
+                mock.patch.object(run.connection, 'copy_text', return_value=''), \
+                mock.patch.object(run.connection, 'copy_error_text', return_value=''), \
+                mock.patch.object(run, 'finish'):
+            run.run()
+        self.assertEqual(copy.call_args.kwargs['user'], 'alice')
+
+    def test_run_as_refuses_local_paths_and_home_credentials(self):
+        config = self.config({'MOTUZ_WORKER_RUN_AS': 'motuzjob'})
+        for ticket, text in ((self.ticket(dst={'local': True, 'path': '/home/alice/x'}), 'destination is a local path'),
+                             (self.ticket(src={'local': False, 'remote': 'src', 'path': 'b',
+                                               'profile_connection': {'type': 's3'}}), "owner's home directory")):
+            run = self.agent.JobRun(mock.Mock(), config, ticket, lambda: False)
+            with mock.patch.object(run.connection, 'copy_with_credentials') as copy, \
+                    mock.patch.object(run, 'finish') as finish:
+                run.run()
+            copy.assert_not_called()
+            result = finish.call_args.args[0]
+            self.assertEqual(result['state'], 'FAILED')
+            self.assertIn(text, result['error_text'])
+
+    def test_once_gives_up_when_the_central_node_is_unreachable(self):
+        config = self.config({'MOTUZ_WORKER_ONCE_WAIT': '2', 'MOTUZ_CENTRAL_URL': 'https://127.0.0.1:9'}, once=True)
+        worker = self.agent.Worker(config)
+        start = time.time()
+        with self.assertLogs('motuz-worker', level='WARNING') as logs, \
+                mock.patch.object(self.agent, 'check_host', return_value=[]):
+            result = worker.run()
+        self.assertEqual(result, self.agent.EXIT_NO_JOB)
+        self.assertLess(time.time() - start, 10)
+        self.assertTrue(any('giving up' in line for line in logs.output))
+        self.assertFalse(any('mzb1.1.x' in line for line in logs.output))
+
+    def test_no_deadline_without_once(self):
+        worker = self.agent.Worker(self.config({'MOTUZ_WORKER_ONCE_WAIT': '0'}))
+        self.assertFalse(worker.shutdown())
+
+
 if __name__ == '__main__':
     unittest.main()

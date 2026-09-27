@@ -2,7 +2,8 @@
 #   uv pip compile requirements.in --python-version 3.12 --upgrade -o requirements.txt
 #   uv pip compile requirements-dev.in --python-version 3.12 --upgrade -o requirements-dev.txt
 alembic
-# [redis]: the Redis broker of the systemd install (MOTUZ_CELERY_BROKER_URL=redis+socket://...)
+boto3
+# [redis]: the Redis/Valkey broker of the systemd install (MOTUZ_CELERY_BROKER_URL=redis+socket://...)
 celery[redis]
 Flask
 Flask-JWT-Extended

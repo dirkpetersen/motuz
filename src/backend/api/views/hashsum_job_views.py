@@ -27,6 +27,10 @@ dto = api.model('hashsum-job', {
     'progress_current': fields.Integer(readonly=True, example=45),
     'progress_total': fields.Integer(readonly=True, example=100),
     'progress_execution_time': fields.Integer(readonly=True, example=3600),
+    # Where the job runs (managers/worker_manager.annotate_location): 'central' (this
+    # node) or a remote pool, and e.g. "starting worker (c7gn.2xlarge)"
+    'pool': fields.String(readonly=True, example='aws'),
+    'pool_status': fields.String(readonly=True, example='running on c7gn.2xlarge'),
     'progress_error': fields.String(readonly=True),
 
     'progress_src_tree': fields.String(readonly=True, example='[{title, children}]'),

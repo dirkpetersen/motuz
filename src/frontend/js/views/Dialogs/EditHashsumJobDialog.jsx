@@ -7,6 +7,7 @@ import parseTime from 'utils/parseTime.jsx'
 import serializeForm from 'utils/serializeForm.jsx'
 import { sortComparator } from 'utils/arrayUtils.jsx'
 import UriResource from 'components/UriResource.jsx'
+import {jobLocationDetail} from 'utils/jobLocation.js'
 
 class EditHashsumJobDialog extends React.Component {
     constructor(props) {
@@ -124,6 +125,9 @@ class EditHashsumJobDialog extends React.Component {
                                         variant={statusColor}
                                         style={{width: '100%', height: 30}}
                                     />
+                                    <div className="text-center small text-muted mt-1 job-location">
+                                        Runs on: {jobLocationDetail(data)}
+                                    </div>
                                 </div>
 
                                 <div className="row">
