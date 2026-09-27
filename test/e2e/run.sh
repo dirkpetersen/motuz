@@ -9,10 +9,12 @@
 #        test/e2e/run.sh --down        (tear down a stack left by --keep)
 #   --keep      leave the stack and the fake server running for debugging
 #   --no-build  use the existing fredhutch/motuz_* images instead of bin/prod/build.sh
-#   suite       any of: e2e broker oauth-paste traefik credentials ui oauth-callback ui-callback
+#   suite       any of: e2e broker oauth-paste traefik credentials ui oauth-callback ui-callback worker
 #               (default: all; they always run in this order on a fresh database;
 #               ui also runs credentials, whose files in alice's home it uses;
-#               oauth-callback and ui-callback switch the app to an own OneDrive app)
+#               oauth-callback and ui-callback switch the app to an own OneDrive app;
+#               worker switches local jobs to remote workers (pool onprem) and starts a
+#               motuz-worker container behind an HTTP CONNECT proxy)
 #
 # Environment:
 #   MOTUZ_E2E_UI=auto|require|skip   UI suite (playwright): auto runs it when node and a
@@ -36,7 +38,7 @@ export MOTUZ_E2E_LOGS="${MOTUZ_E2E_LOGS:-$HERE/logs}"
 WORK="$MOTUZ_E2E_WORK"
 LOGS="$MOTUZ_E2E_LOGS"
 BASE=https://localhost
-ALL_SUITES="e2e broker oauth-paste traefik credentials ui oauth-callback ui-callback"
+ALL_SUITES="e2e broker oauth-paste traefik credentials ui oauth-callback ui-callback worker"
 OWN_APP_CLIENT_ID=motuz-own-app  # expected by oauth_test.py (PHASE=callback)
 UI_MODE="${MOTUZ_E2E_UI:-auto}"
 
@@ -75,6 +77,8 @@ fi
 export MOTUZ_E2E_COMPOSE="${COMPOSE[*]}"
 # Run from test/e2e so compose reads the generated .env there
 dc() { (cd "$HERE" && "${COMPOSE[@]}" -f compose.yml "$@"); }
+# Including the services of the worker suite (proxy, worker; compose profile "worker")
+dcall() { dc --profile worker "$@"; }
 
 log() { printf '\n\033[1m==> %s\033[0m\n' "$*"; }
 die() { echo "ERROR: $*" >&2; exit 1; }
@@ -104,30 +108,35 @@ start_fake() { # expected OneDrive client secret; a fresh fake for every suite (
 }
 
 # ------------------------------------------------------------------ fixtures
-write_env() { # OD_CLIENT_ID OD_REDIRECT_URI
-    printf 'MOTUZ_DOCKER_ROOT=%s\nOD_CLIENT_ID=%s\nOD_REDIRECT_URI=%s\n' "$WORK" "$1" "$2" > "$HERE/.env"
+OD_ID=""; OD_URI=""; LOCAL_POOL=""
+write_env() { # from OD_ID, OD_URI (own OneDrive app) and LOCAL_POOL (MOTUZ_LOCAL_JOB_POOL)
+    printf 'MOTUZ_DOCKER_ROOT=%s\nOD_CLIENT_ID=%s\nOD_REDIRECT_URI=%s\nLOCAL_JOB_POOL=%s\n' \
+        "$WORK" "$OD_ID" "$OD_URI" "$LOCAL_POOL" > "$HERE/.env"
 }
 
 make_fixtures() {
     rm -rf "$WORK"
     (
         umask 077
-        mkdir -p "$WORK/secrets" "$WORK/certs" "$WORK/fake"
+        mkdir -p "$WORK/secrets" "$WORK/certs" "$WORK/fake" "$WORK/worker"
         printf '%s' "$(openssl rand -hex 16)" > "$WORK/secrets/MOTUZ_DATABASE_PASSWORD"
         printf '%s' "$(openssl rand -hex 32)" > "$WORK/secrets/MOTUZ_FLASK_SECRET_KEY"
         printf '%s' "unused" > "$WORK/secrets/MOTUZ_SMTP_PASSWORD"
         : > "$WORK/secrets/MOTUZ_ONEDRIVE_CLIENT_SECRET"  # empty = rclone's app
         openssl req -x509 -newkey rsa:2048 -nodes -days 7 -subj /CN=localhost \
-            -addext 'subjectAltName=DNS:localhost,IP:127.0.0.1' \
+            -addext 'subjectAltName=DNS:localhost,IP:127.0.0.1,DNS:motuz.test' \
             -keyout "$WORK/certs/cert.key" -out "$WORK/certs/cert.crt" 2>/dev/null
+        # The remote worker (suite worker) reaches the stack as https://motuz.test
+        cp "$WORK/certs/cert.crt" "$WORK/worker/central.crt"
     ) || die "could not create the fixtures in $WORK"
-    write_env "" ""
+    OD_ID=""; OD_URI=""; LOCAL_POOL=""
+    write_env
 }
 
 teardown() {
     stop_fake
     if [ -f "$HERE/.env" ]; then
-        dc down -v --remove-orphans >/dev/null 2>&1 || true
+        dcall down -v --remove-orphans >/dev/null 2>&1 || true
     fi
     rm -rf "$WORK" "$HERE/.env"
 }
@@ -194,8 +203,17 @@ configure_own_app() { # switches the app to an own app registration ("callback" 
     log "switching to an own OneDrive app registration"
     OWN_SECRET="S3cr3t~own+app/=&%-$(openssl rand -hex 6)"
     (umask 077 && printf '%s' "$OWN_SECRET" > "$WORK/secrets/MOTUZ_ONEDRIVE_CLIENT_SECRET")
-    write_env "$OWN_APP_CLIENT_ID" "$BASE/api/oauth/onedrive/callback"
+    OD_ID="$OWN_APP_CLIENT_ID"; OD_URI="$BASE/api/oauth/onedrive/callback"
+    write_env
     dc up -d --force-recreate app celery || die "could not restart app and celery"
+    wait_healthy
+}
+
+configure_workers() { # jobs with a local path go to remote workers of the pool onprem
+    log "switching local jobs to remote workers (MOTUZ_LOCAL_JOB_POOL=onprem)"
+    LOCAL_POOL=onprem
+    write_env
+    dc up -d --force-recreate app || die "could not restart the app"
     wait_healthy
 }
 
@@ -218,7 +236,7 @@ on_exit() {
     local rc=$?
     trap - EXIT INT TERM
     if [ "$STACK_STARTED" = 1 ]; then
-        dc logs --no-color --timestamps > "$LOGS/stack.log" 2>&1 || true
+        dcall logs --no-color --timestamps > "$LOGS/stack.log" 2>&1 || true
     fi
     if [ "$KEEP" = 1 ] && [ "$STACK_STARTED" = 1 ]; then
         cat <<EOF
@@ -301,6 +319,10 @@ for suite in $SUITES; do
         ui-callback)
             configure_own_app
             run_ui ui-callback callback "$OWN_SECRET" ;;
+        worker)
+            start_fake "$RCLONE_SECRET"
+            configure_workers
+            run_suite worker python3 -u worker_test.py ;;
     esac
 done
 

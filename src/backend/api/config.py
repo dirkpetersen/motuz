@@ -90,6 +90,28 @@ class Config:
     GDRIVE_AUTH_URL = os.environ.get('MOTUZ_GDRIVE_AUTH_URL', 'https://accounts.google.com/o/oauth2/v2/auth')
     GDRIVE_API_URL = os.environ.get('MOTUZ_GDRIVE_API_URL', 'https://www.googleapis.com/drive/v3')
 
+    # Remote workers (managers/worker_manager.py, managers/job_routing.py, README
+    # "Remote workers (HTTPS only)"). Pools: 'central' runs jobs here with Celery, any
+    # other pool (e.g. 'onprem', 'aws') queues them for motuz-worker agents that claim
+    # them over HTTPS. Jobs with a local path go to LOCAL_JOB_POOL; cloud-to-cloud jobs
+    # of at least LARGE_JOB_BYTES or LARGE_JOB_FILES (`rclone size` of the source, at
+    # most JOB_SIZE_TIMEOUT seconds; slower counts as large) go to LARGE_JOB_POOL, the
+    # rest runs centrally. The defaults keep everything on the central node.
+    LOCAL_JOB_POOL = _optional_env('MOTUZ_LOCAL_JOB_POOL', 'central')
+    LARGE_JOB_POOL = _optional_env('MOTUZ_LARGE_JOB_POOL', 'central')
+    LARGE_JOB_BYTES = int(_optional_env('MOTUZ_LARGE_JOB_BYTES', str(300 * 1000 ** 3)))
+    LARGE_JOB_FILES = int(_optional_env('MOTUZ_LARGE_JOB_FILES', '50000'))
+    JOB_SIZE_TIMEOUT = int(_optional_env('MOTUZ_JOB_SIZE_TIMEOUT', '60'))
+    # A claimed job fails when its worker has not reported for this long
+    WORKER_LEASE_SECONDS = int(_optional_env('MOTUZ_WORKER_LEASE_SECONDS', '120'))
+    # Lifetime of a worker's access token (it signs in again with its credential)
+    WORKER_TOKEN_SECONDS = int(_optional_env('MOTUZ_WORKER_TOKEN_SECONDS', '600'))
+    # A job ticket ends with its job, and at the latest this long after the claim
+    WORKER_TICKET_MAX_HOURS = int(_optional_env('MOTUZ_WORKER_TICKET_MAX_HOURS', '720'))
+    # Public https:// address of this node, for the token broker URL in job tickets.
+    # Unset: the address the worker used to claim the job.
+    PUBLIC_URL = _optional_env('MOTUZ_PUBLIC_URL')
+
     # Who runs this installation, shown on the public /privacy and /terms pages
     # (views/legal_views.py). Unset: the pages refer to "the administrator of this
     # Motuz installation". Only http(s) URLs are linked.

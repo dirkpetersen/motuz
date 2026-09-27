@@ -31,6 +31,16 @@ x-variables:
         MOTUZ_OPERATOR_NAME: ${MOTUZ_OPERATOR_NAME:-}
         MOTUZ_CONTACT_EMAIL: ${MOTUZ_CONTACT_EMAIL:-}
         MOTUZ_OPERATOR_URL: ${MOTUZ_OPERATOR_URL:-}
+    - &worker-environment
+        # Remote workers (README, "Remote workers (HTTPS only)"). Unset: every job runs
+        # on this node with Celery. MOTUZ_LOCAL_JOB_POOL=onprem queues jobs with a local
+        # path for on-prem workers; MOTUZ_LARGE_JOB_POOL=aws large cloud-to-cloud jobs.
+        MOTUZ_LOCAL_JOB_POOL: ${MOTUZ_LOCAL_JOB_POOL:-}
+        MOTUZ_LARGE_JOB_POOL: ${MOTUZ_LARGE_JOB_POOL:-}
+        MOTUZ_LARGE_JOB_BYTES: ${MOTUZ_LARGE_JOB_BYTES:-}
+        MOTUZ_LARGE_JOB_FILES: ${MOTUZ_LARGE_JOB_FILES:-}
+        MOTUZ_WORKER_LEASE_SECONDS: ${MOTUZ_WORKER_LEASE_SECONDS:-}
+        MOTUZ_PUBLIC_URL: ${MOTUZ_PUBLIC_URL:-}
     - &rclone-environment
         # rclone performance settings (README, "Performance tuning"). Empty means rclone's
         # default. The app validates them (and refuses to start with an invalid value)
@@ -132,7 +142,7 @@ services:
         network_mode: host
         <<: *shared-volumes
         environment:
-            <<: [*database-environment, *smtp-environment, *oauth-environment, *operator-environment, *rclone-environment]
+            <<: [*database-environment, *smtp-environment, *oauth-environment, *operator-environment, *rclone-environment, *worker-environment]
         secrets:
             - MOTUZ_DATABASE_PASSWORD
             - MOTUZ_FLASK_SECRET_KEY
