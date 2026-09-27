@@ -983,8 +983,12 @@ mount data with `mountoptions=nosuid;nodev` and `backup=0`; set `lxc.cgroup2.pid
 use the Proxmox firewall; let only root@pam edit the container's configuration; and set
 `protection: 1`.
 
-Several worker machines (remote or on-prem workers) are not part of this install: they
-come with the HTTPS worker API.
+More worker machines connect through the HTTPS worker API ("Remote workers (HTTPS
+only)"). On such a host, `sudo bin/systemd/install.sh --worker-only` prepares only what
+the worker needs (the pinned rclone, python3, the `motuz` account with linger, the same
+sudoers rule, `/var/lib/motuz-aws-config`); then configure `worker.env` and start
+`motuz-worker.service` as that section describes. Workers never reach the database or
+the broker, and the central install needs no change for them.
 
 Other distributions: everything distribution specific (packages, the paths of the
 PostgreSQL and Redis binaries, how the distribution's own database service is kept from

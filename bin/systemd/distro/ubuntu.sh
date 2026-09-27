@@ -42,6 +42,14 @@ distro_install_packages() {
     fi
 }
 
+# A remote worker host (install.sh --worker-only): rclone runs as the users, the worker
+# (src/worker/motuz_worker.py) with the distribution's python3
+distro_install_worker_packages() {
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update -y -q
+    apt-get install -y -q --no-install-recommends git curl ca-certificates unzip python3 sudo
+}
+
 # Only Traefik listens beyond loopback
 distro_firewall_hint() {
     echo "Firewall: only 80/tcp and 443/tcp need to be open, e.g. ufw allow 80/tcp && ufw allow 443/tcp && ufw enable"

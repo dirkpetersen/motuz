@@ -5,6 +5,12 @@
 # updates that change what it installs (bin/systemd/deploy.sh warns about that).
 #
 # Usage: sudo bin/systemd/install.sh [--local-accounts] [--sudo-group=GROUP] [--user=NAME] [--home=DIR]
+#        sudo bin/systemd/install.sh --worker-only [--sudo-group=GROUP] [--user=NAME] [--home=DIR]
+#   --worker-only       a remote worker host (README, "Remote workers (HTTPS only)"): only
+#                       the pinned rclone, python3, the account with linger, its sudoers
+#                       rule and /var/lib/motuz-aws-config; no database, broker, web server
+#                       or login helper. Then configure and start motuz-worker.service
+#                       (src/worker) as the account, as the README describes.
 #   --local-accounts    install the login helper (motuz-auth.socket), needed when users
 #                       log in with local /etc/shadow accounts (not for SSSD/Kerberos)
 #   --sudo-group=GROUP  Motuz may act only as members of GROUP (default: any user but root)
@@ -26,6 +32,7 @@ set -euo pipefail
 source "$(dirname "$0")/_lib.sh"
 
 LOCAL_ACCOUNTS=0
+WORKER_ONLY=0
 SUDO_GROUP=""
 ACCOUNT=motuz
 HOME_DIR=/var/lib/motuz
@@ -37,6 +44,7 @@ while [ $# -gt 0 ]; do
     esac
     case "$opt" in
         --local-accounts) LOCAL_ACCOUNTS=1 ;;
+        --worker-only) WORKER_ONLY=1 ;;
         --sudo-group) SUDO_GROUP="$value" ;;
         --user) ACCOUNT="$value" ;;
         --home) HOME_DIR="$value" ;;
@@ -47,6 +55,7 @@ while [ $# -gt 0 ]; do
 done
 
 [ "$(id -u)" = 0 ] || die "run as root"
+[ "$WORKER_ONLY" = 0 ] || [ "$LOCAL_ACCOUNTS" = 0 ] || die "--local-accounts is not for workers (they do not log users in)"
 [[ "$ACCOUNT" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]] || die "invalid account name $ACCOUNT"
 [[ "$HOME_DIR" = /* ]] || die "--home must be absolute"
 [ -z "$SUDO_GROUP" ] || getent group "$SUDO_GROUP" >/dev/null || die "group $SUDO_GROUP does not exist"
@@ -60,7 +69,11 @@ trap 'rm -rf "$TMP"' EXIT
 
 # ---------------------------------------------------------------- packages
 log "packages ($DISTRO_NAME)"
-distro_install_packages
+if [ "$WORKER_ONLY" = 1 ]; then
+    distro_install_worker_packages
+else
+    distro_install_packages
+fi
 
 # ---------------------------------------------------------------- pinned binaries
 fetch_checked() { # url sha256 file
@@ -76,14 +89,14 @@ if [ "$(/usr/local/bin/rclone version 2>/dev/null | head -1)" != "rclone v${RCLO
     unzip -q "$TMP/rclone.zip" -d "$TMP"
     install -m 755 -o root -g root "$TMP/$name/rclone" /usr/local/bin/rclone
 fi
-if ! /usr/local/bin/traefik version 2>/dev/null | grep -qE "^Version:[[:space:]]+${TRAEFIK_VERSION}$"; then
+if [ "$WORKER_ONLY" = 0 ] && ! /usr/local/bin/traefik version 2>/dev/null | grep -qE "^Version:[[:space:]]+${TRAEFIK_VERSION}$"; then
     log "Traefik ${TRAEFIK_VERSION}"
     sha="TRAEFIK_SHA256_${ARCH^^}"
     fetch_checked "https://github.com/traefik/traefik/releases/download/v${TRAEFIK_VERSION}/traefik_v${TRAEFIK_VERSION}_linux_${ARCH}.tar.gz" "${!sha}" "$TMP/traefik.tar.gz"
     tar -xzf "$TMP/traefik.tar.gz" -C "$TMP" traefik
     install -m 755 -o root -g root "$TMP/traefik" /usr/local/bin/traefik
 fi
-if [ "$(/usr/local/bin/uv --version 2>/dev/null)" != "uv ${UV_VERSION}" ]; then
+if [ "$WORKER_ONLY" = 0 ] && [ "$(/usr/local/bin/uv --version 2>/dev/null)" != "uv ${UV_VERSION}" ]; then
     log "uv ${UV_VERSION}"
     sha="UV_SHA256_${ARCH^^}"
     target=$([ "$ARCH" = arm64 ] && echo aarch64 || echo x86_64)-unknown-linux-gnu
@@ -121,7 +134,22 @@ visudo -c -q -f "$TMP/sudoers" || die "the sudoers rule does not parse"
 install -m 440 -o root -g root "$TMP/sudoers" /etc/sudoers.d/motuz
 visudo -c -q || die "sudoers is invalid after installing /etc/sudoers.d/motuz"
 
-# ---------------------------------------------------------------- sysctl, PAM, SSO dir
+# Secret-free AWS SSO configs that the app or worker writes and rclone reads as the user
+# (MOTUZ_SSO_CONFIG_DIR): traversable, not listable, owned by the account
+install -d -m 711 -o "$ACCOUNT" -g "$(id -gn "$ACCOUNT")" /var/lib/motuz-aws-config
+
+if [ "$WORKER_ONLY" = 1 ]; then
+    log "done (worker only)"
+    cat <<EOF
+
+Next, as $ACCOUNT (sudo -iu $ACCOUNT): the same Motuz release as the central node in
+~/motuz, then ~/.config/motuz-worker/worker.env and the worker credential, and
+motuz-worker.service (src/worker/motuz-worker.service): README, "Remote workers (HTTPS only)".
+EOF
+    exit 0
+fi
+
+# ---------------------------------------------------------------- sysctl, PAM
 log "sysctl net.ipv4.ip_unprivileged_port_start=80, vm.overcommit_memory=1"
 # Redis rewrites its append-only file in a forked child (Redis' own recommendation)
 printf 'net.ipv4.ip_unprivileged_port_start = 80\nvm.overcommit_memory = 1\n' > /etc/sysctl.d/60-motuz.conf
@@ -130,9 +158,6 @@ sysctl -q -p /etc/sysctl.d/60-motuz.conf
 log "/etc/pam.d/motuz"
 install -m 644 -o root -g root "$PAM_TEMPLATE" /etc/pam.d/motuz
 
-# Secret-free AWS SSO configs that the app writes and rclone reads as the user
-# (MOTUZ_SSO_CONFIG_DIR): traversable, not listable, owned by the account
-install -d -m 711 -o "$ACCOUNT" -g "$(id -gn "$ACCOUNT")" /var/lib/motuz-aws-config
 
 # ---------------------------------------------------------------- login helper
 if [ "$LOCAL_ACCOUNTS" = 1 ]; then
