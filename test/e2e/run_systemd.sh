@@ -158,9 +158,9 @@ if [ "$MODE" = setup ]; then
     log "test users alice and bob (test/e2e/users.sh)"
     bash "$HERE/users.sh" true || die "users.sh failed"
 
-    log "checkout $HOME_DIR/motuz (copy of $REPO; venv, node_modules and build are kept)"
+    log "checkout $HOME_DIR/motuz (copy of $REPO; its .git, venv, node_modules and build are kept)"
     mkdir -p "$HOME_DIR/motuz"
-    tar -C "$REPO" --exclude=./node_modules --exclude=./venv --exclude=./build -cf - . | tar -C "$HOME_DIR/motuz" -xf -
+    tar -C "$REPO" --exclude=./.git --exclude=./node_modules --exclude=./venv --exclude=./build -cf - . | tar -C "$HOME_DIR/motuz" -xf -
     chown -R "$ACCOUNT:" "$HOME_DIR/motuz"
 
     log "e2e settings (fake Microsoft/Google, operator) and certificate (CN=localhost)"
