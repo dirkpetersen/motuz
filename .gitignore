@@ -119,4 +119,4 @@ test/e2e/.env
 test/e2e/logs/
 # ... and the systemd install tests (test/e2e/run_systemd.sh): VM disks, keys, logs
 test/e2e/.work-systemd*/
-test/e2e/logs-systemd/
+test/e2e/logs-systemd*/
