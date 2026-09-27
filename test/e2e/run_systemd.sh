@@ -170,6 +170,8 @@ MOTUZ_CONTACT_EMAIL=motuz-admin@example.org
 MOTUZ_OPERATOR_URL=https://example.org/?a=1&b=2
 MOTUZ_ONEDRIVE_CLIENT_ID=
 MOTUZ_ONEDRIVE_REDIRECT_URI=
+MOTUZ_RCLONE_CHECKERS=16
+MOTUZ_RCLONE_MAX_TRANSFERS=48
 EOF
     if [ ! -f "$HOME_DIR/data/certs/cert.crt" ]; then
         (umask 077 && openssl req -x509 -newkey rsa:2048 -nodes -days 7 -subj /CN=localhost \

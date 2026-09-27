@@ -514,7 +514,7 @@ def azure_cli_env(home):
     site-packages (.pth files are code). The az launcher runs Python with -I.
     """
     return {
-        'HOME': home, # sudo -E keeps root's HOME otherwise
+        'HOME': home, # always explicit (sudo_as keeps it)
         'AZURE_CONFIG_DIR': os.path.join(home, '.azure'),
         'AZURE_EXTENSION_DIR': '/nonexistent/motuz-no-az-extensions',
         'AZURE_EXTENSION_DEV_SOURCES': '',
@@ -828,7 +828,7 @@ def resolve(user, conn_type, source, name, *, materialize=True):
         if profiles[name].get('region'):
             options['region'] = profiles[name]['region']
         env = {
-            # rclone runs with sudo -E, so HOME would be root's. The AWS SDK finds the
+            # HOME explicitly (sudo_as passes it on). The AWS SDK finds the
             # SSO token cache (and writes refreshed tokens) below the user's HOME.
             'HOME': home,
             'AWS_CONFIG_FILE': path,
