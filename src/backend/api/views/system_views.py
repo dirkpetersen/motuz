@@ -76,6 +76,48 @@ class SystemFilesView(Resource):
             api.abort(500, str(e))
 
 
+chunk_dto = api.model('system-file-view-chunk-request', {
+    'connection_id': fields.Integer(required=True, example=0, description='0 for the local filesystem'),
+    'path': fields.String(required=True, example='/home/alice/big.log'),
+    'offset': fields.Integer(description='Read forward from this byte (default 0)'),
+    'before': fields.Integer(description='Read the chunk that ends at this byte (backward, the previous chunk)'),
+    'from_end': fields.Boolean(description='Read the last chunk of the file (tail)'),
+    'length': fields.Integer(description='At most this many bytes (256 to 262144, the default)'),
+})
+
+chunk_result_dto = api.model('system-file-view-chunk', {
+    'path': fields.String(example='/home/alice/big.log'),
+    'content': fields.String(description='Whole lines of text (a line longer than a chunk is split)'),
+    'offset': fields.Integer(description='First byte of the file the content covers'),
+    'end': fields.Integer(description='Byte after the last byte the content covers'),
+    'size': fields.Integer(description='Size of the whole file in bytes'),
+    'bof': fields.Boolean(description='The content starts at the beginning of the file'),
+    'eof': fields.Boolean(description='The content ends at the end of the file'),
+    'encoding': fields.String(example='utf-8'),
+})
+
+
+@api.route('/files/view/chunk/')
+class SystemFilesViewChunk(Resource):
+    @api.expect(chunk_dto, validate=True)
+    @api.marshal_with(chunk_result_dto, code=200)
+    @api.response(400, 'Invalid offset or length, a folder, not a regular file')
+    @api.response(403, 'The user cannot read the file')
+    @api.response(404, 'No such file (or connection)')
+    @api.response(415, 'Not a text file')
+    def post(self):
+        """
+        One chunk of whole lines of a text file, read as the logged-in user (the pager of the viewer).
+        """
+        try:
+            return system_manager.view_chunk(request.json), 200
+        except HTTP_EXCEPTION as e:
+            api.abort(e.code, e.payload)
+        except Exception as e:
+            logging.exception(e, exc_info=True)
+            api.abort(500, str(e))
+
+
 @api.route('/files/mkdir/')
 class SystemFilesMkdir(Resource):
     @api.expect(dto, validate=True)

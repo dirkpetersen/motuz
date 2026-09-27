@@ -7,7 +7,9 @@ import unittest
 from unittest import mock
 
 from api.utils import file_view
-from api.utils.file_view import MAX_VIEW_BYTES, NotTextError, decode_text, view_result
+from api.utils.file_view import (CHUNK_BYTES, HEAD_CHECK_BYTES, MAX_VIEW_BYTES, ChunkRequest, NotTextError,
+                                 align_backward, align_forward, chunk_result, decode_chunk, decode_text,
+                                 parse_chunk_request, view_result)
 from api.utils.local_connection import LocalConnection
 from api.utils.rclone_connection import RcloneConnection
 
@@ -62,6 +64,167 @@ class TestViewResult(unittest.TestCase):
     def test_exactly_the_cap(self):
         result = view_result('/cap', b'x' * MAX_VIEW_BYTES, MAX_VIEW_BYTES)
         self.assertFalse(result['truncated'])
+
+
+def simulate(data, request):
+    """chunk_result for `request` on a file with contents `data`, as the readers do it"""
+    start, count = request.read_range()
+    if start < 0:
+        start = max(0, len(data) + start)
+    return chunk_result('/f', request, len(data), data[:HEAD_CHECK_BYTES], start, data[start:start + count])
+
+
+def read_forward(data, length):
+    chunks, offset = [], 0
+    while True:
+        chunk = simulate(data, ChunkRequest(offset=offset, length=length))
+        chunks.append(chunk)
+        if chunk['eof']:
+            return chunks
+        offset = chunk['end']
+
+
+def read_backward(data, length):
+    chunks = [simulate(data, ChunkRequest(from_end=True, length=length))]
+    while not chunks[0]['bof']:
+        chunks.insert(0, simulate(data, ChunkRequest(before=chunks[0]['offset'], length=length)))
+    return chunks
+
+
+class TestChunkAlignment(unittest.TestCase):
+
+    def assert_covers(self, data, chunks, length=300):
+        """The chunks are contiguous, at most `length` bytes each, and their contents are the file"""
+        self.assertEqual(chunks[0]['offset'], 0)
+        self.assertEqual(chunks[-1]['end'], len(data))
+        for a, b in zip(chunks, chunks[1:]):
+            self.assertEqual(a['end'], b['offset'])
+        self.assertEqual(''.join(c['content'] for c in chunks), data.decode('utf-8'))
+        for c in chunks:
+            self.assertEqual(c['content'].encode('utf-8'), data[c['offset']:c['end']])
+            self.assertLessEqual(c['end'] - c['offset'], length)
+
+    def test_forward_chunks_end_after_a_newline(self):
+        data = b''.join(b'line %06d of the file\n' % i for i in range(100))
+        chunks = read_forward(data, 300)
+        self.assert_covers(data, chunks)
+        self.assertTrue(all(c['content'].endswith('\n') for c in chunks))
+        self.assertTrue(chunks[0]['bof'] and not chunks[0]['eof'] and chunks[-1]['eof'] and not chunks[-1]['bof'])
+        self.assertTrue(all(len(c['content']) > 250 for c in chunks[:-1]))
+
+    def test_backward_chunks_start_after_a_newline(self):
+        data = b''.join(b'line %06d of the file\n' % i for i in range(100))
+        chunks = read_backward(data, 300)
+        self.assert_covers(data, chunks)
+        self.assertTrue(all(c['content'].startswith('line ') for c in chunks))
+        tail = chunks[-1]
+        self.assertTrue(tail['eof'] and not tail['bof'] and tail['content'].endswith('line 000099 of the file\n'))
+
+    def test_a_chunk_that_starts_right_after_a_newline_keeps_its_first_line(self):
+        data = b'a' * 99 + b'\n' + b'b' * 199 + b'\n' # exactly 300 bytes
+        tail = simulate(data, ChunkRequest(from_end=True, length=300))
+        self.assertEqual(tail['offset'], 0)
+        data = b'x\n' + data # the tail's 300 bytes start right after a newline
+        tail = simulate(data, ChunkRequest(from_end=True, length=300))
+        self.assertEqual((tail['offset'], tail['content'][:3]), (2, 'aaa'))
+
+    def test_line_longer_than_the_chunk_is_split(self):
+        data = b'short\n' + b'L' * 1000 + b'\nend\n'
+        chunks = read_forward(data, 300)
+        self.assert_covers(data, chunks)
+        self.assertEqual(chunks[0]['content'], 'short\n')
+        self.assertEqual(len(chunks[1]['content']), 300)
+        chunks = read_backward(data, 300)
+        self.assert_covers(data, chunks)
+
+    def test_multibyte_character_at_a_chunk_boundary(self):
+        for prefix in range(4): # move the characters across the boundary
+            data = b'x' * prefix + 'ü€😀'.encode('utf-8') * 200 # one long line
+            for chunks in (read_forward(data, 256), read_backward(data, 256)):
+                self.assert_covers(data, chunks, 256)
+                self.assertFalse(any('�' in c['content'] for c in chunks))
+
+    def test_tail_read_at_the_beginning_of_the_file(self):
+        data = b'one\ntwo\n'
+        tail = simulate(data, ChunkRequest(from_end=True, length=CHUNK_BYTES))
+        self.assertEqual(tail, {'path': '/f', 'content': 'one\ntwo\n', 'offset': 0, 'end': 8, 'size': 8,
+                                'bof': True, 'eof': True, 'encoding': 'utf-8'})
+
+    def test_empty_file(self):
+        for request in (ChunkRequest(offset=0), ChunkRequest(from_end=True), ChunkRequest(before=0)):
+            self.assertEqual(simulate(b'', request), {'path': '/f', 'content': '', 'offset': 0, 'end': 0, 'size': 0,
+                                                      'bof': True, 'eof': True, 'encoding': 'utf-8'})
+
+    def test_no_trailing_newline(self):
+        data = b''.join(b'row %04d\n' % i for i in range(100)) + b'last line without newline'
+        chunks = read_forward(data, 256)
+        self.assert_covers(data, chunks, 256)
+        self.assertTrue(chunks[-1]['content'].endswith('\nlast line without newline'))
+        chunks = read_backward(data, 256)
+        self.assert_covers(data, chunks, 256)
+        self.assertTrue(chunks[-1]['content'].endswith('\nlast line without newline'))
+
+    def test_offset_at_the_end_and_beyond(self):
+        chunk = simulate(b'abc\n', ChunkRequest(offset=4))
+        self.assertEqual((chunk['content'], chunk['offset'], chunk['end'], chunk['eof'], chunk['bof']), ('', 4, 4, True, False))
+        for request in (ChunkRequest(offset=5), ChunkRequest(before=5)):
+            with self.assertRaisesRegex(file_view.ViewError, 'beyond the end'):
+                simulate(b'abc\n', request)
+
+    def test_binary_is_refused_also_from_the_end(self):
+        data = b'\x89PNG\r\n\x1a\n\x00\x00' + b'text\n' * 100000
+        for request in (ChunkRequest(from_end=True), ChunkRequest(offset=len(data) // 2), ChunkRequest(before=len(data))):
+            with self.assertRaises(NotTextError):
+                simulate(data, request)
+
+    def test_later_chunks_replace_invalid_bytes(self):
+        data = b'text\n' * 10000 + b'bad \xff\xfe byte\n'
+        tail = simulate(data, ChunkRequest(from_end=True, length=256))
+        self.assertTrue(tail['content'].endswith('bad �� byte\n'))
+        self.assertEqual(tail['encoding'], 'utf-8 (invalid bytes replaced)')
+
+    def test_bom_is_dropped_at_the_start_only(self):
+        chunk = simulate(b'\xef\xbb\xbfhello\n', ChunkRequest(offset=0))
+        self.assertEqual((chunk['content'], chunk['offset'], chunk['end']), ('hello\n', 0, 9))
+        self.assertEqual(decode_chunk(b'\xef\xbb\xbfx', False), ('﻿x', 'utf-8'))
+
+    def test_unknown_size(self):
+        request = ChunkRequest(offset=0, length=256)
+        chunk = chunk_result('/f', request, None, b'abc\n', 0, b'abc\n')
+        self.assertEqual((chunk['size'], chunk['eof'], chunk['end']), (4, True, 4))
+        chunk = chunk_result('/f', request, None, b'a\n' * 128, 0, b'a\n' * 128)
+        self.assertEqual((chunk['size'], chunk['eof']), (None, False))
+
+    def test_align_helpers(self):
+        self.assertEqual(align_forward(b'ab\ncd', False), 3)
+        self.assertEqual(align_forward(b'ab\ncd', True), 5)
+        self.assertEqual(align_forward('abc€'.encode()[:-1], False), 3)
+        self.assertEqual(align_forward(b'\xe2\x82', False), 2) # never empty
+        self.assertEqual(align_backward(b'\nabc', 9, 10), 10)
+        self.assertEqual(align_backward(b'xab\ncd', 9, 10), 13)
+        self.assertEqual(align_backward('€cd'.encode(), 9, 10), 12) # lo is inside €: skips the rest of it
+        self.assertEqual(align_backward('x€cd'.encode(), 9, 10), 10) # lo is at €
+        self.assertEqual(align_backward(b'abc\n', 9, 10), 10) # the only newline ends the chunk: split
+        self.assertEqual(align_backward(b'abc', 0, 0), 0)
+
+
+class TestParseChunkRequest(unittest.TestCase):
+
+    def test_defaults(self):
+        r = parse_chunk_request({'path': '/x', 'connection_id': 0})
+        self.assertEqual((r.offset, r.before, r.from_end, r.length), (0, None, False, CHUNK_BYTES))
+        r = parse_chunk_request({'from_end': True, 'length': 1000})
+        self.assertEqual((r.offset, r.from_end, r.length, r.read_range()), (None, True, 1000, (-1001, 1001)))
+        self.assertEqual(parse_chunk_request({'before': 5000, 'length': 1000}).read_range(), (3999, 1001))
+        self.assertEqual(parse_chunk_request({'before': 500, 'length': 1000}).read_range(), (0, 500))
+        self.assertEqual(parse_chunk_request({'offset': 7, 'length': 300}).read_range(), (7, 300))
+
+    def test_invalid(self):
+        for data in ({'offset': -1}, {'offset': '5'}, {'offset': 1.5}, {'offset': True}, {'length': 0},
+                     {'length': CHUNK_BYTES + 1}, {'length': 10}, {'before': -3}, {'from_end': 'yes'},
+                     {'offset': 5, 'from_end': True}, {'offset': 5, 'before': 9}, {'before': 5, 'from_end': True}):
+            with self.assertRaises(file_view.ViewError, msg=data):
+                parse_chunk_request(data)
 
 
 class TestRunLimited(unittest.TestCase):
@@ -155,6 +318,46 @@ class TestLocalView(unittest.TestCase):
         with mock.patch('api.utils.local_connection.file_view.run_limited', return_value=(1, b'', b'sudo: a password is required')):
             with self.assertRaises(file_view.ForbiddenError):
                 LocalConnection().view(Owner(), '/etc/hostname')
+            with self.assertRaises(file_view.ForbiddenError):
+                LocalConnection().view_chunk(Owner(), '/etc/hostname', ChunkRequest(offset=0))
+
+    def chunk(self, path, **kwargs):
+        with _without_sudo(self):
+            return LocalConnection().view_chunk(Owner(), path, ChunkRequest(**kwargs))
+
+    def test_chunks(self):
+        data = b''.join(b'line %06d\n' % i for i in range(100000)) # 1.2 MB
+        path = self.write('big.log', data)
+        first = self.chunk(path, offset=0)
+        self.assertEqual((first['offset'], first['bof'], first['eof'], first['size']), (0, True, False, len(data)))
+        self.assertEqual(first['end'], CHUNK_BYTES - CHUNK_BYTES % 12)
+        self.assertTrue(first['content'].startswith('line 000000\n') and first['content'].endswith('\n'))
+        second = self.chunk(path, offset=first['end'])
+        self.assertEqual(second['offset'], first['end'])
+        self.assertTrue(second['content'].startswith('line '))
+        tail = self.chunk(path, from_end=True)
+        self.assertEqual((tail['end'], tail['eof'], tail['bof']), (len(data), True, False))
+        self.assertTrue(tail['content'].startswith('line ') and tail['content'].endswith('line 099999\n'))
+        before = self.chunk(path, before=tail['offset'], length=1000)
+        self.assertEqual(before['end'], tail['offset'])
+        self.assertEqual(before['content'].encode(), data[before['offset']:before['end']])
+
+    def test_chunk_errors(self):
+        text = self.write('t.txt', b'abc\n')
+        with self.assertRaisesRegex(file_view.ViewError, 'beyond the end'):
+            self.chunk(text, offset=5)
+        binary = self.write('image.png', b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR' + b'text\n' * 100000)
+        with self.assertRaisesRegex(file_view.NotTextError, "'image.png' is not a text file"):
+            self.chunk(binary, from_end=True)
+        with self.assertRaises(file_view.NotFoundError):
+            self.chunk(os.path.join(self.dir, 'missing'), offset=0)
+        with self.assertRaisesRegex(file_view.ViewError, 'is a folder'):
+            self.chunk(self.dir, from_end=True)
+        with self.assertRaisesRegex(file_view.ViewError, 'not a regular file'):
+            self.chunk('/dev/zero', from_end=True)
+        for relative in ('t.txt', '-la', ''):
+            with self.assertRaisesRegex(file_view.ViewError, 'must be absolute'):
+                self.chunk(relative, offset=0)
 
 
 class TestCloudView(unittest.TestCase):
@@ -210,3 +413,57 @@ class TestCloudView(unittest.TestCase):
     def test_not_found(self):
         result, _ = self.run_view([(3, b'', b'ERROR : error listing: object not found')])
         self.assertIsInstance(result, file_view.NotFoundError)
+
+    def run_chunk(self, outputs, **kwargs):
+        calls = []
+
+        def run(command, timeout, env=None):
+            calls.append(command)
+            return outputs.pop(0)
+
+        with mock.patch('api.utils.rclone_connection.file_view.run_limited', side_effect=run):
+            try:
+                return RcloneConnection().view_chunk(self.data(), '/dir/log.txt', ChunkRequest(**kwargs)), calls
+            except Exception as e:
+                return e, calls
+
+    def test_chunk_from_the_start(self):
+        data = b'line\n' * 100
+        result, calls = self.run_chunk([(0, b'{"Size":500,"IsDir":false}', b''), (0, data, b'')], offset=0)
+        self.assertEqual((result['offset'], result['end'], result['size'], result['bof'], result['eof']), (0, 500, 500, True, True))
+        self.assertEqual(len(calls), 2) # the range starts at 0 and holds the first bytes: no separate text check
+        self.assertEqual(calls[0][-3:], ['lsjson', '--stat', 'current:/dir/log.txt'])
+        self.assertEqual(calls[1][-6:], ['cat', '--offset', '0', '--count', '500', 'current:/dir/log.txt'])
+        self.assertEqual(calls[1][:4], ['sudo', '-E', '-u', 'alice'])
+        result, calls = self.run_chunk([(0, b'{"Size":500,"IsDir":false}', b''), (0, data[:300], b''), (0, data, b'')],
+                                       offset=0, length=300)
+        self.assertEqual((result['offset'], result['end'], result['bof'], result['eof']), (0, 300, True, False))
+        self.assertEqual(calls[1][-6:], ['cat', '--offset', '0', '--count', '300', 'current:/dir/log.txt'])
+        self.assertEqual(calls[2][-4:], ['cat', '--count', str(HEAD_CHECK_BYTES), 'current:/dir/log.txt'])
+
+    def test_tail_chunk(self):
+        data = b''.join(b'line %04d\n' % i for i in range(1000)) # 10000 bytes
+        result, calls = self.run_chunk([(0, b'{"Size":10000,"IsDir":false}', b''), (0, data[10000 - 301:], b''),
+                                        (0, data[:HEAD_CHECK_BYTES], b'')], from_end=True, length=300)
+        self.assertEqual(calls[1][-6:], ['cat', '--offset', '9699', '--count', '301', 'current:/dir/log.txt'])
+        self.assertEqual(calls[2][-4:], ['cat', '--count', str(HEAD_CHECK_BYTES), 'current:/dir/log.txt'])
+        self.assertEqual((result['offset'], result['end'], result['eof'], result['bof']), (9700, 10000, True, False))
+        self.assertTrue(result['content'].startswith('line 0970\n') and result['content'].endswith('line 0999\n'))
+        # the previous chunk
+        result, calls = self.run_chunk([(0, b'{"Size":10000,"IsDir":false}', b''), (0, data[9399:9700], b''),
+                                        (0, data[:HEAD_CHECK_BYTES], b'')], before=9700, length=300)
+        self.assertEqual(calls[1][-6:], ['cat', '--offset', '9399', '--count', '301', 'current:/dir/log.txt'])
+        self.assertEqual((result['offset'], result['end']), (9400, 9700))
+
+    def test_chunk_errors(self):
+        result, calls = self.run_chunk([(0, b'{"Size":10,"IsDir":false}', b'')], offset=11)
+        self.assertIn('beyond the end', str(result))
+        self.assertEqual(len(calls), 1)
+        result, calls = self.run_chunk([(0, b'{"Path":"dir","IsDir":true}', b'')], from_end=True)
+        self.assertIn('folder or does not exist', str(result))
+        self.assertEqual(len(calls), 1) # never catted
+        result, calls = self.run_chunk([(0, b'{"Size":-1,"IsDir":false}', b'')], from_end=True)
+        self.assertIn('size', str(result))
+        result, _ = self.run_chunk([(0, b'{"Size":100000,"IsDir":false}', b''), (0, b'text\n' * 50, b''),
+                                    (0, b'\x00\x01binary', b'')], from_end=True, length=256)
+        self.assertIsInstance(result, file_view.NotTextError)

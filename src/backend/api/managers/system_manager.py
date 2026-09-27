@@ -107,28 +107,49 @@ def view(data):
     The first 1 MiB of a text file, read as the logged-in user, for the read-only
     viewer: {path, content, truncated, size, encoding}. Contents are never logged.
     """
-    user = get_logged_in_user(request)
-    path = data['path']
-    connection_id = data['connection_id']
-
-    if connection_id == 0:
-        cloud_connection = Dummy()
-        cloud_connection.owner = user
-        connection = LocalConnection()
-    else:
-        cloud_connection = cloud_connection_manager.retrieve(connection_id) # 404 for others' connections
-        if cloud_connection.owner != user:
-            # Should never happen
-            raise HTTP_404_NOT_FOUND('Cloud Connection with id {} not found'.format(connection_id))
-
-        connection = RcloneConnection()
-
+    cloud_connection, connection = _view_connection(data['connection_id'])
     try:
-        return connection.view(data=cloud_connection, path=path)
+        return connection.view(data=cloud_connection, path=data['path'])
     except file_view.ViewError as e:
         raise _VIEW_EXCEPTIONS.get(e.status, HTTP_400_BAD_REQUEST)(str(e))
     except RcloneException as e:
         raise HTTP_400_BAD_REQUEST(str(e))
+
+
+@token_required
+def view_chunk(data):
+    """
+    One chunk of a text file for the pager, read as the logged-in user:
+    {path, content, offset, end, size, bof, eof, encoding}. Parameters: `offset` (a
+    forward read), `before` (the chunk that ends there) or `from_end` (the last
+    chunk), and `length` (at most file_view.CHUNK_BYTES). Contents are never logged.
+    """
+    try:
+        request_ = file_view.parse_chunk_request(data)
+    except file_view.ViewError as e:
+        raise HTTP_400_BAD_REQUEST(str(e))
+    cloud_connection, connection = _view_connection(data['connection_id'])
+    try:
+        return connection.view_chunk(data=cloud_connection, path=data['path'], request=request_)
+    except file_view.ViewError as e:
+        raise _VIEW_EXCEPTIONS.get(e.status, HTTP_400_BAD_REQUEST)(str(e))
+    except RcloneException as e:
+        raise HTTP_400_BAD_REQUEST(str(e))
+
+
+def _view_connection(connection_id):
+    """(connection row, connection) for viewing as the logged-in user; 404 for others' connections"""
+    user = get_logged_in_user(request)
+    if connection_id == 0:
+        cloud_connection = Dummy()
+        cloud_connection.owner = user
+        return cloud_connection, LocalConnection()
+
+    cloud_connection = cloud_connection_manager.retrieve(connection_id) # 404 for others' connections
+    if cloud_connection.owner != user:
+        # Should never happen
+        raise HTTP_404_NOT_FOUND('Cloud Connection with id {} not found'.format(connection_id))
+    return cloud_connection, RcloneConnection()
 
 
 _VIEW_EXCEPTIONS = {
