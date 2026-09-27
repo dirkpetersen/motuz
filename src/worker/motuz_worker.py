@@ -22,10 +22,16 @@ Configuration (environment, e.g. the systemd unit's EnvironmentFile):
                                 and be readable by every user (rclone runs as the owner)
   HTTPS_PROXY, NO_PROXY         HTTP proxy for everything (the agent and rclone)
   MOTUZ_WORKER_JOB_TYPES        copy,hashsum (default: both)
+  MOTUZ_WORKER_RUN_AS           run rclone as this local account instead of the job's
+                                owner, for cloud-to-cloud jobs only (temporary EC2
+                                workers, where the owner does not exist); jobs with a
+                                local path or credentials from the owner's home fail
 
 Ephemeral mode (temporary cloud workers): --bootstrap-token-file <file> (or
 --bootstrap-token <t>, or MOTUZ_BOOTSTRAP_TOKEN) --once: exchange the single-use token,
-run the one job it is bound to, exit.
+run the one job it is bound to, exit. With --once the worker gives up (exit 3) when it
+has no job after MOTUZ_WORKER_ONCE_WAIT seconds (default 600), also while the central
+node is unreachable, so that a temporary instance never waits forever.
 
 Exit codes: 0 done, 1 error, 3 --once without a job, 78 configuration error (the
 systemd unit does not restart then).
@@ -35,6 +41,7 @@ import json
 import logging
 import os
 import random
+import re
 import signal
 import socket
 import ssl
@@ -58,6 +65,7 @@ EXIT_NO_JOB = 3
 EXIT_CONFIG = 78
 RCLONE = '/usr/local/bin/rclone' # RcloneConnection runs this path
 CLAIM_WAIT = 25
+RUN_AS_RE = re.compile(r'^[a-z_][a-z0-9_-]{0,31}$')
 PROXY_VARIABLES = ('HTTPS_PROXY', 'https_proxy', 'HTTP_PROXY', 'http_proxy', 'NO_PROXY', 'no_proxy')
 
 log = logging.getLogger('motuz-worker')
@@ -101,6 +109,9 @@ class Config:
                 self.bootstrap_token = f.read().strip()
         self.once = args.once
         self.once_wait = int(env.get('MOTUZ_WORKER_ONCE_WAIT') or 600)
+        self.run_as = (env.get('MOTUZ_WORKER_RUN_AS') or '').strip() or None
+        if self.run_as is not None and (not RUN_AS_RE.match(self.run_as) or self.run_as == 'root'):
+            raise ConfigError('MOTUZ_WORKER_RUN_AS must be the name of an unprivileged local account')
         # rclone runs with an allowlisted environment (user_process_env): it gets the
         # proxy and the CA bundle explicitly
         self.rclone_env = {key: env[key] for key in PROXY_VARIABLES if env.get(key)}
@@ -320,6 +331,21 @@ class JobRun:
         self.interval = max(1, int(ticket.get('progress_interval') or 5))
         self.last_report = 0
         self.name = '{} job {} of {} (ticket {})'.format(self.job['type'], self.job['id'], self.job['owner'], ticket['ticket_id'])
+        # rclone's account: the job's owner, or MOTUZ_WORKER_RUN_AS for cloud-to-cloud jobs
+        self.user = config.run_as or self.job['owner']
+
+    def check_run_as(self):
+        """With MOTUZ_WORKER_RUN_AS only cloud-to-cloud jobs with credentials in the ticket"""
+        if self.config.run_as is None:
+            return
+        for side in ('src', 'dst'):
+            entry = self.job[side]
+            if entry.get('local'):
+                raise RcloneException('This worker runs only cloud-to-cloud jobs (MOTUZ_WORKER_RUN_AS): '
+                                      'the {} is a local path'.format('source' if side == 'src' else 'destination'))
+            if 'profile_connection' in entry:
+                raise RcloneException("This worker cannot read credentials from the owner's home directory "
+                                      '(MOTUZ_WORKER_RUN_AS)')
 
     # -------------------------------------------------------- reporting
     def report(self, body):
@@ -359,6 +385,7 @@ class JobRun:
         log.info('%s: started', self.name)
         start = time.time()
         try:
+            self.check_run_as()
             if self.job['type'] == 'copy':
                 result = self.copy()
             elif self.job['type'] == 'hashsum':
@@ -395,7 +422,7 @@ class JobRun:
             src_local=bool(job['src'].get('local')),
             dst_resource_path=job['dst']['path'],
             dst_local=bool(job['dst'].get('local')),
-            user=job['owner'],
+            user=self.user,
             copy_links=bool(options.get('copy_links')),
             job_id=run_id,
             extra_flags=self.ticket.get('rclone_flags') or [],
@@ -423,7 +450,7 @@ class JobRun:
                 side_credentials(entry),
                 resource_path=entry['path'],
                 local=bool(entry.get('local')),
-                user=job['owner'],
+                user=self.user,
                 job_id=run_id,
                 download=bool(options.get('download')),
                 extra_flags=self.ticket.get('rclone_flags') or [],
@@ -453,9 +480,16 @@ class Worker:
         self._shutdown = False
         self.central.stop = self.shutdown
         self.local_rclone_version = rclone_version()
+        # --once: give up when no job was claimed by then (also while retrying an
+        # unreachable central node); never while a job runs
+        self.claimed = False
+        self.give_up_at = time.time() + config.once_wait if config.once else None
+
+    def gave_up(self):
+        return self.give_up_at is not None and not self.claimed and time.time() > self.give_up_at
 
     def shutdown(self):
-        return self._shutdown
+        return self._shutdown or self.gave_up()
 
     def request_shutdown(self, signum, frame):
         if not self._shutdown:
@@ -482,9 +516,19 @@ class Worker:
         return None
 
     def run(self):
+        try:
+            result = self._loop()
+        except Shutdown: # e.g. from a pause after an error
+            result = 0
+        if result == 0 and self.gave_up():
+            log.error('no job after %ss (MOTUZ_WORKER_ONCE_WAIT); giving up', self.config.once_wait)
+            return EXIT_NO_JOB
+        return result
+
+    def _loop(self):
         waiting_since = time.time()
         last_problem = None
-        while not self._shutdown:
+        while not self.shutdown():
             try:
                 problem = self.ready()
                 if problem:
@@ -513,6 +557,7 @@ class Worker:
                         log.error('no job to claim')
                         return EXIT_NO_JOB
                     continue
+                self.claimed = True
                 JobRun(self.central, self.config, ticket, self.shutdown).run()
                 if self.config.once:
                     return 0

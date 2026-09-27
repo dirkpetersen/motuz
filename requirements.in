@@ -2,6 +2,7 @@
 #   uv pip compile requirements.in --python-version 3.12 --upgrade -o requirements.txt
 #   uv pip compile requirements-dev.in --python-version 3.12 --upgrade -o requirements-dev.txt
 alembic
+boto3
 celery
 Flask
 Flask-JWT-Extended

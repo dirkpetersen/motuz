@@ -37,7 +37,7 @@ def list(page_size=50, page=1):
         raise HTTP_500_INTERNAL_SERVER_ERROR(str(e))
 
     return {
-        'data': query.items,
+        'data': worker_manager.annotate_location('copy', query.items),
         'total': query.total,
         'page': query.page,
         'pages': query.pages
@@ -103,13 +103,13 @@ def create(data):
 
     task_id = copy_job.id
     try:
-        pool = job_routing.choose_pool(copy_job.src_cloud, copy_job.src_resource_path, copy_job.dst_cloud)
-        if pool == job_routing.CENTRAL:
+        route = job_routing.route(copy_job.src_cloud, copy_job.src_resource_path, copy_job.dst_cloud)
+        if route.pool == job_routing.CENTRAL:
             tasks.copy_job.apply_async(task_id=_celery_task_id(task_id), kwargs={
                 'task_id': task_id,
             })
         else: # a remote worker of that pool claims it (managers/worker_manager.py)
-            worker_manager.queue_job('copy', copy_job, pool)
+            worker_manager.queue_job('copy', copy_job, route.pool, route)
     except Exception as e:
         # Otherwise the job would stay in PROGRESS forever
         copy_job.progress_state = 'FAILED'
@@ -117,6 +117,7 @@ def create(data):
         db.session.commit()
         raise
 
+    worker_manager.annotate_location('copy', [copy_job])
     return copy_job
 
 
@@ -134,6 +135,7 @@ def retrieve(id):
 
     worker_manager.expire_leases()
     if worker_manager.apply_remote_progress('copy', copy_job):
+        worker_manager.annotate_location('copy', [copy_job])
         return copy_job
 
     for _ in range(2):  # Sometimes rabbitmq closes the connection!
@@ -147,6 +149,7 @@ def retrieve(id):
     else:
         logging.error("Rabbitmq closed the connection. Failing silently")
 
+    worker_manager.annotate_location('copy', [copy_job])
     return copy_job
 
 
@@ -163,6 +166,7 @@ def stop(id):
         copy_job.progress_state = 'STOPPED'
         db.session.commit()
 
+    worker_manager.annotate_location('copy', [copy_job])
     return copy_job
 
 

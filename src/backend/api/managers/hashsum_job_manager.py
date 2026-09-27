@@ -24,7 +24,7 @@ def list(page_size=50, offset=0):
         .limit(page_size)
         .all()
     )
-    return hashsum_jobs
+    return worker_manager.annotate_location('hashsum', hashsum_jobs)
 
 
 @token_required
@@ -52,13 +52,13 @@ def create(data):
 
     task_id = hashsum_job.id
     try:
-        pool = job_routing.choose_pool(hashsum_job.src_cloud, hashsum_job.src_resource_path, hashsum_job.dst_cloud)
-        if pool == job_routing.CENTRAL:
+        route = job_routing.route(hashsum_job.src_cloud, hashsum_job.src_resource_path, hashsum_job.dst_cloud)
+        if route.pool == job_routing.CENTRAL:
             tasks.hashsum_job.apply_async(task_id=_celery_task_id(task_id), kwargs={
                 'task_id': task_id,
             })
         else: # a remote worker of that pool claims it (managers/worker_manager.py)
-            worker_manager.queue_job('hashsum', hashsum_job, pool)
+            worker_manager.queue_job('hashsum', hashsum_job, route.pool, route)
     except Exception as e:
         # Otherwise the job would stay in PROGRESS forever
         hashsum_job.progress_state = 'FAILED'
@@ -66,6 +66,7 @@ def create(data):
         db.session.commit()
         raise
 
+    worker_manager.annotate_location('hashsum', [hashsum_job])
     return hashsum_job
 
 
@@ -95,6 +96,7 @@ def retrieve(id):
         for field in ('progress_src_tree', 'progress_dst_tree'):
             if getattr(hashsum_job, field, None) is None:
                 setattr(hashsum_job, field, '[]')
+        worker_manager.annotate_location('hashsum', [hashsum_job])
         return hashsum_job
 
     for _ in range(2): # Sometimes Rabbitmq closes the connection, just retry
@@ -131,6 +133,7 @@ def retrieve(id):
     else:
         logging.error("Rabbitmq closed the connection. Failing silently")
 
+    worker_manager.annotate_location('hashsum', [hashsum_job])
     return hashsum_job
 
 
@@ -147,6 +150,7 @@ def stop(id):
         hashsum_job.progress_state = 'STOPPED'
         db.session.commit()
 
+    worker_manager.annotate_location('hashsum', [hashsum_job])
     return hashsum_job
 
 

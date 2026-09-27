@@ -364,11 +364,21 @@ def create_bootstrap_token(pool, job=None, ttl_seconds=900):
 
 # ------------------------------------------------------------------ queue
 
-def queue_job(job_type, job, pool):
-    """Queues a committed job for the remote workers of `pool`"""
-    db.session.add(RemoteJob(job_type=job_type, job_id=job.id, owner=job.owner, pool=pool, state='QUEUED'))
+def queue_job(job_type, job, pool, route=None):
+    """
+    Queues a committed job for the remote workers of `pool`. `route`
+    (job_routing.Route) carries the size of the source, from which the EC2 launcher
+    picks the instance type. Jobs of the EC2 pool get an instance (ec2_launcher).
+    """
+    db.session.add(RemoteJob(
+        job_type=job_type, job_id=job.id, owner=job.owner, pool=pool, state='QUEUED',
+        source_bytes=route.source_bytes if route is not None else None,
+        source_files=route.source_files if route is not None else None,
+    ))
     db.session.commit()
     audit.info("job queued: %s:%s owner=%s pool=%s", job_type, job.id, job.owner, pool)
+    from . import ec2_launcher # imports this module
+    ec2_launcher.job_queued(pool)
 
 
 def remote_job_for(job_type, job_id):
@@ -388,6 +398,9 @@ def apply_remote_progress(job_type, job):
         text = remote_job.progress_text or ''
         if remote_job.state == 'QUEUED':
             text = 'Waiting for a worker of pool "{}"'.format(remote_job.pool)
+            status = _location([job], job_type).get(job.id)
+            if status and status[1]:
+                text += ': {}'.format(status[1])
         job.progress_text = text
         job.progress_error_text = remote_job.progress_error_text or ''
     else:
@@ -414,6 +427,76 @@ def request_stop(job_type, job_id):
     db.session.commit()
     audit.info("stop requested: %s:%s (%s)", job_type, job_id, remote_job.state)
     return True
+
+
+def annotate_location(job_type, jobs):
+    """
+    Sets `pool` and `pool_status` on jobs for the API (where a job runs): 'central' and
+    None for Celery jobs; the pool and e.g. "running on proxmox-1" or, on an EC2 worker,
+    "starting worker (c7gn.2xlarge)" / "running on c7gn.2xlarge" for remote jobs.
+    """
+    jobs = [job for job in jobs if job is not None]
+    locations = _location(jobs, job_type)
+    for job in jobs:
+        job.pool, job.pool_status = locations.get(job.id, (job_routing.CENTRAL, None))
+    return jobs
+
+
+def _location(jobs, job_type):
+    """{job id: (pool, status text)} of the remote jobs among `jobs`"""
+    ids = [job.id for job in jobs]
+    if not ids:
+        return {}
+    remote_jobs = (db.session.query(RemoteJob)
+                   .filter(RemoteJob.job_type == job_type, RemoteJob.job_id.in_(ids)).all())
+    if not remote_jobs:
+        return {}
+    from . import ec2_launcher # imports this module
+    ec2_status = ec2_launcher.status_texts(job_type, [rj for rj in remote_jobs if ec2_launcher.handles(rj.pool)])
+    worker_ids = {rj.worker_id for rj in remote_jobs if rj.worker_id}
+    names = {w.id: w.name for w in db.session.query(Worker).filter(Worker.id.in_(worker_ids)).all()} if worker_ids else {}
+    result = {}
+    for rj in remote_jobs:
+        if rj.job_id in ec2_status:
+            status = ec2_status[rj.job_id]
+        elif rj.state == 'QUEUED':
+            status = 'waiting for a worker'
+        elif rj.state == 'RUNNING':
+            status = 'running on {}'.format(names.get(rj.worker_id, 'a worker'))
+        else:
+            status = 'ran on {}'.format(names[rj.worker_id]) if rj.worker_id in names else None
+        result[rj.job_id] = (rj.pool, status)
+    return result
+
+
+def fail_remote_job(remote_job, reason):
+    """
+    Fails a queued or running remote job now (e.g. its EC2 worker died or ran too long)
+    with `reason` for the user; returns the notification to send (send_notifications)
+    """
+    if remote_job.state == 'DONE':
+        return None
+    return _expire(remote_job, reason)
+
+
+def send_notifications(notifications):
+    _send(notifications)
+
+
+def bootstrap_token_id(token):
+    """The id of a bootstrap token (mzb1.<id>.<random>)"""
+    fields = _parse(token, 'mzb1', 3)
+    return int(fields[1]) if fields else None
+
+
+def expire_bootstrap_token(token_id):
+    """Makes an unused bootstrap token invalid now (its instance is gone)"""
+    if token_id is None:
+        return
+    row = db.session.get(WorkerBootstrapToken, token_id)
+    if row is not None and row.used_at is None and row.expires_at > utcnow():
+        row.expires_at = utcnow()
+        audit.info("bootstrap token %s expired: its instance is gone", token_id)
 
 
 def _job(remote_job):

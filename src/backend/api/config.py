@@ -1,7 +1,7 @@
 import datetime
 import os
 
-from .utils import image_view, rclone_tuning
+from .utils import ec2_config, image_view, rclone_tuning
 
 basedir = os.path.abspath(os.path.dirname(__file__))
 
@@ -116,6 +116,11 @@ class Config:
     # Public https:// address of this node, for the token broker URL in job tickets.
     # Unset: the address the worker used to claim the job.
     PUBLIC_URL = _optional_env('MOTUZ_PUBLIC_URL')
+    # Temporary EC2 workers for the jobs of one pool (managers/ec2_launcher.py, README
+    # "Temporary EC2 workers"; off unless MOTUZ_EC2_WORKERS=true). An invalid value stops
+    # the app and the Celery worker here, with a message naming the variable.
+    EC2 = ec2_config.load_settings(local_job_pool=LOCAL_JOB_POOL, large_job_pool=LARGE_JOB_POOL,
+                                   public_url=PUBLIC_URL)
 
     # Who runs this installation, shown on the public /privacy and /terms pages
     # (views/legal_views.py). Unset: the pages refer to "the administrator of this

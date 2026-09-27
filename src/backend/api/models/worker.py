@@ -78,6 +78,12 @@ class RemoteJob(db.Model):
     broker_hash = db.Column(db.String, nullable=True, unique=True)
     stop_requested = db.Column(db.Boolean, nullable=False, default=False, server_default='f')
 
+    # Size of the source when the job was routed (job_routing.route): the EC2 launcher
+    # picks the instance type from it. NULL: not measured, or the listing took longer
+    # than MOTUZ_JOB_SIZE_TIMEOUT (for a job routed as large: the largest type)
+    source_bytes = db.Column(db.BigInteger, nullable=True)
+    source_files = db.Column(db.BigInteger, nullable=True)
+
     # Live output of the job (a Celery job keeps it in its task result)
     progress_text = db.Column(db.String, nullable=True)
     progress_error_text = db.Column(db.String, nullable=True)
