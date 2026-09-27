@@ -87,6 +87,67 @@ async function paneState(zone) {
     }, zone);
 }
 
+// The viewer's pager: the lines in the DOM (numbers of "line NNNNNN ..."), its chunks, the
+// line at the top and at the bottom of the viewport, the markers, the focus. With
+// `scrollTo` ('end' or pixels) it first scrolls there and measures in the same task,
+// i.e. before the viewer can react (load or add a chunk).
+async function pagerState(scrollTo = null) {
+    return page.evaluate(scrollTo => {
+        const scroller = document.querySelector('.file-viewer-scroll');
+        const pre = scroller && scroller.querySelector('.file-viewer-content');
+        if (!pre) {
+            return null;
+        }
+        if (scrollTo !== null) {
+            scroller.scrollTop = scrollTo === 'end' ? scroller.scrollHeight : scrollTo;
+        }
+        const text = pre.textContent;
+        const lines = text.split('\n');
+        if (lines[lines.length - 1] === '') {
+            lines.pop();
+        }
+        const numbers = lines.map(l => { const m = /^line (\d{6}) /.exec(l); return m ? Number(m[1]) : null; });
+        const s = scroller.getBoundingClientRect();
+        const p = pre.getBoundingClientRect();
+        const lineAt = y => {
+            const r = document.caretRangeFromPoint(s.left + 20, y);
+            if (!r || !pre.contains(r.startContainer)) {
+                return null;
+            }
+            const t = r.startContainer.textContent;
+            const start = t.lastIndexOf('\n', r.startOffset - 1) + 1;
+            const m = /^line (\d{6}) /.exec(t.slice(start, start + 12));
+            return m ? Number(m[1]) : null;
+        };
+        return {
+            lines: lines.length, first: numbers[0], last: numbers[numbers.length - 1],
+            sequential: numbers.every((n, i) => n !== null && (i === 0 || n === numbers[i - 1] + 1)),
+            chunks: pre.children.length, textLength: text.length,
+            top: lineAt(Math.max(s.top, p.top) + 5), bottom: lineAt(Math.min(s.bottom, p.bottom) - 5),
+            scrollTop: scroller.scrollTop, scrollHeight: scroller.scrollHeight, clientHeight: scroller.clientHeight,
+            atBottom: scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 2,
+            focused: document.activeElement === scroller,
+            status: (document.querySelector('.file-viewer-status') || {}).textContent || '',
+            eof: !!document.querySelector('.file-viewer-eof'),
+        };
+    }, scrollTo);
+}
+
+async function chunkSignature() {
+    return page.evaluate(() => [...document.querySelectorAll('.file-viewer-content span')].map(s => s.dataset.chunk).join());
+}
+
+async function waitPagerIdle() {
+    await page.waitForFunction(() => document.querySelector('.file-viewer-scroll')?.getAttribute('aria-busy') === 'false',
+        null, { timeout: 20000 });
+}
+
+async function waitChunksChanged(before) {
+    await page.waitForFunction(before => [...document.querySelectorAll('.file-viewer-content span')]
+        .map(s => s.dataset.chunk).join() !== before, before, { timeout: 20000 });
+    await waitPagerIdle();
+}
+
 async function openClouds() {
     await page.click('text=My Cloud Connections');
     await page.waitForSelector('button:has-text("New Connection")');
@@ -474,6 +535,7 @@ if (PHASE === 'paste') {
     //   age:       dirB (1 day) dira (10 days) | file10.txt (now) file2.txt (2 h) File1.txt (3 days) image.bin (2023)
     //   size:      File1.txt 10, file2.txt 100, image.bin 300, file10.txt 5000
     const FILE2 = 'hello from file2\n<b>not bold</b>\n' + 'z'.repeat(66) + '\n';
+    const NUMBERED_LINES = 105000; // dira/numbered.log, 5,144,930 bytes
     appShell('sudo -u alice python3 -', `
 import os, time
 d = '/home/alice/ui-sort'
@@ -488,7 +550,9 @@ def put(name, data, mtime):
 put('File1.txt', b'0123456789', now - 3 * 86400)
 put('file2.txt', ${JSON.stringify(FILE2)}.encode(), now - 7200)
 put('file10.txt', b'y' * 4999 + b'\\n', now - 5)
-put('dira/big.log', b''.join(b'line %07d of a large log file\\n' % i for i in range(80000)), now - 60)
+# ~5 MiB of numbered lines for the pager, as test/e2e/common.py's numbered_log()
+put('dira/numbered.log', b''.join(('line %06d %s of a numbered log\\n' % (i, '\\u00fc' * (i % 5) + 'x' * (i % 29))).encode()
+                                  for i in range(1, ${NUMBERED_LINES} + 1)), now - 60)
 put('image.bin', b'\\x89PNG\\r\\n\\x1a\\n\\x00\\x00\\x00\\rIHDR' + bytes(range(256)) + b'\\x00' * 19, 1700000000)
 os.utime(os.path.join(d, 'dira'), (now - 10 * 86400,) * 2)
 os.utime(os.path.join(d, 'dirB'), (now - 86400,) * 2)
@@ -642,18 +706,106 @@ os.utime(os.path.join(d, 'dirB'), (now - 86400,) * 2)
         check('double-click on a folder still navigates', await page.locator('.modal-content').count() === 0
             && (await page.textContent('#zone-left-commands')).includes('/home/alice/ui-sort/dira'));
 
-        await row('big.log').dblclick();
-        await page.waitForSelector('.file-viewer-content', { timeout: 20000 });
-        const note = await page.locator('.file-viewer-truncated').textContent();
-        const shown = await page.locator('.file-viewer-content').evaluate(pre => ({
-            length: pre.textContent.length, first: pre.textContent.slice(0, 32),
-            scrolls: pre.closest('.modal-body').scrollHeight > pre.closest('.modal-body').clientHeight,
-        }));
-        check('large file: the first 1 MiB with a note, scrollable', note === 'Showing the first 1 MiB of 3 MiB.'
-            && shown.length === 1024 * 1024 && shown.first === 'line 0000000 of a large log file' && shown.scrolls, [note, shown]);
-        await shot('viewer-truncated');
+        // ------------------------------------------------ the pager on a ~5 MiB log
+        await row('numbered.log').dblclick();
+        await page.waitForSelector('.file-viewer-content span', { timeout: 20000 });
+        await waitPagerIdle();
+        let st = await pagerState();
+        check('pager: opening loads only the first chunk (whole lines from line 000001)', st.chunks === 1 && st.first === 1
+            && st.last === st.lines && st.lines > 4000 && st.lines < 7000 && st.sequential && st.top === 1, st);
+        check('pager: status shows the byte range, size and position', /^Showing bytes 0–262,\d{3} of 5,144,930 · \d+%$/.test(st.status), st.status);
+        check('pager: the content has the focus (keys work at once)', st.focused, st);
+        check('pager: "Jump to top" and "Jump to bottom" buttons, a key hint',
+            await page.locator('.file-viewer-jump-top').count() === 1 && await page.locator('.file-viewer-jump-bottom').count() === 1
+            && (await page.locator('.file-viewer-hint').textContent()).includes('Ctrl+End'));
+        await shot('viewer-pager-top');
+
+        for (let i = 0; i < 3; i++) {
+            await page.keyboard.press('PageDown');
+        }
+        await page.waitForTimeout(1000); // smooth scrolling
+        const paged = await pagerState();
+        check('pager: PageDown scrolls the content', paged.scrollTop > paged.clientHeight && paged.top > 50 && paged.chunks === 1, paged);
+        // End: the bottom of what is loaded, which loads the next chunk below it
+        let before = await chunkSignature();
+        await page.keyboard.press('End');
+        await waitChunksChanged(before);
+        st = await pagerState();
+        check('pager: End (the bottom of what is loaded) loads the next chunk, line numbers continue without gaps or duplicates',
+            st.chunks === 2 && st.first === 1 && st.last > paged.last && st.sequential && st.lines === st.last, st);
+        await shot('viewer-pager-loaded-more');
+
+        // Keep scrolling to the bottom until the end of the file: the top line stays when
+        // a chunk is added below and one dropped above; never more than 16 chunks (4 MiB)
+        let maxChunks = st.chunks, maxText = st.textLength, allSequential = st.sequential, steps = 0;
+        const jumps = [];
+        while (!st.eof && steps < 40) {
+            before = await chunkSignature();
+            const atBottom = await pagerState('end');
+            await waitChunksChanged(before);
+            st = await pagerState();
+            if (st.top !== atBottom.top) {
+                jumps.push([atBottom.top, st.top]);
+            }
+            maxChunks = Math.max(maxChunks, st.chunks);
+            maxText = Math.max(maxText, st.textLength);
+            allSequential = allSequential && st.sequential;
+            steps++;
+        }
+        check('pager: scrolling reaches "End of file" with the last line', st.eof && st.last === NUMBERED_LINES && st.sequential, st);
+        check('pager: memory bound: at most 16 chunks (4 MiB) in the DOM, earlier chunks dropped',
+            maxChunks === 16 && maxText <= 16 * 256 * 1024 && st.first > 1 && allSequential, { maxChunks, maxText, first: st.first, steps });
+        check('pager: no visible jump while chunks are added below and dropped above', steps >= 15 && jumps.length === 0, { steps, jumps });
+        await shot('viewer-pager-scrolled-to-end');
+
+        // Jump to top, then to the bottom with the button: the tail replaces the content
+        await page.click('.file-viewer-jump-top');
+        await page.waitForFunction(() => document.querySelectorAll('.file-viewer-content span').length === 1
+            && document.querySelector('.file-viewer-content span').dataset.offset === '0', null, { timeout: 20000 });
+        await waitPagerIdle();
+        st = await pagerState();
+        check('pager: "Jump to top" shows line 000001 at the top', st.first === 1 && st.top === 1 && st.scrollTop === 0 && st.chunks === 1, st);
+
+        await page.click('.file-viewer-jump-bottom');
+        await page.waitForFunction(() => !!document.querySelector('.file-viewer-eof'), null, { timeout: 20000 });
+        await waitPagerIdle();
+        st = await pagerState();
+        check('pager: "Jump to bottom" loads the tail: the last line, visible at the bottom of the viewport',
+            st.chunks === 1 && st.last === NUMBERED_LINES && st.bottom === NUMBERED_LINES && st.atBottom && st.first > 1 && st.sequential, st);
+        check('pager: status at the end of the file', /^Showing bytes 4,8\d\d,\d{3}–5,144,930 of 5,144,930 · 100%$/.test(st.status), st.status);
+        check('pager: the content keeps the focus after a jump', st.focused, st);
+        await shot('viewer-pager-bottom');
+        await pageShot('viewer-pager-bottom-page');
+
+        // Scroll up: the previous chunk is prepended without a visible jump
+        const tailFirst = st.first;
+        const up = Math.floor(st.clientHeight / 2); // within the prefetch margin
+        const beforePrepend = await pagerState(up);
+        await page.waitForFunction(() => document.querySelectorAll('.file-viewer-content span').length === 2, null, { timeout: 20000 });
+        await waitPagerIdle();
+        st = await pagerState();
+        check('pager: scrolling up after a jump loads the earlier lines', st.chunks === 2 && st.first < tailFirst
+            && st.last === NUMBERED_LINES && st.sequential, st);
+        check('pager: no visible jump when the earlier lines are prepended', beforePrepend.top !== null && st.top === beforePrepend.top
+            && st.scrollTop > up + 1000, [beforePrepend.top, st.top, up, st.scrollTop]);
+        await shot('viewer-pager-scrolled-up');
+
+        // Ctrl+Home / Ctrl+End: start and end of the file
+        await page.keyboard.press('Control+Home');
+        await page.waitForFunction(() => document.querySelector('.file-viewer-content span')?.dataset.offset === '0'
+            && document.querySelectorAll('.file-viewer-content span').length === 1, null, { timeout: 20000 });
+        await waitPagerIdle();
+        st = await pagerState();
+        check('pager: Ctrl+Home goes to the start of the file', st.top === 1 && st.chunks === 1, st);
+        await page.keyboard.press('Control+End');
+        await page.waitForFunction(() => !!document.querySelector('.file-viewer-eof'), null, { timeout: 20000 });
+        await waitPagerIdle();
+        st = await pagerState();
+        check('pager: Ctrl+End goes to the end of the file', st.bottom === NUMBERED_LINES && st.atBottom, st);
+        check('pager: never more than 16 chunks after jumping around', st.chunks <= 16 && maxChunks <= 16, st);
         await page.keyboard.press('Escape');
         await page.waitForSelector('.modal-content', { state: 'detached', timeout: 10000 });
+        check('pager: no page errors', pageErrors.length === 0, pageErrors);
     });
 } else {
     // Callback mode: Microsoft (fake_ms.py) sends the sign-in tab back to Motuz, which

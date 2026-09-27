@@ -8,7 +8,7 @@ import time
 import urllib.error
 import urllib.request
 
-from common import BASE, CTX, check, finish, psql, service_logs, sh
+from common import BASE, CTX, NUMBERED_LOG_CODE, check, check_chunked_reads, finish, numbered_log, psql, service_logs, sh
 
 
 def req(method, path, token=None, body=None):
@@ -146,6 +146,54 @@ status, v, _ = view(None, '/home/alice/view.txt')
 check('view needs a token', status == 401, status)
 check('file contents never logged', 'hello viewer' not in service_logs('app'), 'contents in the app log')
 
+# --- the viewer's pager: chunks of whole lines, forward, from the end and backward
+sh('app', 'sudo -u alice python3 - /home/alice/numbered.log', stdin=NUMBERED_LOG_CODE)
+NUMBERED = numbered_log()
+check_chunked_reads(req, A, '/home/alice/numbered.log', 0, NUMBERED, 'local pager')
+
+
+def chunk(token, path, connection_id=0, **params):
+    return req('POST', '/api/system/files/view/chunk/', token, dict(path=path, connection_id=connection_id, **params))
+
+
+status, v, _ = chunk(A, '/home/alice/view.txt', from_end=True)
+check('pager: small file from the end is the whole file', status == 200 and v == {
+    'path': '/home/alice/view.txt', 'content': 'hello viewer\nline 2 ü <b>not html</b>\n', 'offset': 0, 'end': 39,
+    'size': 39, 'bof': True, 'eof': True, 'encoding': 'utf-8'}, (status, v))
+status, v, _ = chunk(A, '/home/alice/numbered.log', offset=1000, length=1000)
+check('pager: a shorter length, from an offset', status == 200 and v['offset'] == 1000 and v['end'] <= 2000
+      and v['content'].endswith('\n') and v['content'].encode() == NUMBERED[1000:v['end']], (status, v))
+status, v, _ = chunk(A, '/home/alice/view.bin', from_end=True)
+check('pager: binary file refused also from the end (415)', status == 415 and 'not a text file' in msg(v), (status, v))
+status, v, _ = chunk(A, '/home/alice/big.txt', before=65 * 40000)
+check('pager: backward read of the previous chunk', status == 200 and v['end'] == 65 * 40000 and v['eof'] and not v['bof'], (status, v))
+status, v, _ = chunk(B, '/home/alice/numbered.log', from_end=True)
+check('pager: bob cannot read alice\'s file (403)', status == 403 and 'line 1' not in json.dumps(v), (status, v))
+status, v, _ = chunk(A, '/tmp/bob-only.txt')
+check('pager: alice cannot read bob\'s file (403)', status == 403 and 'only bob' not in json.dumps(v), (status, v))
+status, v, _ = chunk(A, '/home/alice/shadow-link', from_end=True)
+check('pager: symlink to /etc/shadow fails (read as the user)', status == 403 and 'root:' not in json.dumps(v), (status, v))
+for name, params in (('negative offset', {'offset': -1}), ('offset as string', {'offset': '10'}),
+                     ('offset as bool', {'offset': True}), ('fractional offset', {'offset': 1.5}),
+                     ('length 0', {'length': 0}), ('length over 256 KiB', {'length': 256 * 1024 + 1}),
+                     ('negative before', {'before': -5}), ('offset and from_end', {'offset': 5, 'from_end': True}),
+                     ('offset and before', {'offset': 5, 'before': 50}), ('from_end not a bool', {'from_end': 'yes'})):
+    status, v, _ = chunk(A, '/home/alice/view.txt', **params)
+    check(f'pager: {name} refused (400)', status == 400, (status, v))
+status, v, _ = chunk(A, '/home/alice/view.txt', offset=40)
+check('pager: offset beyond the end refused (400)', status == 400 and 'beyond the end' in msg(v), (status, v))
+status, v, _ = chunk(A, '/home/alice/view.txt', offset=39)
+check('pager: offset at the end: empty, eof', status == 200 and v['content'] == '' and v['eof'] and v['offset'] == 39, (status, v))
+for bad in ('numbered.log', '-la'):
+    status, v, _ = chunk(A, bad, from_end=True)
+    check(f'pager: relative path {bad!r} refused', status == 400 and 'absolute' in msg(v), (status, v))
+status, v, _ = chunk(A, '/dev/zero', from_end=True)
+check('pager: a device is refused, not read', status == 400 and 'regular file' in msg(v), (status, v))
+status, v, _ = chunk(None, '/home/alice/numbered.log')
+check('pager: needs a token', status == 401, status)
+logs = service_logs('app')
+check('pager: file contents never logged', 'of a numbered log' not in logs and 'line 000001' not in logs, 'contents in the app log')
+
 # --- connections, ownership and secrets
 conn = {'name': 'alice-s3', 'type': 's3', 'bucket': 'b', 's3_access_key_id': 'AKIAEXAMPLE',
         's3_secret_access_key': 'topsecret', 's3_region': 'us-west-2', 'owner': 'bob', 'id': 999}
@@ -173,6 +221,8 @@ status, body, _ = req('POST', '/api/hashsum-jobs/', B, {'src_cloud_id': cid, 'sr
 check('bob cannot hashsum with alice connection', status == 404, (status, body))
 status, body, _ = view(B, '/b/x.txt', cid)
 check('bob cannot view a file with alice connection', status == 404, (status, body))
+status, body, _ = chunk(B, '/b/x.txt', cid, from_end=True)
+check('bob cannot page a file with alice connection', status == 404, (status, body))
 status, body, _ = req('POST', '/api/system/files/', B, {'path': '/b', 'connection_id': cid})
 check('bob cannot list with alice connection', status == 404, (status, body))
 

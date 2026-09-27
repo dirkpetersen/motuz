@@ -38,7 +38,7 @@ const initialState = {
     },
 
     displayFileViewerDialog: false,
-    // {host, path, name, requestId, loading, result: {content, truncated, size, encoding}, error, status}
+    // {host, connectionId, path, name, requestId}; FileViewerDialog loads the chunks itself
     fileViewerDialogData: {},
 
     displaySettingsDialog: false,
@@ -219,13 +219,7 @@ export default (state=initialState, action) => {
         return {
             ...state,
             displayFileViewerDialog: true,
-            fileViewerDialogData: {
-                ...action.payload.data,
-                loading: true,
-                result: null,
-                error: null,
-                status: null,
-            },
+            fileViewerDialogData: {...action.payload.data},
         }
     }
 
@@ -234,37 +228,6 @@ export default (state=initialState, action) => {
             ...state,
             displayFileViewerDialog: false,
             fileViewerDialogData: initialState.fileViewerDialogData,
-        }
-    }
-
-    case api.VIEW_FILE_SUCCESS:
-    case api.VIEW_FILE_FAILURE: {
-        // Only the answer for the file that is shown (not one closed or replaced meanwhile)
-        if (!state.displayFileViewerDialog || !action.meta
-                || action.meta.requestId !== state.fileViewerDialogData.requestId) {
-            return state;
-        }
-        if (action.type === api.VIEW_FILE_SUCCESS) {
-            return {
-                ...state,
-                fileViewerDialogData: {
-                    ...state.fileViewerDialogData,
-                    loading: false,
-                    result: action.payload,
-                },
-            }
-        }
-        const payload = action.payload || {};
-        const response = payload.response || {};
-        return {
-            ...state,
-            fileViewerDialogData: {
-                ...state.fileViewerDialogData,
-                loading: false,
-                status: payload.status || null,
-                error: (typeof response.message === 'string' && response.message)
-                    || 'The file could not be loaded. Please try again.',
-            },
         }
     }
 

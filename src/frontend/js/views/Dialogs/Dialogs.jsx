@@ -26,7 +26,9 @@ class Dialogs extends React.PureComponent {
                 {this.props.dialogs.displayEditCloudConnectionDialog && <EditCloudConnectionDialog />}
                 {this.props.dialogs.displayMkdirDialog && <MkdirDialog />}
                 {this.props.dialogs.displaySettingsDialog && <SettingsDialog />}
-                {this.props.dialogs.displayFileViewerDialog && <FileViewerDialog />}
+                {this.props.dialogs.displayFileViewerDialog && (
+                    <FileViewerDialog key={this.props.dialogs.fileViewerDialogData.requestId} />
+                )}
             </React.Fragment>
         );
     }
