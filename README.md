@@ -1017,9 +1017,11 @@ The export holds the database as a `pg_dump` dump with the row count of every ta
 Flask secret key (it signs the login tokens: sessions stay valid), the SMTP password, the
 OAuth client secrets, the `MOTUZ_*` settings of the running app container, Traefik's
 `acme.json` and `certs/cert.*`, and the list of the app container's mounts (recreate them
-at the same paths). It is secret: delete it after the import. The import recreates the
-database with `pg_restore` (owned by `motuz_user`), checks the row counts, writes the
-secrets and settings and runs `deploy.sh`.
+at the same paths). It is secret: delete it after the import. The import refuses a
+database at a migration the new checkout does not know (check out the Docker install's
+release, or a newer one), recreates the database with `pg_restore` (owned by
+`motuz_user`), checks the row counts, writes the secrets and settings and runs
+`deploy.sh`, which applies newer migrations.
 
 The data directory is never copied: the Docker image is Alpine (musl libc) and Ubuntu
 uses glibc, so text sorts differently and copied indexes on text columns would be

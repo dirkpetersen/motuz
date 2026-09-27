@@ -121,7 +121,10 @@ export_docker() {
     PGPASSWORD="$db_password" docker exec -e PGPASSWORD "$db_container" \
         pg_dump -h 127.0.0.1 -U "$db_user" -d "$db_name" -Fc --no-owner --no-privileges > "$WORK_TMP/export/motuz.dump" \
         || die "pg_dump failed"
-    echo "    $(wc -l < "$WORK_TMP/export/counts.txt") tables, $(du -h "$WORK_TMP/export/motuz.dump" | cut -f1)"
+    PGPASSWORD="$db_password" docker exec -e PGPASSWORD "$db_container" \
+        psql -X -h 127.0.0.1 -U "$db_user" -d "$db_name" -tAc 'SELECT version_num FROM alembic_version' > "$WORK_TMP/export/revision" \
+        || die "could not read the database revision"
+    echo "    $(wc -l < "$WORK_TMP/export/counts.txt") tables, $(du -h "$WORK_TMP/export/motuz.dump" | cut -f1), migration $(cat "$WORK_TMP/export/revision")"
 
     log "mounts of $app_container (recreate them on the new host, at the same paths)"
     docker inspect -f '{{range .Mounts}}{{println .Source "->" .Destination}}{{end}}' "$app_container" \
@@ -153,6 +156,11 @@ import_systemd() {
     tar -C "$WORK_TMP" -xzf "$file"
     grep -q '^motuz-export 1$' "$WORK_TMP/export/manifest" 2>/dev/null || die "$file is not an export of migrate_from_docker.sh"
     sed -n 's/^\(created\|host\) /    exported \1 /p' "$WORK_TMP/export/manifest"
+    # The database must be at a migration this checkout knows (the same Motuz release or
+    # an older one): `db upgrade` cannot go on from an unknown revision
+    local revision; revision=$(tr -d '[:space:]' < "$WORK_TMP/export/revision")
+    grep -qsE "^revision = ['\"]${revision}['\"]" "$CHECKOUT"/src/backend/migrations/versions/*.py \
+        || die "the docker install's database is at migration $revision, unknown to $CHECKOUT: check out the docker install's Motuz release (or a newer one) first"
 
     log "stopping the app and the worker"
     systemctl --user stop motuz-app.service motuz-celery.service
