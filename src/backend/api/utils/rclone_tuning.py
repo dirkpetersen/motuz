@@ -542,6 +542,8 @@ def describe(dst_type, tuning=None):
         'dst_type': dst_type,
         'fields': fields,
         'memory_budget': tuning.memory_budget,
+        # for the dialog's own estimate (installation-wide only)
+        'buffer_size': tuning.defaults.get('buffer_size', RCLONE_DEFAULTS['buffer_size']),
         'memory_default': estimate_memory(effective({}, dst_type, tuning), dst_type),
         'presets': presets(dst_type, tuning),
     }

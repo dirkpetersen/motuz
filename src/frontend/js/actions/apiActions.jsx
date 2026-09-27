@@ -35,6 +35,10 @@ export const CREATE_COPY_JOB_REQUEST = '@@api/CREATE_COPY_JOB_REQUEST';
 export const CREATE_COPY_JOB_SUCCESS = '@@api/CREATE_COPY_JOB_SUCCESS';
 export const CREATE_COPY_JOB_FAILURE = '@@api/CREATE_COPY_JOB_FAILURE';
 
+export const RETRIEVE_COPY_JOB_PERFORMANCE_REQUEST = '@@api/RETRIEVE_COPY_JOB_PERFORMANCE_REQUEST';
+export const RETRIEVE_COPY_JOB_PERFORMANCE_SUCCESS = '@@api/RETRIEVE_COPY_JOB_PERFORMANCE_SUCCESS';
+export const RETRIEVE_COPY_JOB_PERFORMANCE_FAILURE = '@@api/RETRIEVE_COPY_JOB_PERFORMANCE_FAILURE';
+
 export const STOP_COPY_JOB_REQUEST = '@@api/STOP_COPY_JOB_REQUEST';
 export const STOP_COPY_JOB_SUCCESS = '@@api/STOP_COPY_JOB_SUCCESS';
 export const STOP_COPY_JOB_FAILURE = '@@api/STOP_COPY_JOB_FAILURE';
@@ -235,10 +239,29 @@ export const createCopyJob = (data) => {
                 return;
             }
         }
-        await dispatch(_createCopyJob(data));
+        const result = await dispatch(_createCopyJob(data));
+        if (result && result.error) {
+            return result; // the dialog stays open and shows why (e.g. invalid performance settings)
+        }
         await dispatch(dialog.hideNewCopyJobDialog())
+        return result;
     }
 }
+
+// Fields, limits, presets and memory budget of the Performance section of the New Copy
+// Job dialog, for a destination connection (0: local filesystem)
+export const retrieveCopyJobPerformance = (dstCloudId) => ({
+    [RSAA]: {
+        endpoint: `/api/copy-jobs/performance/?dst_cloud_id=${encodeURIComponent(dstCloudId || 0)}`,
+        method: 'GET',
+        headers: withAuth({ 'Content-Type': 'application/json' }),
+        types: [
+            RETRIEVE_COPY_JOB_PERFORMANCE_REQUEST,
+            RETRIEVE_COPY_JOB_PERFORMANCE_SUCCESS,
+            RETRIEVE_COPY_JOB_PERFORMANCE_FAILURE,
+        ],
+    }
+});
 
 const _createCopyJob = (data) => ({
     [RSAA]: {

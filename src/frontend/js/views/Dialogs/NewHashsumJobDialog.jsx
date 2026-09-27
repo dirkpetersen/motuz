@@ -184,6 +184,10 @@ class NewHashsumJobDialog extends React.Component {
                 "option_download": formData['option_download'],
                 "notification_email": formData['notification_email'],
             }
+            // From the copy job ("Check Integrity"): as many parallel checks as it had
+            if (propsData.performance && propsData.performance.checkers) {
+                data['performance'] = {checkers: propsData.performance.checkers};
+            }
 
             if (!data['src_cloud_id']) {
                 delete data['src_cloud_id'];
