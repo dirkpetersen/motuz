@@ -16,6 +16,8 @@ Login tokens (flask-jwt-extended, JWT_IDENTITY_CLAIM 'identity' = the Unix user 
   Tokens from before sessions existed have no sid; they expire on their own.
 """
 import logging
+import os
+import pwd
 import time
 import uuid
 from functools import wraps
@@ -27,6 +29,7 @@ import flask_jwt_extended as flask_jwt
 from ..models import RevokedToken
 from ..application import db, jwt
 from ..utils.pam import pam
+from ..utils import auth_helper
 from ..exceptions import *
 
 
@@ -86,17 +89,51 @@ def get_logged_in_user(*args, **kwargs):
 
 
 
-def login_user(data):
-    username = data['username']
-    password = data['password']
+def _login_refused(username):
+    """
+    Why `username` may never log in (None if it may): root, and the account the server
+    runs as, whose files (secrets, database) the file browser would otherwise show
+    """
+    try:
+        uid = pwd.getpwnam(username).pw_uid
+    except (KeyError, TypeError, ValueError):
+        return None # PAM decides (and refuses unknown users)
+    if uid == 0:
+        return 'root'
+    if uid == os.geteuid():
+        return 'the account Motuz runs as'
+    return None
+
+
+def _authenticate(username, password):
+    """True if PAM (in this process, or through the login helper) accepts the password"""
+    helper = current_app.config.get('AUTH_HELPER')
+    if helper:
+        if auth_helper.check_password(helper, username, password):
+            return True
+        logging.error("Could not authenticate {} (login helper {})".format(username, helper))
+        return False
 
     user_authentication = pam()
-    user_authentication.authenticate(username, password)
-
+    user_authentication.authenticate(username, password, service=current_app.config.get('PAM_SERVICE') or 'login')
     if user_authentication.code != 0:
         logging.error("Could not authenticate {}. Reason: `{}` (Code: {})".format(
             username, user_authentication.reason, user_authentication.code,
         ))
+        return False
+    return True
+
+
+def login_user(data):
+    username = data['username']
+    password = data['password']
+
+    refused = _login_refused(username)
+    if refused:
+        logging.error("Refused login of {} ({})".format(username, refused))
+        raise HTTP_401_UNAUTHORIZED('No match for Username and Password.')
+
+    if not _authenticate(username, password):
         raise HTTP_401_UNAUTHORIZED('No match for Username and Password.')
 
     return {

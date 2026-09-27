@@ -17,6 +17,22 @@ def user_process_env(extra=None):
     return env
 
 
+def sudo_as(user, extra=None):
+    """
+    The `sudo` prefix of a command run as `user` with the environment
+    user_process_env(extra). Never asks for a password (-n). Only the named variables
+    are kept (`--preserve-env=<names>`, which needs the SETENV tag in sudoers when
+    Motuz does not run as root): `-E` would keep them all, and sudo-rs, the default
+    sudo of Ubuntu 26.04, ignores -E. sudo sets PATH (secure_path), HOME and USER of the
+    target user itself; a HOME in `extra` wins.
+    """
+    names = sorted(name for name in user_process_env(extra) if name != 'PATH')
+    command = ['sudo', '-n']
+    if names:
+        command.append('--preserve-env={}'.format(','.join(names)))
+    return command + ['-u', user]
+
+
 class AbstractConnection:
     """
     A symmetric API for rclone_connection to be used locally

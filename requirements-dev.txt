@@ -103,6 +103,8 @@ pytest==9.1.1
     # via -r requirements-dev.in
 python-dateutil==2.9.0.post0
     # via celery
+redis==6.4.0
+    # via kombu
 referencing==0.37.0
     # via
     #   flask-restx

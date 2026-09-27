@@ -166,12 +166,10 @@ def _python():
 def home_directory(user):
     from .local_connection import _homepath_with_impersonation
     try:
-        output = _homepath_with_impersonation(user)
-    except (subprocess.CalledProcessError, OSError) as e:
+        home = _homepath_with_impersonation(user)
+    except (KeyError, OSError) as e:
         logging.error("Could not resolve the home directory of %s: %s", user, e)
         raise LocalCredentialsError('Could not find your home directory')
-    lines = [line.strip() for line in output.splitlines() if line.strip()]
-    home = lines[-1] if lines else ''
     if not home.startswith('/') or home == '/':
         raise LocalCredentialsError('Could not find your home directory')
     return home
@@ -188,7 +186,8 @@ def read_home_files(user, relpaths, home=None):
         if rel.startswith('/') or '..' in rel.split('/'):
             raise ValueError('Not a relative path below the home directory: {}'.format(rel))
 
-    command = ['sudo', '-n', '-u', user, '--', 'env']
+    from .local_connection import ENV
+    command = ['sudo', '-n', '-u', user, '--', ENV]
     # sudo drops LD_LIBRARY_PATH, which the image's python needs when /etc is the host's
     if os.environ.get('LD_LIBRARY_PATH'):
         command.append('LD_LIBRARY_PATH={}'.format(os.environ['LD_LIBRARY_PATH']))
