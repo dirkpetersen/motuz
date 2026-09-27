@@ -12,6 +12,7 @@ import {parentDirectory} from 'utils/parentDirectory.js'
 const DRAG_MIME = 'application/x-motuz-files';
 const DRAG_SIDE_MIME_PREFIX = 'application/x-motuz-side-';
 const DROP_ON_PANE = -1; // dropTarget value for the pane itself (its current path)
+const AGE_REFRESH_MS = 30 * 1000; // how often the file ages are recomputed
 
 
 class Pane extends React.Component {
@@ -27,6 +28,7 @@ class Pane extends React.Component {
 
     render() {
         const {dropTarget} = this.state;
+        const now = Date.now(); // ages are relative to this render; see AGE_REFRESH_MS
 
         const paneFiles = this.props.files.map((file, i) => (
             <PaneFile
@@ -35,6 +37,9 @@ class Pane extends React.Component {
                 type={file.type}
                 name={file.name}
                 size={file.size}
+                modified={file.modified}
+                now={now}
+                title={file.type ? file.name : ''}
                 useSiUnits={this.props.useSiUnits}
                 active={this.props.active && this.props.pane.fileMultiFocusIndexes[i]}
                 draggable={isCopyableFile(file)}
@@ -62,6 +67,8 @@ class Pane extends React.Component {
     }
 
     componentDidMount() {
+        // Re-render periodically so the ages stay current, without refetching
+        this.ageTimer = setInterval(() => this.setState({ageTick: Date.now()}), AGE_REFRESH_MS);
         // dragend bubbles from the source row, so this also clears the highlight
         // of the other pane, including when the drag is cancelled with Esc
         document.addEventListener('dragend', this.onDocumentDragEnd);
@@ -69,6 +76,7 @@ class Pane extends React.Component {
     }
 
     componentWillUnmount() {
+        clearInterval(this.ageTimer);
         document.removeEventListener('dragend', this.onDocumentDragEnd);
         document.removeEventListener('drop', this.onDocumentDragEnd);
     }

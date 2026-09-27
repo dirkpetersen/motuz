@@ -7,6 +7,7 @@ from collections import defaultdict
 
 from .abstract_connection import AbstractConnection, RcloneException, user_process_env
 from . import local_credentials
+from .file_times import rfc3339_to_iso_utc
 from .copy_job_queue import CopyJobQueue
 from .hashsum_job_queue import HashsumJobQueue
 
@@ -91,7 +92,7 @@ class RcloneConnection(AbstractConnection):
 
         try:
             result = self._execute(command, credentials)
-            files = json.loads(result)
+            files = _with_modified(json.loads(result))
             return {
                 'files': files,
                 'path': path,
@@ -575,6 +576,16 @@ class RcloneConnection(AbstractConnection):
             if len(stderr) == 0:
                 raise
             raise RcloneException(stderr)
+
+
+def _with_modified(files):
+    """
+    rclone lsjson entries plus `modified`: their ModTime (RFC 3339 with any offset)
+    in ISO 8601 UTC, or None if unknown (see file_times)
+    """
+    for entry in files:
+        entry['modified'] = rfc3339_to_iso_utc(entry.get('ModTime'))
+    return files
 
 
 def _drive_tuning(prefix):

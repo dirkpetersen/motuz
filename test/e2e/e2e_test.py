@@ -1,7 +1,9 @@
 """End-to-end checks against the e2e docker stack through Traefik (https://localhost):
 login, local filesystem as the user, connection ownership and secrets, copy and
 integrity-check jobs, stopping jobs, refresh and logout. Needs a fresh database."""
+import datetime
 import json
+import re
 import time
 import urllib.error
 import urllib.request
@@ -72,6 +74,19 @@ sh('app', "sudo -u alice sh -c 'for i in 1 2 3; do echo hello$i > /home/alice/sr
 status, ls, _ = req('POST', '/api/system/files/', A, {'path': '/home/alice/src', 'connection_id': 0})
 names = sorted(f['name'] for f in ls.get('files', [])) if status == 200 else ls
 check('ls dir', names == ['f1.txt', 'f2.txt', 'f3.txt', 'sub'], names)
+# Modification times: ISO 8601 UTC ('Z'), from epoch seconds, whatever the server's TZ
+ISO_UTC = re.compile(r'^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$')
+by_name = {f['name']: f for f in ls.get('files', [])} if status == 200 else {}
+check('ls: every entry has a UTC modification time', by_name and all(ISO_UTC.match(f.get('modified') or '') for f in by_name.values()), by_name)
+f1 = by_name.get('f1.txt', {})
+check('ls: numeric size and a recent modification time', f1.get('size') == 7 and f1.get('type') == 'file'
+      and abs(datetime.datetime.strptime(f1['modified'], '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=datetime.timezone.utc).timestamp() - time.time()) < 600, f1)
+sh('app', "sudo -u alice touch -d @1700000000 /home/alice/src/f3.txt; sudo -u alice ln -s /nonexistent /home/alice/src/broken")
+status, ls, _ = req('POST', '/api/system/files/', A, {'path': '/home/alice/src', 'connection_id': 0})
+by_name = {f['name']: f for f in ls.get('files', [])} if status == 200 else {}
+check('ls: exact modification time in UTC', by_name.get('f3.txt', {}).get('modified') == '2023-11-14T22:13:20Z', by_name.get('f3.txt'))
+check('ls: broken symlink listed without size and time', by_name.get('broken') == {'name': 'broken', 'type': 'symlink', 'size': None, 'modified': None}, by_name.get('broken'))
+sh('app', "rm -f /home/alice/src/broken")
 status, body, _ = req('POST', '/api/system/files/', A, {'path': '/home/bob', 'connection_id': 0})
 check('alice cannot list bob home', status == 403, (status, body))
 status, body, _ = req('POST', '/api/system/files/', A, {'path': '-la', 'connection_id': 0})

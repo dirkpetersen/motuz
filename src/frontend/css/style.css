@@ -241,14 +241,16 @@ pre {
 .zone-pane {
     border: 1px solid #e1e2e3;
     user-select: none;
-
+    --pane-age-width: 7.5rem;
+    --pane-size-width: 6rem;
 }
 
 .grid-files {
     display: grid;
     grid-template-rows: 25px;
     grid-auto-rows: 25px;
-    grid-template-columns: 1fr 100px;
+    /* Name | Age | Size: the name truncates (ellipsis) before the other two shrink */
+    grid-template-columns: minmax(0, 1fr) var(--pane-age-width) var(--pane-size-width);
     align-content: start;
     min-height: 100%; /* The empty space below the files is a drop target too */
     overflow-x: hidden;
@@ -259,6 +261,19 @@ pre {
     overflow: hidden;
     white-space: nowrap;
     text-overflow: ellipsis;
+}
+
+.grid-file-age {
+    text-align: right;
+    padding-right: .75rem;
+    font-size: 13px;
+    line-height: 25px;
+    color: #5f6368;
+}
+
+.grid-file-size {
+    text-align: right;
+    padding-right: .5rem;
 }
 
 .grid-file-row.active {

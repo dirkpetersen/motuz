@@ -5,6 +5,7 @@ import subprocess
 
 from ..exceptions import *
 from .abstract_connection import AbstractConnection, RcloneException
+from .file_times import epoch_to_iso_utc
 
 
 class LocalConnection(AbstractConnection):
@@ -80,48 +81,33 @@ def _homepath_with_impersonation(user):
 
 def _parse_ls(output):
     """
-    Each line looks like one of the following
+    Parses `ls -a -l -L -g -o --time-style=+%s`. Each line looks like one of
 
-    drwxr-xr-x      12        384    Jul     6    15:42    ./
-    permissions | position | size | month | day | time | filename
-        0       |    1     |   2  |   3   |  4  |  5   |   6
+    drwxr-xr-x 12  384 1720280520 dirname
+    -rw-r--r--  1 4096 1720280520  name with a leading space
+    crw-rw-rw-  1 1, 3 1720280520 null            (device: major, minor)
+    l?????????  ?    ? ? broken-symlink           (-L could not dereference it)
+    permissions | links | size | mtime (epoch seconds) | filename
 
-    drwxr-xr-x      12        384    Jul     6    2018    ./
-    permissions | position | size | month | day | year | filename
-        0       |    1     |   2  |   3   |  4  |  5   |   6
+    The mtime is epoch seconds, i.e. UTC whatever TZ is; it becomes `modified` in
+    ISO 8601 UTC (file_times). ls separates it from the name by exactly one space, so
+    names keep leading spaces.
 
-    l?????????       ?          ?                    ?   shared",
-    permissions | position | size | month   day   year | filename
-        0       |    1     |   2  |   3   |  4  |  5   |   6
+    Returns [{name, type, size, modified}], size an int or None, modified a string or None.
     """
-
-    # Case 1 and 2
-    regex1 = r'^(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(.+)'
-    #             0       1       2       3       4       5       6
-
-    # Case 3
-    regex2 = r'^(\S+)\s+(\S+)\s+(\S+)\s+(\s)(\s)(\S+)\s+(.+)'
-    #             0       1       2       3   4   5       6
-
-    regexes = (regex1, regex2,)
+    regex = re.compile(r'^(\S+)\s+(\S+)\s+(\d+,\s*\d+|\S+)\s+(-?\d+|\?) (.+)$')
 
     result = []
     for line in output.split('\n'):
-        if line.startswith("total"):
+        if line.startswith("total") or line == '':
             continue
 
-        for regex in regexes:
-            match = re.search(regex, line)
-            if match is not None:
-                break
-        else:
+        match = regex.match(line)
+        if match is None:
             logging.error("Could not parse line `{}`".format(line))
             continue
 
-        groups = match.groups()
-        permissions = groups[0]
-        size = groups[2]
-        filename = groups[6]
+        permissions, _links, size, mtime, filename = match.groups()
 
         if filename == '.' or filename == '..':
             continue
@@ -135,13 +121,11 @@ def _parse_ls(output):
         else:
             type = "unknown"
 
-        if type == 'symlink':
-            filename = filename.split('->')[0].strip()
-
         result.append({
             "name": filename,
             "type": type,
-            "size": size,
+            "size": int(size) if size.isdigit() else None,
+            "modified": epoch_to_iso_utc(mtime) if mtime != '?' else None,
         })
 
     return result
@@ -159,19 +143,20 @@ def _ls_with_impersonation(path, user):
         '-L', # Dereference symlinks
         '-g', # Exclude owner user info (if needed, consider -n)
         '-o', # Exclude group user info (if needed consider -n)
+        '--time-style=+%s', # Modification times as epoch seconds (UTC, whatever TZ is)
         '--', # Never interpret the path as an option
         path,
     ]
 
     try:
         byteOutput = subprocess.check_output(command)
-        output = byteOutput.decode('UTF-8').rstrip()
+        output = byteOutput.decode('UTF-8').rstrip('\n') # names may end in spaces
         return output
     except subprocess.CalledProcessError as err:
         # Sometimes `ls -alLgo` errors out when it cannot dereference symlinks, but it
         # still returns some results on stdout. We should display those cases
         try:
-            output = err.stdout.decode('UTF-8').rstrip()
+            output = err.stdout.decode('UTF-8').rstrip('\n')
             if len(output) == 0:
                 raise
             return output

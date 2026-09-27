@@ -8,9 +8,11 @@ against MOTUZ_E2E_AWS_BUCKET (an existing bucket in MOTUZ_E2E_AWS_REGION, defaul
 us-west-2); objects are written below a unique prefix and removed at the end.
 Secrets are never printed; the checks only report whether they leaked."""
 import configparser
+import datetime
 import hashlib
 import json
 import os
+import re
 import secrets
 import string
 import sys
@@ -361,6 +363,14 @@ status, hj, raw = req('POST', '/api/hashsum-jobs/', A, {'src_resource_path': '/h
                                                        'dst_resource_path': '/motuztest/copy', 'option_download': False})
 hj = wait_job('hashsum-jobs', hj['id'], A)
 check_r('hashsum local vs Azure identical', hj['progress_state'] == 'SUCCESS' and json.loads(hj['progress_src_tree']) == [] and json.loads(hj['progress_dst_tree']) == [], hj)
+# Cloud listing: rclone's ModTime normalized to ISO 8601 UTC ('Z') in `modified`
+status, azls, raw = req('POST', '/api/system/files/', A, {'path': '/motuztest/copy', 'connection_id': c5['id']})
+entries = {f['Name']: f for f in (azls or {}).get('files', [])} if status == 200 else {}
+f1 = entries.get('f1.bin', {})
+check_r('Azure listing: files have a UTC modification time', status == 200 and re.match(r'^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$', f1.get('modified') or '')
+        and abs(datetime.datetime.fromisoformat(f1['modified'].replace('Z', '+00:00')).timestamp() - time.time()) < 900, raw)
+check_r('Azure listing: modified is ModTime in UTC', f1.get('ModTime') and f1['modified']
+        == datetime.datetime.fromisoformat(re.sub(r'\.\d+', '', f1['ModTime']).replace('Z', '+00:00')).astimezone(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'), f1)
 status, body, raw = req('POST', '/api/connections/', A, dict(az, name='msi', profile_name='msi'))
 check_r('cannot create from a managed-identity remote', status == 400, raw)
 status, body, raw = req('POST', '/api/connections/', A, dict(az, profile_source='aws', profile_name=PROFILE))

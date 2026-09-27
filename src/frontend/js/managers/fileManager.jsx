@@ -15,6 +15,7 @@ export function convertRcloneFilesToMotuz(files) {
         name: d.Name,
         type: d.IsDir ? 'dir' : 'file',
         size: d.Size,
+        modified: d.modified, // ISO 8601 UTC from the server (rclone's ModTime), or null
     }))
     return files;
 }
