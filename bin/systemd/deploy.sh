@@ -59,12 +59,23 @@ if [ -f /usr/local/lib/motuz-auth/motuz_auth_helper.py ]; then
 fi
 
 # ---------------------------------------------------------------- Python
+# uv's Python $PYTHON_VERSION (versions.env), or the distribution's own interpreter when
+# its module sets DISTRO_PYTHON (Amazon Linux 2027: /usr/bin/python3.14)
+export UV_NO_PROGRESS=1
+if [ -n "${DISTRO_PYTHON:-}" ]; then
+    [ -x "$DISTRO_PYTHON" ] || die "$DISTRO_PYTHON not found: run bin/systemd/install.sh again as root"
+    export UV_PYTHON_PREFERENCE=only-system
+    PYTHON="$DISTRO_PYTHON"
+    PYTHON_VERSION=$("$DISTRO_PYTHON" -c 'import sys; print("%d.%d" % sys.version_info[:2])')
+else
+    export UV_PYTHON_PREFERENCE=only-managed
+    PYTHON="$PYTHON_VERSION"
+    /usr/local/bin/uv python install --quiet "$PYTHON_VERSION"
+fi
 log "Python ${PYTHON_VERSION} venv and requirements.txt (uv ${UV_VERSION})"
-export UV_PYTHON_PREFERENCE=only-managed UV_NO_PROGRESS=1
-/usr/local/bin/uv python install --quiet "$PYTHON_VERSION"
 if [ ! -x "$VENV/bin/python" ] || ! "$VENV/bin/python" -c "import sys; sys.exit(sys.version_info[:2] != tuple(map(int, '$PYTHON_VERSION'.split('.'))))" 2>/dev/null; then
     rm -rf "$VENV"
-    /usr/local/bin/uv venv --quiet --python "$PYTHON_VERSION" "$VENV"
+    /usr/local/bin/uv venv --quiet --python "$PYTHON" "$VENV"
 fi
 # uWSGI is built from source here, as in the docker image (build-essential)
 /usr/local/bin/uv pip install --quiet --python "$VENV/bin/python" -r "$CHECKOUT/requirements.txt"

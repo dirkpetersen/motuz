@@ -252,5 +252,54 @@ class TestTraefikArgs(unittest.TestCase):
             self.module.systemd_flags(['--x=${MOTUZ_ACME_EMAIL}'], '/d', '/a', {'MOTUZ_ACME_EMAIL': 'a b'})
 
 
+class TestDistroModules(unittest.TestCase):
+    """Every bin/systemd/distro/<ID>.sh defines what install.sh, deploy.sh and uninstall.sh use"""
+
+    MODULES = {'ubuntu': ('ubuntu', '26.04'), 'amzn': ('amzn', '2027')}
+    VARIABLES = ('DISTRO_NAME', 'PG_BINDIR', 'REDIS_SERVER', 'REDIS_CLI', 'PAM_TEMPLATE', 'DISTRO_SERVICES')
+    FUNCTIONS = ('distro_supported', 'distro_install_packages', 'distro_install_worker_packages', 'distro_firewall_hint')
+
+    def module(self, name, os_id, version):
+        script = ('REPO_DIR="$1"; source "$1/bin/systemd/distro/$2.sh"; ID="$3"; VERSION_ID="$4"; '
+                  'for v in ' + ' '.join(self.VARIABLES) + ' DISTRO_PYTHON; do printf "%s=%s\\n" "$v" "${!v:-}"; done; '
+                  'for f in ' + ' '.join(self.FUNCTIONS) + '; do [ "$(type -t "$f")" = function ] && echo "fn=$f"; done; '
+                  'distro_supported && echo supported=1 || echo supported=0')
+        out = subprocess.run(['bash', '-c', script, 'bash', REPO, name, os_id, version], capture_output=True, text=True, check=True)
+        values = dict(line.split('=', 1) for line in out.stdout.splitlines())
+        values['functions'] = [line[3:] for line in out.stdout.splitlines() if line.startswith('fn=')]
+        return values
+
+    def test_the_contract(self):
+        self.assertEqual(sorted(f[:-3] for f in os.listdir(os.path.join(REPO, 'bin', 'systemd', 'distro'))), sorted(self.MODULES))
+        for name, (os_id, version) in self.MODULES.items():
+            with self.subTest(name):
+                values = self.module(name, os_id, version)
+                for variable in self.VARIABLES:
+                    self.assertTrue(values[variable], variable)
+                self.assertEqual(sorted(values['functions']), sorted(self.FUNCTIONS))
+                self.assertEqual(values['supported'], '1')
+                self.assertTrue(os.path.isfile(values['PAM_TEMPLATE']), values['PAM_TEMPLATE'])
+                self.assertTrue(values['PG_BINDIR'].startswith('/') and values['REDIS_SERVER'].startswith('/'))
+                # the unit's placeholders are replaced with these paths (install_units)
+                self.assertNotIn('|', values['PG_BINDIR'] + values['REDIS_SERVER'])
+
+    def test_only_its_release(self):
+        self.assertEqual(self.module('amzn', 'amzn', '2023')['supported'], '0')
+        self.assertEqual(self.module('ubuntu', 'ubuntu', '24.04')['supported'], '0')
+        self.assertEqual(self.module('amzn', 'ubuntu', '2027')['supported'], '0')
+
+    def test_amazon_linux(self):
+        values = self.module('amzn', 'amzn', '2027')
+        # no RabbitMQ or Redis packages on AL2027: Valkey is the broker; its own Python 3.14
+        self.assertEqual(values['REDIS_SERVER'], '/usr/bin/valkey-server')
+        self.assertEqual(values['DISTRO_PYTHON'], '/usr/bin/python3.14')
+        self.assertIn('valkey.service', values['DISTRO_SERVICES'].split())
+        with open(values['PAM_TEMPLATE']) as f:
+            pam = [line.split() for line in f if line.strip() and not line.startswith('#')]
+        self.assertEqual(pam, [['auth', 'include', 'password-auth'], ['account', 'include', 'password-auth']])
+        # Ubuntu keeps uv's Python 3.12 (versions.env)
+        self.assertEqual(self.module('ubuntu', 'ubuntu', '26.04')['DISTRO_PYTHON'], '')
+
+
 if __name__ == '__main__':
     unittest.main()

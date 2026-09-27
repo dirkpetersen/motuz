@@ -1,6 +1,6 @@
 # Ubuntu 26.04 LTS specifics of the systemd install (sourced by bin/systemd/_lib.sh
 # load_distro, selected by ID in /etc/os-release). Another distribution gets its own
-# module with the same variables and functions, e.g. distro/amzn.sh for Amazon Linux.
+# module with the same variables and functions (distro/amzn.sh: Amazon Linux 2027).
 # Everything else in bin/systemd must stay distribution neutral.
 
 DISTRO_NAME="Ubuntu 26.04 LTS"
@@ -11,6 +11,8 @@ REDIS_SERVER=/usr/bin/redis-server
 REDIS_CLI=/usr/bin/redis-cli
 # /etc/pam.d/motuz: authentication and account checks of the distribution's stack
 PAM_TEMPLATE="$REPO_DIR/deployment/systemd/pam.d/motuz.ubuntu"
+# The packages' own services, masked: Motuz runs its own instances as user services
+DISTRO_SERVICES="postgresql.service redis-server.service"
 
 distro_supported() { # after `. /etc/os-release`
     [ "${ID:-}" = ubuntu ] && [ "${VERSION_ID:-}" = 26.04 ]
@@ -33,13 +35,21 @@ distro_install_packages() {
         nodejs npm build-essential git curl ca-certificates unzip openssl python3 \
         sudo iproute2 libpam-modules
     local unit
-    for unit in postgresql.service redis-server.service; do
+    for unit in $DISTRO_SERVICES; do
         systemctl disable --now "$unit" >/dev/null 2>&1 || true
         systemctl mask "$unit" >/dev/null
     done
     if command -v pg_lsclusters >/dev/null && [ -n "$(pg_lsclusters -h 2>/dev/null)" ]; then
         warn "Ubuntu PostgreSQL clusters exist (pg_lsclusters); they are stopped (postgresql.service masked) but kept"
     fi
+}
+
+# A remote worker (install.sh --worker-only): motuz_worker.py runs on the system python3
+# with the standard library only; rclone is the pinned one
+distro_install_worker_packages() {
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update -y -q
+    apt-get install -y -q --no-install-recommends python3 sudo curl ca-certificates unzip
 }
 
 # Only Traefik listens beyond loopback
