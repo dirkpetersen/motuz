@@ -1,6 +1,43 @@
+const fs = require('fs');
 const path = require('path');
 
 const HtmlWebpackPlugin = require('html-webpack-plugin');
+const {DefinePlugin: compilerDefine} = require('webpack');
+
+// pdf.js loads character maps (CJK fonts), the standard fonts (PDFs that do not embed
+// Helvetica, Times, ...) and its WebAssembly image/color decoders at run time. They
+// are served from this build (under /js, never from a CDN), in a folder named after
+// the version because their names carry no content hash. The scripting sandbox
+// (quickjs) is left out: PDF JavaScript is never run.
+const PDFJS_DIR = path.dirname(require.resolve('pdfjs-dist/package.json'));
+const PDFJS_VERSION = require('pdfjs-dist/package.json').version;
+const PDFJS_ASSET_DIR = `js/pdfjs-${PDFJS_VERSION}`;
+const PDFJS_ASSETS = ['cmaps', 'standard_fonts', 'wasm'];
+
+class PdfjsAssetsPlugin {
+    apply(compiler) {
+        const {sources, Compilation} = compiler.webpack;
+        compiler.hooks.thisCompilation.tap('PdfjsAssetsPlugin', (compilation) => {
+            compilation.hooks.processAssets.tap(
+                {name: 'PdfjsAssetsPlugin', stage: Compilation.PROCESS_ASSETS_STAGE_ADDITIONAL},
+                () => {
+                    for (const folder of PDFJS_ASSETS) {
+                        const dir = path.join(PDFJS_DIR, folder);
+                        for (const name of fs.readdirSync(dir)) {
+                            if (name.startsWith('quickjs')) {
+                                continue;
+                            }
+                            const file = path.join(dir, name);
+                            compilation.fileDependencies.add(file);
+                            compilation.emitAsset(`${PDFJS_ASSET_DIR}/${folder}/${name}`,
+                                new sources.RawSource(fs.readFileSync(file)));
+                        }
+                    }
+                },
+            );
+        });
+    }
+}
 
 module.exports = {
     entry: {
@@ -39,6 +76,10 @@ module.exports = {
     },
 
     plugins: [
+        new PdfjsAssetsPlugin(),
+        new compilerDefine({
+            PDFJS_ASSET_BASE: JSON.stringify(`/${PDFJS_ASSET_DIR}/`),
+        }),
         new HtmlWebpackPlugin({
             filename: './index.html',
             template: './src/frontend/index.html',
