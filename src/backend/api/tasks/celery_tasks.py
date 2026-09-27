@@ -11,7 +11,7 @@ from ..application import db
 
 from ..utils.rclone_connection import RcloneConnection
 from ..utils.email_utils import Email
-from ..utils.file_utils import generate_file_tree, remove_identical_branches
+from ..utils import job_runner
 
 
 @contextlib.contextmanager
@@ -55,17 +55,11 @@ def copy_job(self, task_id=None):
 
         connection = RcloneConnection()
         with _terminate_rclone_on_sigterm(connection):
-            _copy_job_run(self, copy_job, connection, task_id, start_time)
+            exitstatus = _copy_job_run(self, copy_job, connection, task_id, start_time)
 
-        exitstatus = connection.copy_exitstatus(task_id)
         if exitstatus == -1:
             logging.error("Copy Job did not set its status")
-            copy_job.progress_state = 'UNSET'
-        elif exitstatus == 0:
-            copy_job.progress_state = 'SUCCESS'
-        else:
-            copy_job.progress_state = 'FAILED'
-
+        copy_job.progress_state = job_runner.exit_state(exitstatus)
 
         copy_job.progress_current = 100
         copy_job.progress_execution_time = int(time.time() - start_time)
@@ -116,6 +110,7 @@ def copy_job(self, task_id=None):
 
 
 def _copy_job_run(self, copy_job, connection, task_id, start_time):
+    """Runs the copy, writing its progress once per second; returns rclone's exit status"""
     connection.copy(
         src_data=copy_job.src_cloud,
         src_resource_path=copy_job.src_resource_path,
@@ -126,18 +121,17 @@ def _copy_job_run(self, copy_job, connection, task_id, start_time):
         job_id=task_id,
     )
 
-    while not connection.copy_finished(task_id):
-        progress_current = connection.copy_percent(task_id)
-        copy_job.progress_current = progress_current
+    def tick(percent, text, error_text):
+        copy_job.progress_current = percent
         copy_job.progress_execution_time = int(time.time() - start_time)
         db.session.commit()
 
         self.update_state(state='PROGRESS', meta={
-            'text': connection.copy_text(task_id),
-            'error_text': connection.copy_error_text(task_id)
+            'text': text,
+            'error_text': error_text,
         })
 
-        time.sleep(1)
+    return job_runner.watch_copy(connection, task_id, tick)
 
 
 @celery.task(name='motuz.api.tasks.hashsum_job', bind=True)
@@ -157,37 +151,38 @@ def hashsum_job(self, task_id):
         hashsum_job.progress_state = 'PROGRESS'
         db.session.commit()
 
-        for side in ('src', 'dst'):
-            result = _hashsum_job_single(self, hashsum_job, side=side, start_time=start_time)
-            if not result["success"]:
-                hashsum_job.progress_execution_time = int(time.time() - start_time)
-                setattr(hashsum_job, f'progress_{side}_error', result["payload"].get(f'progress_{side}_error_text'))
-                db.session.commit()
-                Email.send_notification(
-                    to=hashsum_job.notification_email,
-                    subject=f'Motuz Integrity Check Job with ID {task_id} FAILED!'
-                )
-                return result["payload"]
-            if side == 'src':
-                result_src = result
-            else:
-                result_dst = result
+        connection = RcloneConnection()
+        with _terminate_rclone_on_sigterm(connection):
+            result = _hashsum_job_run(self, hashsum_job, connection, start_time)
 
+        side = result.get('failed_side')
+        if side is not None:
+            if result['state'] == 'UNSET':
+                logging.error("Hashsum Job did not set its status")
+            hashsum_job.progress_state = result['state']
+            hashsum_job.progress_current = 100
+            hashsum_job.progress_execution_time = int(time.time() - start_time)
+            setattr(hashsum_job, f'progress_{side}_error', result[f'{side}_error_text'])
+            db.session.commit()
+            Email.send_notification(
+                to=hashsum_job.notification_email,
+                subject=f'Motuz Integrity Check Job with ID {task_id} FAILED!'
+            )
+            return {
+                f'progress_{side}_tree': result[f'{side}_tree'],
+                f'progress_{side}_error_text': result[f'{side}_error_text'],
+            }
 
-        progress_src_tree = result_src["payload"].get("progress_src_tree", [])
-        progress_dst_tree = result_dst["payload"].get("progress_dst_tree", [])
-        progress_src_error = result_src["payload"].get("progress_src_error_text") or None
-        progress_dst_error = result_dst["payload"].get("progress_dst_error_text") or None
-
-        progress_src_tree, progress_dst_tree = remove_identical_branches(progress_src_tree, progress_dst_tree)
+        progress_src_tree = result['src_tree']
+        progress_dst_tree = result['dst_tree']
 
         self.update_state(state='PROGRESS', meta={}) # Clearing rabbitmq
 
         hashsum_job.progress_state = 'SUCCESS'
         hashsum_job.progress_current = 100
         hashsum_job.progress_execution_time = int(time.time() - start_time)
-        hashsum_job.progress_src_error = progress_src_error
-        hashsum_job.progress_dst_error = progress_dst_error
+        hashsum_job.progress_src_error = result['src_error_text']
+        hashsum_job.progress_dst_error = result['dst_error_text']
 
         try:
             hashsum_job.progress_src_tree = json.dumps(progress_src_tree)
@@ -248,91 +243,25 @@ def hashsum_job(self, task_id):
         }
 
 
-def _hashsum_job_single(self, hashsum_job, *, start_time, side):
-    """
-    @param hashsum_job: HashsumJob
-    @param side: string - 'src' or 'dst'
-    @param start_time: int
-
-    @return: dict {
-        "success",
-        "payload",
-    }
-    """
-    if side not in ("src", "dst"):
-        raise ValueError("_hashsum_job_single side should be either 'src' or 'dst'")
-
-    rclone_connection_id = f"{hashsum_job.id}_{side}"
-    connection = RcloneConnection()
-
-    with _terminate_rclone_on_sigterm(connection):
-        return _hashsum_job_single_run(self, hashsum_job, connection, rclone_connection_id,
-                                       start_time=start_time, side=side)
-
-
-def _hashsum_job_single_run(self, hashsum_job, connection, rclone_connection_id, *, start_time, side):
-    def get_hashsum_tree():
-        # Using closure to capture all parameters
-        files = connection.hashsum_text(rclone_connection_id)
-        tree = generate_file_tree(files)
-        return tree
-
-    connection.md5sum(
-        data=getattr(hashsum_job, f'{side}_cloud'),
-        resource_path=getattr(hashsum_job, f'{side}_resource_path'),
-        user=hashsum_job.owner,
-        job_id=rclone_connection_id,
-        download=hashsum_job.option_download,
-    )
-
-    while not connection.hashsum_finished(rclone_connection_id):
-        progress_current = connection.hashsum_percent(rclone_connection_id)
-        hashsum_job.progress_current = int(
-            progress_current * 0.5 + (50 if side == 'dst' else 0)
+def _hashsum_job_run(self, hashsum_job, connection, start_time):
+    """md5sum of both sides (job_runner.run_hashsum), writing progress once per second"""
+    def start_side(side, run_id):
+        connection.md5sum(
+            data=getattr(hashsum_job, f'{side}_cloud'),
+            resource_path=getattr(hashsum_job, f'{side}_resource_path'),
+            user=hashsum_job.owner,
+            job_id=run_id,
+            download=hashsum_job.option_download,
         )
+
+    def tick(side, percent, tree, error_text):
+        hashsum_job.progress_current = percent
         hashsum_job.progress_execution_time = int(time.time() - start_time)
         db.session.commit()
 
         self.update_state(state='PROGRESS', meta={
-            f'progress_{side}_tree': get_hashsum_tree(),
-            f'progress_{side}_error_text': connection.hashsum_error_text(rclone_connection_id)
+            f'progress_{side}_tree': tree(),
+            f'progress_{side}_error_text': error_text,
         })
 
-        time.sleep(1)
-
-    result = {}
-
-    exitstatus = connection.hashsum_exitstatus(rclone_connection_id)
-    if exitstatus == -1:
-        logging.error("Hashsum Job did not set its status")
-
-        hashsum_job.progress_state = 'UNSET'
-        hashsum_job.progress_current = 100
-        result = {
-            "success": False,
-            "payload": {
-                f'progress_{side}_tree': get_hashsum_tree(),
-                f'progress_{side}_error_text': connection.hashsum_error_text(rclone_connection_id)
-            },
-        }
-    elif exitstatus != 0:
-        hashsum_job.progress_state = 'FAILED'
-        hashsum_job.progress_current = 100
-        result = {
-            "success": False,
-            "payload": {
-                f'progress_{side}_tree': get_hashsum_tree(),
-                f'progress_{side}_error_text': connection.hashsum_error_text(rclone_connection_id)
-            },
-        }
-    else:
-        result = {
-            "success": True,
-            "payload": {
-                f'progress_{side}_tree': get_hashsum_tree(),
-                f'progress_{side}_error_text': connection.hashsum_error_text(rclone_connection_id)
-            }
-        }
-
-    connection.hashsum_delete(rclone_connection_id)
-    return result
+    return job_runner.run_hashsum(connection, hashsum_job.id, start_side, tick)

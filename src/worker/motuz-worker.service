@@ -1,0 +1,28 @@
+# systemd user unit of the Motuz remote worker (README, "Remote workers (HTTPS only)").
+# Install as the `motuz` account (which needs lingering: loginctl enable-linger motuz):
+#   install -D -m 644 motuz-worker.service ~/.config/systemd/user/motuz-worker.service
+#   systemctl --user daemon-reload && systemctl --user enable --now motuz-worker
+# Configuration: ~/.config/motuz-worker/worker.env (see worker.env.example), the worker
+# secret in ~/.config/motuz-worker/credential (mode 600).
+[Unit]
+Description=Motuz remote worker (outbound HTTPS only)
+Documentation=https://github.com/FredHutch/motuz#remote-workers-https-only
+
+[Service]
+Type=simple
+EnvironmentFile=%h/.config/motuz-worker/worker.env
+# MOTUZ_HOME (worker.env): the Motuz checkout, the same release as the central node
+ExecStart=/usr/bin/python3 ${MOTUZ_HOME}/src/worker/motuz_worker.py
+# On SIGTERM the worker stops its rclone processes and reports the job as failed
+KillMode=mixed
+TimeoutStopSec=90
+Restart=on-failure
+RestartSec=15
+# 78: configuration error or refused credential (revoked): do not restart in a loop
+RestartPreventExitStatus=78
+# rclone runs as the job's owner through sudo (setuid), so no NoNewPrivileges= and
+# no other sandboxing that would block it. No UMask= either: sudo combines it with the
+# command's umask, i.e. it would apply to the copied files.
+
+[Install]
+WantedBy=default.target

@@ -100,10 +100,15 @@ def connection_client_credentials(cloud_connection, forwarded):
             "{} app ({})".format(stored_client_id, provider.service, own_app[0] if own_app else 'none'))
 
 
-def broker_token(cloud_connection):
+def broker_token(cloud_connection, via=None):
     """
     Returns (token_json, token_url) to pass to rclone for a stored connection, or
     None if the connection is not brokered (then the stored token is used as is).
+
+    @param via: None for the loopback broker (the connection's handle as refresh token,
+                TOKEN_BROKER_URL), or a function (connection) -> (refresh_token,
+                token_url), e.g. the job-scoped HTTPS broker of a remote worker
+                (worker_manager.ticket_token_broker)
     """
     columns = BROKERED_TYPES.get(cloud_connection.type)
     if columns is None or getattr(cloud_connection, 'id', None) is None:
@@ -113,14 +118,17 @@ def broker_token(cloud_connection):
     if token is None or not token.get('refresh_token'):
         return None
 
-    handle = ensure_handle(cloud_connection)
+    if via is None:
+        refresh_token, token_url = ensure_handle(cloud_connection), current_app.config['TOKEN_BROKER_URL']
+    else:
+        refresh_token, token_url = via(cloud_connection)
     brokered = {
         'access_token': token.get('access_token', ''),
         'token_type': token.get('token_type', 'Bearer'),
-        'refresh_token': handle,
+        'refresh_token': refresh_token,
         'expiry': token.get('expiry', '0001-01-01T00:00:00Z'),
     }
-    return json.dumps(brokered), current_app.config['TOKEN_BROKER_URL']
+    return json.dumps(brokered), token_url
 
 
 def handle_token_request(form, authorization):
@@ -145,6 +153,16 @@ def handle_token_request(form, authorization):
         db.session.rollback()
         return 400, {'error': 'invalid_grant', 'error_description': 'Unknown token handle'}
 
+    return serve_locked_connection(cloud_connection, form, authorization)
+
+
+def serve_locked_connection(cloud_connection, form, authorization):
+    """
+    The rest of a refresh_token grant once the caller has locked the connection row
+    (SELECT ... FOR UPDATE) and checked that the requester may use it: the loopback
+    broker by the connection's handle, the HTTPS broker of remote workers by a job
+    ticket (worker_manager.handle_worker_token_request). Ends the transaction.
+    """
     # Client credentials rclone sent, in the body or (RFC 6749 2.3.1) form-urlencoded
     # inside HTTP basic auth, which is what Go's oauth2 (used by rclone) does
     forwarded = (form.get('client_id'), form.get('client_secret'))

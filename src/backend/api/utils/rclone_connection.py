@@ -249,6 +249,27 @@ class RcloneConnection(AbstractConnection):
             raise RcloneException(str(e))
 
 
+    def size(self, data, path, timeout):
+        """
+        (bytes, files) below a path of a connection (`rclone size --json`, as the
+        owner), used to route large cloud-to-cloud jobs (managers/job_routing.py).
+        Raises file_view.ViewTimeoutError after `timeout` seconds and RcloneException
+        if rclone fails.
+        """
+        credentials, base, remote = self._view_base(data, path)
+        command = base + ['size', '--json', remote]
+        self._log_command(command, credentials)
+        returncode, stdout, stderr = file_view.run_limited(command, timeout, env=user_process_env(credentials))
+        if returncode != 0:
+            raise RcloneException(stderr.decode('utf-8', 'replace').strip()[-1000:]
+                                  or 'rclone failed with exit status {}'.format(returncode))
+        try:
+            info = json.loads(stdout.decode('utf-8'))
+            return int(info['bytes']), int(info['count'])
+        except (ValueError, KeyError, TypeError):
+            raise RcloneException('Unexpected output of rclone size')
+
+
     def copy(self,
             src_data,
             src_resource_path,
@@ -258,21 +279,61 @@ class RcloneConnection(AbstractConnection):
             copy_links,
             job_id
     ):
+        if src_data is None:
+            _local_path(src_resource_path) # before reading any credentials
         credentials = {}
+        if src_data is not None:
+            credentials.update(self._formatCredentials(src_data, name='src'))
+        if dst_data is not None:
+            credentials.update(self._formatCredentials(dst_data, name='dst'))
+        return self.copy_with_credentials(
+            credentials,
+            src_resource_path=src_resource_path,
+            src_local=src_data is None,
+            dst_resource_path=dst_resource_path,
+            dst_local=dst_data is None,
+            user=user,
+            copy_links=copy_links,
+            job_id=job_id,
+        )
+
+
+    def copy_with_credentials(self,
+            credentials,
+            *,
+            src_resource_path,
+            src_local,
+            dst_resource_path,
+            dst_local,
+            user,
+            copy_links,
+            job_id,
+            extra_flags=(),
+            extra_env=None,
+    ):
+        """
+        Starts `rclone copyto` as `user` with ready-made remote configuration
+        (`credentials`: RCLONE_CONFIG_SRC_* / RCLONE_CONFIG_DST_*, see
+        _formatCredentials). The Celery task builds them from the connections here;
+        a remote worker gets them in its job ticket (managers/worker_manager.py).
+
+        @param extra_flags: further rclone options (each starting with --)
+        @param extra_env: further process variables that are not remote configuration
+                          (a remote worker's proxy and CA bundle)
+        """
+        credentials = dict(credentials)
         option_exclude_dot_snapshot = '' # HACKHACK: remove once https://github.com/rclone/rclone/issues/2425 is addressed
 
-        if src_data is None: # Local
+        if src_local:
             src = _local_path(src_resource_path)
             if os.path.isdir(src):
                 option_exclude_dot_snapshot = '--exclude=\\.snapshot/'
         else:
-            credentials.update(self._formatCredentials(src_data, name='src'))
             src = 'src:{}'.format(src_resource_path)
 
-        if dst_data is None: # Local
+        if dst_local:
             dst = _local_path(dst_resource_path)
         else:
-            credentials.update(self._formatCredentials(dst_data, name='dst'))
             dst = 'dst:{}'.format(dst_resource_path)
 
         if copy_links:
@@ -293,6 +354,7 @@ class RcloneConnection(AbstractConnection):
             'bucket-owner-full-control',
             option_exclude_dot_snapshot,
             '--contimeout=5m',
+            *_checked_flags(extra_flags),
             'copyto',
             src,
             dst,
@@ -304,6 +366,7 @@ class RcloneConnection(AbstractConnection):
         command = [cmd for cmd in command if len(cmd) > 0]
 
         self._log_command(command, credentials)
+        credentials.update(extra_env or {})
 
         try:
             self._copy_job_queue.push(command, credentials, job_id)
@@ -339,17 +402,45 @@ class RcloneConnection(AbstractConnection):
             job_id,
             download=False,
     ):
-        credentials = {}
+        if data is None:
+            _local_path(resource_path) # before reading any credentials
+        credentials = {} if data is None else self._formatCredentials(data, name='src')
+        return self.md5sum_with_credentials(
+            credentials,
+            resource_path=resource_path,
+            local=data is None,
+            user=user,
+            job_id=job_id,
+            download=download,
+        )
+
+
+    def md5sum_with_credentials(self,
+            credentials,
+            *,
+            resource_path,
+            local,
+            user,
+            job_id,
+            download=False,
+            extra_flags=(),
+            extra_env=None,
+    ):
+        """
+        Starts `rclone md5sum` as `user`; the remote, if any, is `src` in `credentials`
+        (RCLONE_CONFIG_SRC_*) for either side of an integrity check. See
+        copy_with_credentials for the other parameters.
+        """
+        credentials = dict(credentials)
         option_exclude_dot_snapshot = '' # HACKHACK: remove once https://github.com/rclone/rclone/issues/2425 is addressed
         option_download = ''
 
-        if data is None: # Local
+        if local:
             src = _local_path(resource_path)
             download = False
             if os.path.isdir(src):
                 option_exclude_dot_snapshot = '--exclude=\\.snapshot/'
         else:
-            credentials.update(self._formatCredentials(data, name='src'))
             src = 'src:{}'.format(resource_path)
 
         if download:
@@ -362,6 +453,7 @@ class RcloneConnection(AbstractConnection):
             '/usr/local/bin/rclone',
             '--config=/dev/null',
             *_rate_limit_flags(credentials),
+            *_checked_flags(extra_flags),
             'md5sum',
             src,
             option_exclude_dot_snapshot,
@@ -371,6 +463,7 @@ class RcloneConnection(AbstractConnection):
         command = [cmd for cmd in command if len(cmd) > 0]
 
         self._log_command(command, credentials)
+        credentials.update(extra_env or {})
 
         try:
             self._hashsum_job_queue.push(command, credentials, job_id)
@@ -427,12 +520,18 @@ class RcloneConnection(AbstractConnection):
         return bash_command
 
 
-    def _formatCredentials(self, data, name):
+    def _formatCredentials(self, data, name, token_broker=None):
         """
         Credentials are of the form
         RCLONE_CONFIG_CURRENT_TYPE=s3
             ^          ^        ^   ^
         [mandatory  ][name  ][key][value]
+
+        @param token_broker: for OAuth connections of brokered types, a function
+            (connection) -> (refresh_token, token_url) that replaces the loopback
+            token broker, e.g. a remote worker's job-scoped HTTPS broker
+            (managers/worker_manager.py). Default: the connection's handle and
+            TOKEN_BROKER_URL.
         """
 
         prefix = "RCLONE_CONFIG_{}".format(name.upper())
@@ -598,7 +697,7 @@ class RcloneConnection(AbstractConnection):
 
         elif data.type == 'onedrive':
             from ..managers.token_broker_manager import broker_token
-            brokered = broker_token(data)
+            brokered = broker_token(data, via=token_broker)
             if brokered is not None:
                 credentials['{}_TOKEN'.format(prefix)], credentials['{}_TOKEN_URL'.format(prefix)] = brokered
             else:
@@ -619,7 +718,7 @@ class RcloneConnection(AbstractConnection):
 
         elif data.type == 'drive': # Google Drive
             from ..managers.token_broker_manager import broker_token
-            brokered = broker_token(data)
+            brokered = broker_token(data, via=token_broker)
             if brokered is not None:
                 credentials['{}_TOKEN'.format(prefix)], credentials['{}_TOKEN_URL'.format(prefix)] = brokered
             else:
@@ -743,6 +842,18 @@ def _rate_limit_flags(credentials):
     if limits:
         return ['--tpslimit', str(min(limits))]
     return []
+
+
+def _checked_flags(flags):
+    """
+    Extra rclone options (performance settings, from the job ticket on a remote
+    worker): each must be an option, never a positional argument such as a remote
+    """
+    flags = list(flags or ())
+    for flag in flags:
+        if not isinstance(flag, str) or not flag.startswith('--') or '\x00' in flag:
+            raise RcloneException("Not an rclone option: {!r}".format(flag))
+    return flags
 
 
 def _local_path(path):

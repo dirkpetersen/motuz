@@ -9,11 +9,13 @@ from ..exceptions import *
 from ..models import HashsumJob
 from ..managers.auth_manager import token_required, get_logged_in_user
 from ..managers.cloud_connection_manager import owned_cloud_id
+from ..managers import job_routing, worker_manager
 
 
 @token_required
 def list(page_size=50, offset=0):
     owner = get_logged_in_user(request)
+    worker_manager.expire_leases()
 
     hashsum_jobs = (HashsumJob.query
         .filter_by(owner=owner)
@@ -48,9 +50,13 @@ def create(data):
 
     task_id = hashsum_job.id
     try:
-        tasks.hashsum_job.apply_async(task_id=_celery_task_id(task_id), kwargs={
-            'task_id': task_id,
-        })
+        pool = job_routing.choose_pool(hashsum_job.src_cloud, hashsum_job.src_resource_path, hashsum_job.dst_cloud)
+        if pool == job_routing.CENTRAL:
+            tasks.hashsum_job.apply_async(task_id=_celery_task_id(task_id), kwargs={
+                'task_id': task_id,
+            })
+        else: # a remote worker of that pool claims it (managers/worker_manager.py)
+            worker_manager.queue_job('hashsum', hashsum_job, pool)
     except Exception as e:
         # Otherwise the job would stay in PROGRESS forever
         hashsum_job.progress_state = 'FAILED'
@@ -72,6 +78,13 @@ def retrieve(id):
 
     if hashsum_job.owner != owner:
         raise HTTP_404_NOT_FOUND('Hashsum Job with id {} not found'.format(id))
+
+    worker_manager.expire_leases()
+    if worker_manager.apply_remote_progress('hashsum', hashsum_job):
+        for field in ('progress_src_tree', 'progress_dst_tree'):
+            if getattr(hashsum_job, field, None) is None:
+                setattr(hashsum_job, field, '[]')
+        return hashsum_job
 
     for _ in range(2): # Sometimes Rabbitmq closes the connection, just retry
         try:
@@ -114,8 +127,9 @@ def retrieve(id):
 def stop(id):
     hashsum_job = retrieve(id)
 
-    task = _async_result(hashsum_job.id)
-    task.revoke(terminate=True)
+    if not worker_manager.request_stop('hashsum', hashsum_job.id):
+        task = _async_result(hashsum_job.id)
+        task.revoke(terminate=True)
 
     hashsum_job = db.session.get(HashsumJob, id) # Avoid race conditions
     if hashsum_job.progress_state == 'PROGRESS':
