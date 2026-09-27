@@ -7,6 +7,7 @@ from flask_restx import Resource, Namespace, fields
 from ..managers import hashsum_job_manager
 from .. import tasks
 from ..exceptions import HTTP_EXCEPTION
+from .copy_job_views import Performance
 
 
 api = Namespace('hashsum-jobs', description='CheckJob related operations')
@@ -20,6 +21,7 @@ dto = api.model('hashsum-job', {
 
     'option_download': fields.Boolean(required=True, example=True),
     'notification_email': fields.String(required=False, example='hello@example.com'),
+    'performance': Performance(required=False, example={'checkers': 64}), # only checkers
 
     'progress_state': fields.String(readonly=True, example='PENDING'),
     'progress_current': fields.Integer(readonly=True, example=45),

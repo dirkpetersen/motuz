@@ -38,6 +38,7 @@
     9. [Migrating from nginx to Traefik](#migrating-from-nginx-to-traefik)
     10. [OneDrive: own app registration](#onedrive-own-app-registration)
     11. [Google Drive](#google-drive)
+    12. [Performance tuning](#performance-tuning)
 5. [Developer Installation](#developer-installation)
     1. [Initialize](#initialize)
     2. [Start](#start)
@@ -583,6 +584,110 @@ The text describes what Motuz itself does. Review it with your institution
 templates if needed, and change `EFFECTIVE_DATE` in `legal_views.py` whenever
 the text changes.
 
+
+### Performance tuning
+
+Motuz copies with rclone. With rclone's defaults (4 parallel transfers, 8 checkers, 4
+streams per file above 256 MiB, S3 parts of 5 MiB with 4 in flight) one job rarely goes
+beyond a few Gb/s, however fast the link. Two levels of settings change that:
+
+- **Installation defaults** in `.env` (passed to `app` and `celery` by
+  `docker-compose.yml`). Unset or empty means rclone's default, i.e. no flag at all, so
+  existing installations behave as before.
+- **Per job**, in the collapsed "Performance" section of the New Copy Job dialog: a
+  preset or custom values for the destination's type, within the server's caps and
+  memory budget. The job detail shows them, Retry keeps them, and "Check Integrity"
+  passes the checkers on.
+
+| Setting (`.env`) | rclone flag | rclone default | Per job |
+|---|---|---|---|
+| `MOTUZ_RCLONE_TRANSFERS` | `--transfers` | 4 | yes |
+| `MOTUZ_RCLONE_CHECKERS` | `--checkers` (also for integrity checks) | 8 | yes |
+| `MOTUZ_RCLONE_MULTI_THREAD_STREAMS` | `--multi-thread-streams` (0: off) | 4 | yes |
+| `MOTUZ_RCLONE_MULTI_THREAD_CUTOFF` | `--multi-thread-cutoff` | 256M | yes |
+| `MOTUZ_RCLONE_BUFFER_SIZE` | `--buffer-size` | 16M | no |
+| `MOTUZ_RCLONE_S3_UPLOAD_CONCURRENCY` | `--s3-upload-concurrency` | 4 | yes (S3 destinations) |
+| `MOTUZ_RCLONE_S3_CHUNK_SIZE` | `--s3-chunk-size` (5M to 5G) | 5M | yes (S3 destinations) |
+| `MOTUZ_RCLONE_AZUREBLOB_UPLOAD_CONCURRENCY` | `--azureblob-upload-concurrency` | 16 | yes (Azure destinations) |
+| `MOTUZ_RCLONE_AZUREBLOB_CHUNK_SIZE` | `--azureblob-chunk-size` | 4M | yes (Azure destinations) |
+
+Caps for the per-job values: `MOTUZ_RCLONE_MAX_TRANSFERS` (default 64),
+`MOTUZ_RCLONE_MAX_CHECKERS` (128), `MOTUZ_RCLONE_MAX_MULTI_THREAD_STREAMS` (32),
+`MOTUZ_RCLONE_MAX_UPLOAD_CONCURRENCY` (64, S3 and Azure), and the memory budget per job
+`MOTUZ_RCLONE_MEMORY_BUDGET` (default `8G`). Numbers are whole numbers, sizes use
+rclone's binary units and need a unit (`64M`, `1.5G`, `64Mi`). An invalid value, an
+installation default above its cap or defaults above the memory budget stop the app and
+the worker at startup, with a message that names the variable.
+
+**What matters when**
+
+- *Many small files* (below ~100 MB): per-file overhead dominates. Raise
+  `--transfers` (16 to 64) and `--checkers` (32 to 128); streams and chunk sizes hardly
+  matter. On S3 the request rate of the bucket (prefix) may become the limit.
+- *Few large files*: a single file must be split. Raise `--multi-thread-streams`
+  (8 to 16), lower `--multi-thread-cutoff` (64M to 128M), and for S3/Azure raise the chunk
+  size (32M to 128M) and the upload concurrency (8 to 32). Transfers can stay small.
+- *Mixed data* needs both, which is what costs memory (see below).
+
+**Suggested installation defaults**, per link speed (one job; several jobs share the
+link and the node's memory):
+
+| Link | transfers | checkers | streams | cutoff | S3/Azure chunk | upload concurrency | memory estimate (S3) | budget |
+|---|---|---|---|---|---|---|---|---|
+| 10 Gb/s | 8 | 16 | 4 | 256M | 16M | 8 | 1.5 GiB | 8G (default) |
+| 100 Gb/s | 32 | 64 | 8 | 128M | 32M | 16 | 20 GiB | 32G |
+| 200 Gb/s | 64 | 128 | 16 | 64M | 64M | 16 | 80 GiB | 96G |
+
+Beyond about 20 Gb/s a single rclone process is usually limited by CPU (TLS, MD5 of
+every part for S3) and by the storage on both sides: run several jobs in parallel, e.g.
+one per top-level folder, and make sure the source filesystem (e.g. CephFS) can read
+at that rate with that many parallel streams. The presets below are fitted to the budget
+per destination, so raise the budget together with the caps.
+
+**Presets** (New Copy Job dialog; values are clamped to the caps and reduced until the
+estimate fits the budget, then marked "reduced"):
+
+| Preset | transfers | checkers | streams | cutoff | S3/Azure chunk × concurrency |
+|---|---|---|---|---|---|
+| Default | server defaults | | | | |
+| Many small files | 32 | 64 | | | |
+| Few large files | 4 | | 16 | 64M | 64M × 16 |
+| Maximum | 64 | 128 | 16 | 64M | 64M × 16 |
+
+With the default budget of 8 GiB, "Maximum" becomes 10 transfers with 32M chunks for S3
+and Azure destinations and 32 transfers for local ones.
+
+**Memory estimate.** Each transfer buffers what it reads, per stream, and each upload to
+S3 or Azure holds its chunks in memory while they are sent. Motuz estimates the memory
+of one job as
+
+    transfers × ( max(1, streams) × buffer_size
+                + max(upload_concurrency, streams) × chunk_size )
+
+where the second term only counts for S3 and Azure Blob destinations (with that
+backend's chunk size and upload concurrency; rclone uses the larger of the upload
+concurrency and the streams for multi-thread uploads), and unset values count with
+rclone's defaults. Example: 32 transfers × (8 × 16 MiB + 16 × 32 MiB) = 20 GiB. Jobs
+whose estimate is above `MOTUZ_RCLONE_MEMORY_BUDGET` are refused (the dialog shows the
+estimate as you type). It is a rough upper bound: it is reached only when every
+transfer is a large file at the same time. For a hard limit inside rclone, add
+`--max-buffer-memory` (below).
+
+**Extra flags.** `MOTUZ_RCLONE_EXTRA_FLAGS` (admin only, e.g.
+`--max-buffer-memory=64G --use-mmap`) accepts only these flags, each with a validated
+value: `--fast-list`, `--use-mmap`, `--no-traverse`, `--disable-http2`,
+`--s3-disable-http2`, `--max-buffer-memory=SIZE`, `--multi-thread-chunk-size=SIZE`,
+`--multi-thread-write-buffer-size=SIZE`, `--s3-upload-cutoff=SIZE`,
+`--s3-copy-cutoff=SIZE`, `--low-level-retries=N`, `--retries=N`. There is deliberately
+no free-form option: rclone runs as the user, and other flags could start a remote
+control server (`--rc`), run programs (`--password-command`, `--metadata-mapper`),
+write files or credentials anywhere (`--log-file`, `--dump`), or weaken what is copied
+and checked (`--ignore-checksum`, `--size-only`).
+
+Users can never pass flags: per-job settings are a fixed set of names whose values are
+parsed as numbers or sizes and formatted by Motuz, one argv item per flag
+(`--transfers=32`), without a shell. The flags appear in the rclone command in the
+celery log (credentials stay masked).
 
 ### Using a custom database
 

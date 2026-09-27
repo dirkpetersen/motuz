@@ -16,6 +16,8 @@ class HashsumJob(db.Model, TimestampMixin):
     # Options
     option_download = db.Column(db.Boolean, nullable=False, server_default="f")
     notification_email = db.Column(db.String)
+    # rclone performance overrides (only `checkers`, utils/rclone_tuning.py)
+    performance = db.Column(db.JSON, nullable=True)
 
     owner = db.Column(db.String)
 
