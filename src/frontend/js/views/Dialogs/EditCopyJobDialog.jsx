@@ -6,6 +6,7 @@ import UriResource from 'components/UriResource.jsx';
 import parseTime from 'utils/parseTime.jsx'
 import serializeForm from 'utils/serializeForm.jsx'
 import {describePerformance} from 'utils/copyPerformance.js'
+import {jobLocationDetail} from 'utils/jobLocation.js'
 
 class EditCopyJobDialog extends React.Component {
     constructor(props) {
@@ -94,6 +95,16 @@ class EditCopyJobDialog extends React.Component {
                                         path={data.dst_resource_path}
                                         canCopy={true}
                                     />
+                                </div>
+                                <div className="col-1"></div>
+                            </div>
+
+                            <div className="row mb-3">
+                                <div className="col-4 text-end">
+                                    <b>Runs on</b>
+                                </div>
+                                <div className="col-7 text-start job-location">
+                                    {jobLocationDetail(data)}
                                 </div>
                                 <div className="col-1"></div>
                             </div>

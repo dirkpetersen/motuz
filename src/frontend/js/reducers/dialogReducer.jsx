@@ -38,7 +38,9 @@ const initialState = {
     },
 
     displayFileViewerDialog: false,
-    // {host, connectionId, path, name, requestId}; FileViewerDialog loads the chunks itself
+    // {host, connectionId, path, name, requestId, kind: 'text' | 'image' | 'markdown',
+    // mode: 'rendered' | 'source' (Markdown), switched: the mode was changed}; the
+    // viewers load the file themselves
     fileViewerDialogData: {},
 
     displaySettingsDialog: false,
@@ -220,6 +222,16 @@ export default (state=initialState, action) => {
             ...state,
             displayFileViewerDialog: true,
             fileViewerDialogData: {...action.payload.data},
+        }
+    }
+
+    case dialog.SET_FILE_VIEWER_MODE: {
+        if (!state.displayFileViewerDialog) {
+            return state;
+        }
+        return {
+            ...state,
+            fileViewerDialogData: {...state.fileViewerDialogData, mode: action.payload.mode, switched: true},
         }
     }
 

@@ -1,10 +1,11 @@
 import logging
 
-from flask import request
+from flask import Response, request
 from flask_restx import Resource, Namespace, fields
 
 from ..managers import system_manager
 from ..exceptions import HTTP_EXCEPTION
+from ..utils import image_view
 
 
 api = Namespace('system', description='System related operations')
@@ -118,6 +119,32 @@ class SystemFilesViewChunk(Resource):
         except Exception as e:
             logging.exception(e, exc_info=True)
             api.abort(500, str(e))
+
+
+@api.route('/files/view/image/')
+class SystemFilesViewImage(Resource):
+    @api.expect(dto, validate=True)
+    @api.produces(list(image_view.TYPES))
+    @api.response(200, 'The image (image/png, image/jpeg, image/gif or image/webp)')
+    @api.response(400, 'A folder, not a regular file, a relative local path')
+    @api.response(403, 'The user cannot read the file')
+    @api.response(404, 'No such file (or connection)')
+    @api.response(413, 'Larger than MOTUZ_VIEW_IMAGE_MAX_BYTES')
+    @api.response(415, 'Not a PNG, JPEG, GIF or WebP image (SVG is refused)')
+    def post(self):
+        """
+        The bytes of a PNG, JPEG, GIF or WebP image, read as the logged-in user (image viewer).
+        The type is detected from the file's first bytes, never from its name.
+        """
+        try:
+            content, mime, path = system_manager.view_image(request.json)
+        except HTTP_EXCEPTION as e:
+            api.abort(e.code, e.payload)
+        except Exception as e:
+            logging.exception(e, exc_info=True)
+            api.abort(500, str(e))
+        return Response(content, status=200, headers=image_view.response_headers(path, mime),
+                        direct_passthrough=True)
 
 
 @api.route('/files/mkdir/')

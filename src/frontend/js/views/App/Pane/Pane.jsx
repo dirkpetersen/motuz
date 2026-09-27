@@ -164,7 +164,7 @@ class Pane extends React.Component {
         const directoryToEnter = this.props.files[index]
         if (directoryToEnter.type !== 'dir') {
             if (isCopyableFile(directoryToEnter)) {
-                this.props.onViewFile(side, index) // read-only viewer; the server decides if it is text
+                this.props.onViewFile(side, index) // read-only viewer by extension: image, Markdown or text
             }
             return;
         }

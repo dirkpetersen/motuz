@@ -10,7 +10,10 @@ user's Motuz connection, delivered in a scoped job ticket. The IAM here only con
 start and stop workers and what those workers look like.
 
 This directory holds the IAM policies and launch template data. `${VARS}` are filled in with
-`envsubst` (see "Recreate in another account").
+`envsubst` (see "Recreate in another account"). The launcher and reaper are
+`src/backend/api/managers/ec2_launcher.py`, the user data
+`src/backend/api/templates/ec2/worker-user-data.sh`; the operator documentation (settings
+`MOTUZ_EC2_*`) is the main README, "Temporary EC2 workers".
 
 | File | What |
 |---|---|
@@ -76,7 +79,8 @@ AL2027 is a public preview (since 2026-09-03): not for production, AMIs carry a 
 and the parameter names may change at GA. SELinux is **enforcing** by default, which matters for the
 worker image: install binaries under standard paths (`/usr/local/bin`), run `restorecon`, and use
 plain systemd units. AL2023's package repositories are served over HTTPS, which fits the 443-only
-SG; expect the same for AL2027 but check it on the first real launch. To go back to Ubuntu, launch with `Version=1` or make version 1 the default:
+SG; the same holds for AL2027 (checked 2026-09-27: the worker user data installs nftables
+with dnf). To go back to Ubuntu, launch with `Version=1` or make version 1 the default:
 
     aws --profile $PROFILE --region $REGION ec2 modify-launch-template --launch-template-name motuz-worker --default-version 1
 
@@ -130,15 +134,19 @@ flow to the internet is limited to 5 Gbps, so high throughput needs many paralle
 ### What IAM cannot enforce
 
 - **Instance count.** RunInstances has no condition key for the count, and AWS has no per-tag
-  instance limit. The launcher must enforce a maximum number of running workers (count
-  `DescribeInstances` with `tag:Project=motuz`, `tag:Component=worker`, state pending/running) and a
-  maximum lifetime, and a reaper on the central node must terminate workers that outlive their job
-  or are `stopped`. The only account-wide cap is the EC2 On-Demand vCPU quota
-  (L-1216C47A, 512 vCPUs here, shared with other workloads); Service Quotas cannot lower it.
+  instance limit. The launcher enforces `MOTUZ_EC2_MAX_WORKERS` (rows in `ec2_worker` that may
+  still have an instance, plus alive instances with the worker tags and no row) and
+  `MOTUZ_EC2_MAX_RUNTIME`, and its reaper terminates workers that outlive their job, their
+  runtime or their boot timeout, `stopped` workers, and tagged workers it does not know. The only
+  account-wide cap is the EC2 On-Demand vCPU quota (L-1216C47A, 512 vCPUs here, shared with other
+  workloads); Service Quotas cannot lower it.
 - **Shutdown behavior.** There is no condition key for `InstanceInitiatedShutdownBehavior` or
   `DisableApiStop`; a request could override them. A worker that stops instead of terminating
-  only costs its 16 GiB volume and stays terminable by the central role; the reaper should
-  terminate stopped workers. The launcher must not pass these parameters.
+  only costs its 16 GiB volume and stays terminable by the central role; the reaper
+  terminates stopped workers. The launcher does not pass these parameters, so the template's
+  `terminate` applies (checked 2026-09-27: the default version 2 of both templates has
+  `InstanceInitiatedShutdownBehavior=terminate` and `DisableApiStop=true`). The user data also
+  schedules `shutdown -h +<max runtime + 15 min>` and shuts down when the worker exits.
 - **Tags in the request.** Launch template tags count as request tags (`aws:RequestTag`), so a
   RunInstances call without its own tags is allowed (it still gets the template's tags). A request
   that sets a different value (`Component=web`) or an unlisted key is denied.
@@ -164,10 +172,53 @@ Do **not** pass `ImageId`, `SecurityGroupIds`, `NetworkInterfaces`, `IamInstance
 `InstanceInitiatedShutdownBehavior` or `DisableApiStop`; most are denied, the rest would weaken the
 template. Only the tag keys `Project Component ManagedBy Name MotuzJob` are allowed.
 
-User-data is readable by every process on the worker (IMDS) and by account principals with
+User-data is readable through IMDS and by account principals with
 `ec2:DescribeInstanceAttribute`, so the bootstrap token must be single use and short lived. The
-central node uses its instance role through IMDSv2 (hop limit 1 works because the Motuz containers
-use host networking).
+user data's first step is a firewall rule that lets only root reach 169.254.169.254 (and
+`fd00:ec2::254`): nftables `meta skuid != 0 reject`, else iptables `-m owner ! --uid-owner 0
+-j REJECT`, else it installs nftables with dnf (the AL2027 preview AMI has neither; its
+repositories work through the 443-only security group); it then checks with curl as the
+unprivileged `motuzjob`
+account (rclone runs as that account) and shuts down if IMDS is still reachable. The central node
+uses its instance role through IMDSv2 (hop limit 1 works because the Motuz containers use host
+networking).
+
+### What the launcher passes (`ec2_launcher.launch_params`)
+
+Exactly the call above: `LaunchTemplate` (`LaunchTemplateId` when `MOTUZ_EC2_LAUNCH_TEMPLATE_*`
+is an `lt-` id, else `LaunchTemplateName`; `Version` `$Default`), `InstanceType` from
+`MOTUZ_EC2_INSTANCE_TYPES` (Graviton types with the arm64 template), `MinCount=MaxCount=1`,
+optional `SubnetId` (`MOTUZ_EC2_SUBNET_ID`), `UserData` (about 10 KB), `ClientToken`
+`motuz-<installation id>-<copy|hashsum>-<job id>-<attempt>` (the installation id is derived from
+the server secret, so a reinstalled server with restarting job ids does not collide), and the
+five tags on instance and volume with `Name=motuz-worker-copy-<id>`, `MotuzJob=copy-<id>`. A
+unit test compares these parameters with `central-launch-workers-policy.json`
+(`test/backend/test_ec2_launcher.py`). On the central node, `manage.py ec2 check` runs
+`RunInstances` with `DryRun=True` for every type of the table with the node's own role.
+
+Policy simulation of these calls on `motuz-ssm` (2026-09-27, `iam simulate-principal-policy`
+with the context keys EC2 would send): allowed for RunInstances with both templates and the
+table's types, CreateTags while launching, PassRole of `motuz-worker`, TerminateInstances on
+`Project=motuz,Component=worker` instances, DescribeInstances; denied for an image not from
+the template or from another account, other instance types (`c7gn.8xlarge`, `m5.large`,
+`p5.48xlarge`, an amd64 type with the arm64 template), no/other tags (`Component=web`, an
+unlisted key), another instance profile or security group, no launch template, terminating
+an untagged instance or the central node, PassRole of another role, StopInstances and
+DescribeInstanceAttribute. (Without request tags the simulator denies; EC2 itself counts the
+template's tags as request tags, see above. The launcher always passes them.)
+
+Boot tests (2026-09-27, `t4g.small` from `motuz-worker-arm64` version 2, AL2027 preview
+`ami-008acb4cce15e972c`, user data from `build_user_data`, the worker code of branch `dirk`):
+cloud-init starts the user data about 10 s after boot; nftables is installed with dnf (about
+3 s) and the IMDS rule is in place: curl as `motuzjob` is refused while root gets a token;
+rclone 1.75.1 (checksum verified) and Motuz at the requested commit (GitHub archive, commit
+checked) are installed and the worker runs 19 s after boot. With an unreachable central node
+the worker retried until the scheduled `shutdown -h` terminated the instance (the `--once`
+deadline of this branch ends such a worker after `MOTUZ_EC2_BOOT_TIMEOUT`); with a central
+URL that refuses the sign-in (401) the worker exited with 78 and the instance terminated
+itself right away, or after `MOTUZ_EC2_HALT_DELAY`. EC2 kept no console output of the
+instance that terminated within a minute: use `MOTUZ_EC2_HALT_DELAY` to debug boots. No
+token appeared in the console output.
 
 ## Cost guardrails
 

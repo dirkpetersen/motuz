@@ -1,6 +1,8 @@
 import { RSAA } from 'redux-api-middleware';
 import upath from 'upath';
 
+import { viewerKind } from 'utils/viewerKind.js';
+
 import { withAuth } from 'reducers/reducers.jsx';
 import * as pane from 'actions/paneActions.jsx'
 import * as dialog from 'actions/dialogActions.jsx'
@@ -18,6 +20,10 @@ export const LIST_HOME_FILES_FAILURE = '@@api/LIST_HOME_FILES_FAILURE';
 export const VIEW_FILE_CHUNK_REQUEST = '@@api/VIEW_FILE_CHUNK_REQUEST';
 export const VIEW_FILE_CHUNK_SUCCESS = '@@api/VIEW_FILE_CHUNK_SUCCESS';
 export const VIEW_FILE_CHUNK_FAILURE = '@@api/VIEW_FILE_CHUNK_FAILURE';
+
+export const VIEW_IMAGE_REQUEST = '@@api/VIEW_IMAGE_REQUEST';
+export const VIEW_IMAGE_SUCCESS = '@@api/VIEW_IMAGE_SUCCESS';
+export const VIEW_IMAGE_FAILURE = '@@api/VIEW_IMAGE_FAILURE';
 
 export const MAKE_DIRECTORY_REQUEST = '@@api/MAKE_DIRECTORY_REQUEST';
 export const MAKE_DIRECTORY_SUCCESS = '@@api/MAKE_DIRECTORY_SUCCESS';
@@ -130,9 +136,11 @@ export const listHomeFiles = (data) => ({
 let viewRequestId = 0;
 
 /**
- * Double-click on a file: opens the read-only viewer (a pager), which loads the file
- * chunk by chunk with viewFileChunk. The server reads it as the user and decides
- * whether it is text.
+ * Double-click on a file: opens the read-only viewer for its extension
+ * (utils/viewerKind.js): images in the image viewer (viewImage), Markdown rendered
+ * (with a switch to the pager), everything else in the pager, which loads the file
+ * chunk by chunk with viewFileChunk. The server reads the file as the user and
+ * decides whether it is text, or which image type it is.
  */
 export const viewFile = (side, index) => {
     return async (dispatch, getState) => {
@@ -142,6 +150,7 @@ export const viewFile = (side, index) => {
         if (!file || !file.type || file.type === 'dir') {
             return;
         }
+        const kind = viewerKind(file.name);
         dispatch({
             type: dialog.SHOW_FILE_VIEWER_DIALOG,
             payload: {data: {
@@ -149,6 +158,8 @@ export const viewFile = (side, index) => {
                 connectionId: currPane.host.id || 0,
                 path: upath.join(currPane.path, file.name),
                 name: file.name,
+                kind,
+                mode: kind === 'markdown' ? 'rendered' : null,
                 requestId: ++viewRequestId,
             }},
         });
@@ -168,6 +179,33 @@ export const viewFileChunk = (data) => ({
         body: JSON.stringify(data),
         headers: withAuth({ 'Content-Type': 'application/json' }),
         types: [VIEW_FILE_CHUNK_REQUEST, VIEW_FILE_CHUNK_SUCCESS, VIEW_FILE_CHUNK_FAILURE],
+    }
+});
+
+/**
+ * An image for the image viewer, {connection_id, path}: the promise resolves with the
+ * SUCCESS action, whose payload is {blob, type, size} (type: the image type the server
+ * detected from the file's first bytes), or the FAILURE action (payload.status 413,
+ * 415, ...; undefined when logged out). The token goes in the header, never in a URL;
+ * the viewer shows the bytes through a blob: URL.
+ */
+export const viewImage = (data) => ({
+    [RSAA]: {
+        endpoint: '/api/system/files/view/image/',
+        method: 'POST',
+        body: JSON.stringify(data),
+        headers: withAuth({ 'Content-Type': 'application/json' }),
+        types: [
+            VIEW_IMAGE_REQUEST,
+            {
+                type: VIEW_IMAGE_SUCCESS,
+                payload: async (action, state, res) => {
+                    const blob = await res.blob();
+                    return {blob, type: (res.headers.get('Content-Type') || '').split(';')[0].trim(), size: blob.size};
+                },
+            },
+            VIEW_IMAGE_FAILURE,
+        ],
     }
 });
 
