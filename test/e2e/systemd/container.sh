@@ -20,11 +20,14 @@ IMAGE=motuz-e2e-al2027
 die() { echo "ERROR: $*" >&2; exit 1; }
 
 up() {
-    docker inspect "$CONTAINER" >/dev/null 2>&1 && die "$CONTAINER exists already ($0 down)"
+    docker container inspect "$CONTAINER" >/dev/null 2>&1 && die "$CONTAINER exists already ($0 down)"
     docker build -q -t "$IMAGE" -f "$HERE/al2027.Dockerfile" "$HERE" >/dev/null
     # --privileged: systemd, logind and the user managers need cgroups and mounts;
-    # a private cgroup namespace and network, hostname motuz-e2e
-    docker run -d --name "$CONTAINER" --hostname motuz-e2e --privileged --cgroupns=private \
+    # a private cgroup namespace and network, hostname motuz-e2e. MOTUZ_E2E_CONTAINER_NETWORK
+    # (e.g. container:motuz-e2e-al2027: a worker host that reaches that one's localhost)
+    local net=(--hostname motuz-e2e)
+    [ -z "${MOTUZ_E2E_CONTAINER_NETWORK:-}" ] || net=(--network "$MOTUZ_E2E_CONTAINER_NETWORK")
+    docker run -d --name "$CONTAINER" "${net[@]}" --privileged --cgroupns=private \
         --tmpfs /run --tmpfs /run/lock --tmpfs /tmp:exec,mode=1777 --shm-size=1g "$IMAGE" >/dev/null
     for _ in $(seq 60); do
         state=$(docker exec "$CONTAINER" systemctl is-system-running 2>/dev/null || true)
@@ -53,6 +56,6 @@ case "${1:-}" in
         shift; src="$1"; dest="$2"
         (cd "$src" && git ls-files -co --exclude-standard -z | tar --null -T - -czf -) \
             | docker exec -i "$CONTAINER" bash -c "rm -rf '$dest' && mkdir -p '$dest' && tar -xzf - -C '$dest' --no-same-owner" ;;
-    status) docker inspect -f '{{.State.Status}}' "$CONTAINER" 2>/dev/null || echo absent ;;
+    status) docker container inspect -f '{{.State.Status}}' "$CONTAINER" 2>/dev/null || echo absent ;;
     *) sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
 esac

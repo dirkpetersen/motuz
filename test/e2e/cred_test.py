@@ -21,7 +21,7 @@ import urllib.error
 import urllib.request
 
 from common import (BASE, CTX, NUMBERED_LOG_CODE, check, check_chunked_reads, finish,
-                    numbered_log, pg_dump, psql, service_logs, sh, skip)
+                    numbered_log, pg_dump, psql, service_logs, sh, skip, TARGET)
 
 AWS_PROFILE = os.environ.get('MOTUZ_E2E_AWS_PROFILE')
 REGION = os.environ.get('MOTUZ_E2E_AWS_REGION', 'us-west-2')
@@ -332,8 +332,10 @@ check_r('create SSO connection', status == 201, raw)
 status, body, raw = verify(A, c3['id'])
 check_r('SSO connection: rclone (as alice) uses the SSO token from alice\'s cache (rejected by AWS)',
         body['result'] is False and ('sso' in body['message'].lower() or 'GetRoleCredentials' in body['message']), raw)
-out = sh('app', 'ls -ld /tmp/motuz-aws-config; ls -l /tmp/motuz-aws-config; cat /tmp/motuz-aws-config/*.ini')
-check_r('SSO config file: root-owned dir 0711, file 0644, no token', 'drwx--x--x' in out.stdout and FAKE_SSO_TOKEN not in out.stdout
+# MOTUZ_SSO_CONFIG_DIR: /var/lib/motuz-aws-config in the systemd install (owned by motuz)
+sso_dir = '/var/lib/motuz-aws-config' if TARGET == 'systemd' else '/tmp/motuz-aws-config'
+out = sh('app', f'ls -ld {sso_dir}; ls -l {sso_dir}; cat {sso_dir}/*.ini')
+check_r('SSO config file: dir 0711, file 0644, no token', 'drwx--x--x' in out.stdout and FAKE_SSO_TOKEN not in out.stdout
         and 'credential_process' not in out.stdout, out.stdout)
 
 # ---------------------------------------------------------------- rclone remotes: S3 and Azure (Azurite)
