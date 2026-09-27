@@ -8,7 +8,8 @@ from ..application import db
 from ..exceptions import *
 from ..models import CopyJob
 from ..managers.auth_manager import token_required, get_logged_in_user
-from ..managers.cloud_connection_manager import owned_cloud_id
+from ..managers import cloud_connection_manager
+from ..utils import rclone_tuning
 from ..managers import job_routing, worker_manager
 from ..utils.email_utils import Email
 
@@ -43,19 +44,53 @@ def list(page_size=50, page=1):
     }
 
 
+def _owned_cloud(cloud_id):
+    """
+    The connection with this id if the logged in user owns it (else 404), None for the
+    local filesystem (None or 0)
+    """
+    if not cloud_id:
+        return None
+    return cloud_connection_manager.retrieve(cloud_id)
+
+
+def validate_performance(raw, dst_cloud):
+    """
+    The job's validated rclone performance overrides as stored (None = the defaults),
+    or 400 with a message for the user
+    """
+    dst_type = dst_cloud.type if dst_cloud is not None else None
+    try:
+        values = rclone_tuning.validate_overrides(raw, dst_type)
+    except rclone_tuning.TuningError as e:
+        raise HTTP_400_BAD_REQUEST(str(e))
+    return rclone_tuning.to_api(values) or None
+
+
+@token_required
+def performance(dst_cloud_id=None):
+    """Fields, limits, presets and memory budget for a destination (New Copy Job dialog)"""
+    dst_cloud = _owned_cloud(dst_cloud_id)
+    return rclone_tuning.describe(dst_cloud.type if dst_cloud is not None else None)
+
+
 @token_required
 def create(data):
     owner = get_logged_in_user(request)
 
+    src_cloud = _owned_cloud(data.get('src_cloud_id'))
+    dst_cloud = _owned_cloud(data.get('dst_cloud_id'))
+
     copy_job = CopyJob(**{
         'description': data.get('description', None),
-        'src_cloud_id': owned_cloud_id(data.get('src_cloud_id')),
+        'src_cloud_id': src_cloud.id if src_cloud is not None else None,
         'src_resource_path': data.get('src_resource_path', None),
-        'dst_cloud_id': owned_cloud_id(data.get('dst_cloud_id')),
+        'dst_cloud_id': dst_cloud.id if dst_cloud is not None else None,
         'dst_resource_path': data.get('dst_resource_path', None),
 
         'copy_links': data.get('copy_links', None),
         'notification_email': data.get('notification_email', None),
+        'performance': validate_performance(data.get('performance'), dst_cloud),
 
         'progress_current': 0,
         'progress_total': 100,

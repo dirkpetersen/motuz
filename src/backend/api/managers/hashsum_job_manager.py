@@ -10,6 +10,7 @@ from ..models import HashsumJob
 from ..managers.auth_manager import token_required, get_logged_in_user
 from ..managers.cloud_connection_manager import owned_cloud_id
 from ..managers import job_routing, worker_manager
+from ..utils import rclone_tuning
 
 
 @token_required
@@ -38,6 +39,7 @@ def create(data):
 
         'option_download': data.get('option_download', None),
         'notification_email': data.get('notification_email', None),
+        'performance': _validate_performance(data.get('performance')),
 
         'progress_current': 0,
         'progress_total': 100,
@@ -65,6 +67,15 @@ def create(data):
         raise
 
     return hashsum_job
+
+
+def _validate_performance(raw):
+    """Integrity checks only take `checkers` (rclone md5sum's parallelism); None = default"""
+    try:
+        values = rclone_tuning.validate_overrides(raw, None, only=('checkers',))
+    except rclone_tuning.TuningError as e:
+        raise HTTP_400_BAD_REQUEST(str(e))
+    return values or None
 
 
 @token_required

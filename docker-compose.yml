@@ -41,6 +41,25 @@ x-variables:
         MOTUZ_LARGE_JOB_FILES: ${MOTUZ_LARGE_JOB_FILES:-}
         MOTUZ_WORKER_LEASE_SECONDS: ${MOTUZ_WORKER_LEASE_SECONDS:-}
         MOTUZ_PUBLIC_URL: ${MOTUZ_PUBLIC_URL:-}
+    - &rclone-environment
+        # rclone performance settings (README, "Performance tuning"). Empty means rclone's
+        # default. The app validates them (and refuses to start with an invalid value)
+        # and the worker passes them to rclone.
+        MOTUZ_RCLONE_TRANSFERS: ${MOTUZ_RCLONE_TRANSFERS:-}
+        MOTUZ_RCLONE_CHECKERS: ${MOTUZ_RCLONE_CHECKERS:-}
+        MOTUZ_RCLONE_MULTI_THREAD_STREAMS: ${MOTUZ_RCLONE_MULTI_THREAD_STREAMS:-}
+        MOTUZ_RCLONE_MULTI_THREAD_CUTOFF: ${MOTUZ_RCLONE_MULTI_THREAD_CUTOFF:-}
+        MOTUZ_RCLONE_BUFFER_SIZE: ${MOTUZ_RCLONE_BUFFER_SIZE:-}
+        MOTUZ_RCLONE_S3_UPLOAD_CONCURRENCY: ${MOTUZ_RCLONE_S3_UPLOAD_CONCURRENCY:-}
+        MOTUZ_RCLONE_S3_CHUNK_SIZE: ${MOTUZ_RCLONE_S3_CHUNK_SIZE:-}
+        MOTUZ_RCLONE_AZUREBLOB_UPLOAD_CONCURRENCY: ${MOTUZ_RCLONE_AZUREBLOB_UPLOAD_CONCURRENCY:-}
+        MOTUZ_RCLONE_AZUREBLOB_CHUNK_SIZE: ${MOTUZ_RCLONE_AZUREBLOB_CHUNK_SIZE:-}
+        MOTUZ_RCLONE_MAX_TRANSFERS: ${MOTUZ_RCLONE_MAX_TRANSFERS:-}
+        MOTUZ_RCLONE_MAX_CHECKERS: ${MOTUZ_RCLONE_MAX_CHECKERS:-}
+        MOTUZ_RCLONE_MAX_MULTI_THREAD_STREAMS: ${MOTUZ_RCLONE_MAX_MULTI_THREAD_STREAMS:-}
+        MOTUZ_RCLONE_MAX_UPLOAD_CONCURRENCY: ${MOTUZ_RCLONE_MAX_UPLOAD_CONCURRENCY:-}
+        MOTUZ_RCLONE_MEMORY_BUDGET: ${MOTUZ_RCLONE_MEMORY_BUDGET:-}
+        MOTUZ_RCLONE_EXTRA_FLAGS: ${MOTUZ_RCLONE_EXTRA_FLAGS:-}
     - &shared-volumes
         volumes:
             # Using system users for authentication
@@ -123,7 +142,7 @@ services:
         network_mode: host
         <<: *shared-volumes
         environment:
-            <<: [*database-environment, *smtp-environment, *oauth-environment, *operator-environment, *worker-environment]
+            <<: [*database-environment, *smtp-environment, *oauth-environment, *operator-environment, *rclone-environment, *worker-environment]
         secrets:
             - MOTUZ_DATABASE_PASSWORD
             - MOTUZ_FLASK_SECRET_KEY
@@ -140,7 +159,7 @@ services:
         network_mode: host
         <<: *shared-volumes
         environment:
-            <<: [*database-environment, *smtp-environment, *oauth-environment, *operator-environment]
+            <<: [*database-environment, *smtp-environment, *oauth-environment, *operator-environment, *rclone-environment]
         secrets:
             - MOTUZ_DATABASE_PASSWORD
             - MOTUZ_FLASK_SECRET_KEY

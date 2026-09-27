@@ -1,6 +1,8 @@
 import datetime
 import os
 
+from .utils import rclone_tuning
+
 basedir = os.path.abspath(os.path.dirname(__file__))
 
 
@@ -26,6 +28,9 @@ try:
 except KeyError as e:
     raise KeyError("Environment variable {} not set".format(e.args[0]))
 
+# rclone performance settings (MOTUZ_RCLONE_*, README "Performance tuning"): an invalid
+# value stops the app and the worker here, with a message naming the variable
+RCLONE_TUNING = rclone_tuning.settings()
 
 
 class Config:

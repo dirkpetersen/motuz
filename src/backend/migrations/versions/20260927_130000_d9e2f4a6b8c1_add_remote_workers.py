@@ -6,8 +6,8 @@ workers, and remote_job the queue of jobs outside the 'central' pool with lease,
 ticket (hashes) and live progress text.
 
 Revision ID: d9e2f4a6b8c1
-Revises: c4a7e2b9d315
-Create Date: 2026-09-27 12:00:00.000000
+Revises: d5e1f7a3b9c4
+Create Date: 2026-09-27 13:00:00.000000
 
 """
 from alembic import op
@@ -16,7 +16,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision = 'd9e2f4a6b8c1'
-down_revision = 'c4a7e2b9d315'
+down_revision = 'd5e1f7a3b9c4'
 branch_labels = None
 depends_on = None
 

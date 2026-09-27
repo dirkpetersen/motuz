@@ -355,6 +355,16 @@ class TestTicketScope(WorkerTestBase):
         self.assertNotIn(REAL_REFRESH, text)
         self.assertNotIn('LOOPBACK-HANDLE', text)
 
+    def test_performance_flags_are_computed_centrally(self):
+        job = self.copy_job()
+        job.performance = {'transfers': 7}
+        db.session.commit()
+        worker, _ = self.worker()
+        tuning = worker_manager.job_routing.rclone_tuning.load_settings({'MOTUZ_RCLONE_CHECKERS': '16'})
+        with mock.patch.object(worker_manager.job_routing.rclone_tuning, 'settings', return_value=tuning):
+            ticket = self.claim(worker)
+        self.assertEqual(ticket['rclone_flags'], ['--transfers=7', '--checkers=16'])
+
     def test_profile_connections_are_resolved_by_the_worker(self):
         profile = self.connection('alice', type='s3', subtype='profile', profile_source='aws', profile_name='lab', s3_region='eu-west-1')
         self.copy_job(src=profile, src_path='bucket')

@@ -630,7 +630,7 @@ def build_ticket(remote_job, job, ticket_token, broker_secret):
             'src': sides['src'],
             'dst': sides['dst'],
         },
-        'rclone_flags': job_routing.rclone_flags(job),
+        'rclone_flags': job_routing.rclone_flags(remote_job.job_type, job),
     }
 
 
@@ -691,7 +691,9 @@ def progress(worker, ticket_id, ticket_token, body):
 
     lease = current_app.config['WORKER_LEASE_SECONDS']
     remote_job.lease_expires_at = now + datetime.timedelta(seconds=lease)
-    action = 'stop' if remote_job.stop_requested or (job is not None and job.progress_state == 'STOPPED') else 'continue'
+    # Stop pressed, or the job is gone (deleting a connection deletes its jobs)
+    stop = remote_job.stop_requested or job is None or job.progress_state == 'STOPPED'
+    action = 'stop' if stop else 'continue'
     db.session.commit()
     return {'action': action, 'lease_seconds': lease, 'lease_expires_at': _iso(remote_job.lease_expires_at)}
 

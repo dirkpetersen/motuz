@@ -119,6 +119,7 @@ def _copy_job_run(self, copy_job, connection, task_id, start_time):
         user=copy_job.owner,
         copy_links=copy_job.copy_links,
         job_id=task_id,
+        performance=copy_job.performance,
     )
 
     def tick(percent, text, error_text):
@@ -252,6 +253,7 @@ def _hashsum_job_run(self, hashsum_job, connection, start_time):
             user=hashsum_job.owner,
             job_id=run_id,
             download=hashsum_job.option_download,
+            performance=hashsum_job.performance,
         )
 
     def tick(side, percent, tree, error_text):

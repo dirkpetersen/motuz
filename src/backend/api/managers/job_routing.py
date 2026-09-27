@@ -20,7 +20,7 @@ import re
 
 from flask import current_app
 
-from ..utils import file_view
+from ..utils import file_view, rclone_tuning
 from ..utils.abstract_connection import RcloneException
 from ..utils.rclone_connection import RcloneConnection
 
@@ -73,9 +73,15 @@ def choose_pool(src_cloud, src_path, dst_cloud, config=None, estimate=estimate_s
     return pool
 
 
-def rclone_flags(job):
+def rclone_flags(job_type, job):
     """
-    Extra rclone options for a job (performance settings), passed to remote workers in
-    the job ticket. None yet; the rclone settings work plugs in here.
+    The job's rclone performance flags (utils/rclone_tuning.py: the job's overrides on
+    top of this installation's MOTUZ_RCLONE_* settings), for the job ticket of a remote
+    worker. They are computed here because the settings live in this node's
+    environment; the worker passes them to rclone as they are (extra_flags), exactly
+    where RcloneConnection.copy / md5sum put them for Celery jobs.
     """
-    return []
+    if job_type == 'copy':
+        dst_cloud = job.dst_cloud
+        return rclone_tuning.copy_flags(job.performance, dst_cloud.type if dst_cloud is not None else None)
+    return rclone_tuning.hashsum_flags(job.performance)

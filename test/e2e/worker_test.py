@@ -170,7 +170,8 @@ check('proxy tunnels only motuz.test:443 (not :5000, :5432, other hosts)',
 
 # ---------------------------------------------------------------- local copy on the worker
 status, job = req('POST', '/api/copy-jobs/', A, {'description': 'on the worker', 'src_resource_path': '/home/alice/wsrc',
-                                                   'dst_resource_path': '/home/alice/wdst', 'copy_links': True})
+                                                   'dst_resource_path': '/home/alice/wdst', 'copy_links': True,
+                                                   'performance': {'transfers': 7, 'checkers': 9}})
 check('create local copy job (unchanged user API)', status == 201, (status, job))
 job = wait_job('copy-jobs', job['id'], A)
 check('copy job SUCCESS on the remote worker', job['progress_state'] == 'SUCCESS' and job['progress_current'] == 100, job)
@@ -179,7 +180,8 @@ check('job record: claimed and finished by worker w1 (pool onprem)', remote_job(
 check('copy progress text returned by the API', 'Transferred' in (job.get('progress_text') or ''), job.get('progress_text'))
 owners = worker_sh('stat -c %U /home/alice/wdst/f1.txt /home/alice/wdst/sub/d.txt').stdout.split()
 check('copied files owned by alice (rclone ran as the owner via sudo)', owners == ['alice', 'alice'], owners)
-check('rclone ran on the worker, not by celery', 'copyto /home/alice/wsrc /home/alice/wdst' in logs('worker')
+check('rclone ran on the worker, not by celery, with the job\'s performance flags from the ticket',
+      '--transfers=7 --checkers=9 copyto /home/alice/wsrc /home/alice/wdst' in logs('worker')
       and '/home/alice/wdst' not in logs('celery'), [l for l in logs('worker').splitlines() if 'copyto' in l][-1:])
 
 status, bad = req('POST', '/api/copy-jobs/', A, {'description': 'relative', 'src_resource_path': '--config=/etc/shadow',
@@ -195,6 +197,8 @@ hj = wait_job('hashsum-jobs', hj['id'], A)
 check('hashsum job SUCCESS on the worker, identical', hj['progress_state'] == 'SUCCESS'
       and json.loads(hj['progress_src_tree']) == [] and json.loads(hj['progress_dst_tree']) == [], hj)
 check('hashsum job record: worker w1', remote_job('hashsum', hj['id']) == ('DONE', 'w1', 'onprem'), remote_job('hashsum', hj['id']))
+check("md5sum on the worker got the installation's --checkers=16 (MOTUZ_RCLONE_CHECKERS of the central node)",
+      '--checkers=16 md5sum /home/alice/wsrc' in logs('worker'), [l for l in logs('worker').splitlines() if 'md5sum' in l][-1:])
 sh('app', "sudo -u alice sh -c 'echo changed > /home/alice/wdst/f2.txt; echo extra > /home/alice/wdst/zz.txt'")
 status, hj = req('POST', '/api/hashsum-jobs/', A, {'src_resource_path': '/home/alice/wsrc', 'dst_resource_path': '/home/alice/wdst',
                                                     'option_download': False})

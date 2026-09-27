@@ -9,6 +9,7 @@ from .abstract_connection import AbstractConnection, RcloneException, user_proce
 from . import local_credentials
 from .file_times import rfc3339_to_iso_utc
 from . import file_view
+from . import rclone_tuning
 from .copy_job_queue import CopyJobQueue
 from .hashsum_job_queue import HashsumJobQueue
 
@@ -277,8 +278,13 @@ class RcloneConnection(AbstractConnection):
             dst_resource_path,
             user,
             copy_links,
-            job_id
+            job_id,
+            performance=None,
     ):
+        """
+        `performance`: the job's validated overrides (rclone_tuning), on top of the
+        installation's MOTUZ_RCLONE_* defaults
+        """
         if src_data is None:
             _local_path(src_resource_path) # before reading any credentials
         credentials = {}
@@ -295,6 +301,8 @@ class RcloneConnection(AbstractConnection):
             user=user,
             copy_links=copy_links,
             job_id=job_id,
+            # One argv item per flag (--transfers=32), formatted from parsed values
+            extra_flags=rclone_tuning.copy_flags(performance, dst_data.type if dst_data is not None else None),
         )
 
 
@@ -317,7 +325,10 @@ class RcloneConnection(AbstractConnection):
         _formatCredentials). The Celery task builds them from the connections here;
         a remote worker gets them in its job ticket (managers/worker_manager.py).
 
-        @param extra_flags: further rclone options (each starting with --)
+        @param extra_flags: further rclone options (each starting with --): the job's
+                            performance flags (rclone_tuning.copy_flags), computed where
+                            the installation's MOTUZ_RCLONE_* settings are, i.e. on the
+                            central node, and passed in the ticket to remote workers
         @param extra_env: further process variables that are not remote configuration
                           (a remote worker's proxy and CA bundle)
         """
@@ -401,6 +412,7 @@ class RcloneConnection(AbstractConnection):
             user,
             job_id,
             download=False,
+            performance=None,
     ):
         if data is None:
             _local_path(resource_path) # before reading any credentials
@@ -412,6 +424,7 @@ class RcloneConnection(AbstractConnection):
             user=user,
             job_id=job_id,
             download=download,
+            extra_flags=rclone_tuning.hashsum_flags(performance), # --checkers
         )
 
 
