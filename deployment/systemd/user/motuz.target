@@ -1,0 +1,9 @@
+# Motuz without docker: user services of the `motuz` account (README, "Install without
+# Docker"). bin/systemd/deploy.sh copies these units to ~/.config/systemd/user/.
+#   systemctl --user status 'motuz*'          systemctl --user restart motuz.target
+[Unit]
+Description=Motuz (PostgreSQL, Redis, uWSGI app, Celery worker, Traefik)
+Wants=motuz-postgres.service motuz-redis.service motuz-app.service motuz-celery.service motuz-traefik.service
+
+[Install]
+WantedBy=default.target

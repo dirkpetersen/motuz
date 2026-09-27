@@ -115,6 +115,8 @@ python-dateutil==2.9.0.post0
     # via
     #   botocore
     #   celery
+redis==6.4.0
+    # via kombu
 referencing==0.37.0
     # via
     #   flask-restx

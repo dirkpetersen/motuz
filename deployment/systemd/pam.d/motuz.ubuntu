@@ -1,0 +1,6 @@
+# PAM service of Motuz logins without docker (MOTUZ_PAM_SERVICE=motuz, and the login
+# helper motuz-auth). Installed as /etc/pam.d/motuz by bin/systemd/install.sh.
+# Motuz only authenticates (pam_authenticate) and checks the account (pam_acct_mgmt,
+# e.g. expired or locked accounts); it opens no session.
+@include common-auth
+@include common-account

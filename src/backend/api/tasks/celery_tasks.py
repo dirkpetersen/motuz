@@ -2,6 +2,7 @@ import contextlib
 import logging
 import os
 import signal
+import socket
 import time
 import json
 
@@ -12,6 +13,7 @@ from ..application import db
 from ..utils.rclone_connection import RcloneConnection
 from ..utils.email_utils import Email
 from ..utils import job_runner
+from ..utils import node_check
 
 
 @contextlib.contextmanager
@@ -44,6 +46,18 @@ def _terminate_rclone_on_sigterm(connection):
         signal.signal(signal.SIGTERM, previous)
 
 
+def _ensure_node_ready():
+    """
+    Worker nodes must be identical copies (utils/node_check.py): a job never runs on a
+    node whose required paths or mounts are missing, it fails with the reason instead
+    """
+    problems = node_check.required_paths_problems()
+    if problems:
+        message = 'The worker on {} cannot run jobs: {}'.format(socket.gethostname(), '; '.join(problems))
+        logging.error(message)
+        raise RuntimeError(message)
+
+
 @celery.task(name='motuz.api.tasks.copy_job', bind=True)
 def copy_job(self, task_id=None):
     try:
@@ -52,6 +66,7 @@ def copy_job(self, task_id=None):
         copy_job = db.session.get(CopyJob, task_id)
         copy_job.progress_state = 'PROGRESS'
         db.session.commit()
+        _ensure_node_ready()
 
         connection = RcloneConnection()
         with _terminate_rclone_on_sigterm(connection):
@@ -151,6 +166,7 @@ def hashsum_job(self, task_id):
         hashsum_job = db.session.get(HashsumJob, task_id)
         hashsum_job.progress_state = 'PROGRESS'
         db.session.commit()
+        _ensure_node_ready()
 
         connection = RcloneConnection()
         with _terminate_rclone_on_sigterm(connection):

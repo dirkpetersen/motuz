@@ -4,8 +4,10 @@
 #
 # Traefik renders this file as a Go template. MOTUZ_ACME_DOMAIN selects the TLS mode:
 # - empty (default): $MOTUZ_DOCKER_ROOT/certs/cert.crt + cert.key, mounted at /certs
+#   (the systemd install sets MOTUZ_TRAEFIK_CERTS_DIR to ~/data/certs instead)
 # - set: a Let's Encrypt certificate for that name (HTTP-01 on port 80)
 {{- $acmeDomain := env "MOTUZ_ACME_DOMAIN" }}
+{{- $certsDir := env "MOTUZ_TRAEFIK_CERTS_DIR" | default "/certs" }}
 
 http:
   routers:
@@ -76,6 +78,6 @@ tls:
       # Traefik does not watch certificate files: `docker restart motuz_traefik` after
       # replacing them
       defaultCertificate:
-        certFile: /certs/cert.crt
-        keyFile: /certs/cert.key
+        certFile: "{{ $certsDir }}/cert.crt"
+        keyFile: "{{ $certsDir }}/cert.key"
 {{- end }}

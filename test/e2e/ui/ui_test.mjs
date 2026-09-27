@@ -60,8 +60,12 @@ async function pageShot(name) {
     }
 }
 
-// Runs a shell command in the app container (fixtures), like common.py's sh()
+// Runs a shell command in the app container (fixtures), like common.py's sh(); with
+// MOTUZ_E2E_TARGET=systemd on this machine (as root, run_systemd.sh)
 function appShell(cmd, input) {
+    if (process.env.MOTUZ_E2E_TARGET === 'systemd') {
+        return execFileSync('sh', ['-c', cmd], { input, encoding: 'utf8' });
+    }
     const compose = (process.env.MOTUZ_E2E_COMPOSE || 'docker compose').split(' ');
     return execFileSync(compose[0], [...compose.slice(1), '-f', 'compose.yml', 'exec', '-T', 'app', 'sh', '-c', cmd],
         { cwd: join(dirname(fileURLToPath(import.meta.url)), '..'), input, encoding: 'utf8' });
@@ -216,7 +220,7 @@ async function signInPaste(buttonText, loopback, shotName) {
     const listener = r => { if (r.url().startsWith(loopback)) redirected = r.url(); };
     context.on('request', listener);
     const [popup] = await Promise.all([context.waitForEvent('page'), page.click(`button:has-text("${buttonText}")`)]);
-    for (let i = 0; i < 50 && !redirected; i++) await page.waitForTimeout(200);
+    for (let i = 0; i < 150 && !redirected; i++) await page.waitForTimeout(200); // up to 30 s: a cold browser in a VM is slow
     context.off('request', listener);
     check(`${buttonText}: popup ends at the rclone redirect with code and state`, redirected.includes('code=') && redirected.includes('state='), redirected);
     await popup.close();
@@ -279,7 +283,9 @@ if (PHASE === 'paste') {
         await page.fill('input[name=username]', 'alice');
         await page.fill('input[name=password]', 'wrong');
         await page.keyboard.press('Enter');
-        await page.waitForTimeout(1500);
+        // PAM delays a failure (2 s and more with pam_faildelay): wait for the answer, so it
+        // cannot arrive after the next, correct login
+        await page.waitForSelector('text=No match for Username and Password', { timeout: 15000 }).catch(() => {});
         check('wrong password: still on the login form', await page.isVisible('input[name=password]'));
         await page.fill('input[name=password]', 'AlicePass1');
         await page.keyboard.press('Enter');

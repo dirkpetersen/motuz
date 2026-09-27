@@ -20,8 +20,8 @@ import time
 import urllib.error
 import urllib.request
 
-from common import (BASE, CTX, NUMBERED_LOG_CODE, check, check_chunked_reads, compose, db_password, finish,
-                    numbered_log, psql, service_logs, sh, skip)
+from common import (BASE, CTX, NUMBERED_LOG_CODE, check, check_chunked_reads, finish,
+                    numbered_log, pg_dump, psql, service_logs, sh, skip, SSO_CONFIG_DIR)
 
 AWS_PROFILE = os.environ.get('MOTUZ_E2E_AWS_PROFILE')
 REGION = os.environ.get('MOTUZ_E2E_AWS_REGION', 'us-west-2')
@@ -332,8 +332,8 @@ check_r('create SSO connection', status == 201, raw)
 status, body, raw = verify(A, c3['id'])
 check_r('SSO connection: rclone (as alice) uses the SSO token from alice\'s cache (rejected by AWS)',
         body['result'] is False and ('sso' in body['message'].lower() or 'GetRoleCredentials' in body['message']), raw)
-out = sh('app', 'ls -ld /tmp/motuz-aws-config; ls -l /tmp/motuz-aws-config; cat /tmp/motuz-aws-config/*.ini')
-check_r('SSO config file: root-owned dir 0711, file 0644, no token', 'drwx--x--x' in out.stdout and FAKE_SSO_TOKEN not in out.stdout
+out = sh('app', f'ls -ld {SSO_CONFIG_DIR}; ls -l {SSO_CONFIG_DIR}; cat {SSO_CONFIG_DIR}/*.ini')
+check_r('SSO config file: the server\'s dir 0711, file 0644, no token', 'drwx--x--x' in out.stdout and FAKE_SSO_TOKEN not in out.stdout
         and 'credential_process' not in out.stdout, out.stdout)
 
 # ---------------------------------------------------------------- rclone remotes: S3 and Azure (Azurite)
@@ -492,7 +492,7 @@ check_r('aws profile cannot back an azure connection', status == 400, raw)
 logs = service_logs('app', 'celery')
 check('no secret, key id or token in app/celery logs', no_secret(logs), 'leak')
 check('logs show masked key id', '***' + KEY_ID[-4:] in logs)
-dump = compose('exec', '-T', 'database', 'pg_dump', f'postgresql://motuz_user:{db_password()}@127.0.0.1:5432/motuz').stdout
+dump = pg_dump()
 check('no secret in a database dump', len(dump) > 1000 and no_secret(dump), len(dump))
 
 sh('app', 'rm -f /home/bob/.aws/credentials')

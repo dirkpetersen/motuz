@@ -28,6 +28,7 @@ celery = Celery(
 )
 celery.conf.update(
     broker_connection_retry_on_startup=True,
+    broker_transport_options=Config.CELERY_BROKER_TRANSPORT_OPTIONS,
 )
 
 class ContextTask(celery.Task):
