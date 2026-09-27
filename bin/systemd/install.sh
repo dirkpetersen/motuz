@@ -8,7 +8,7 @@
 #
 # Usage: sudo bin/systemd/install.sh [--local-accounts] [--sudo-group=GROUP] [--user=NAME] [--home=DIR]
 #        sudo bin/systemd/install.sh --worker-only [--central-url=URL] [--pool=NAME]
-#                                    [--credential-file=FILE] [--sudo-group=GROUP] [--user=NAME] [--home=DIR]
+#                                    [--credential-file=FILE] [--run-as=NAME] [--sudo-group=GROUP] [--user=NAME] [--home=DIR]
 #   --local-accounts    install the login helper (motuz-auth.socket), needed when users
 #                       log in with local /etc/shadow accounts (not for SSSD/Kerberos)
 #   --sudo-group=GROUP  Motuz may act only as members of GROUP (default: any user but root)
@@ -26,6 +26,10 @@
 #                       ~/.config/motuz-worker/credential (mode 600), then motuz-worker is
 #                       enabled and started. Without it: nothing runs (a temporary worker
 #                       runs one job with bin/systemd/worker_once.sh)
+#   --run-as=NAME       worker: rclone runs as this unprivileged system account (created,
+#                       no shell) instead of the jobs' owners, i.e. only cloud-to-cloud jobs,
+#                       like the temporary EC2 workers (MOTUZ_WORKER_RUN_AS); the sudoers
+#                       rule then allows only /usr/local/bin/rclone as NAME
 #
 # What it does:
 #   - packages (bin/systemd/distro/<ID>.sh): PostgreSQL 18 (the distribution's own
@@ -53,11 +57,12 @@ WORKER_ONLY=0
 CENTRAL_URL=""
 POOL=""
 CREDENTIAL_FILE=""
+RUN_AS=""
 while [ $# -gt 0 ]; do
     opt="$1"; value=""
     case "$opt" in
         --*=*) value="${opt#*=}"; opt="${opt%%=*}" ;;
-        --sudo-group|--user|--home|--central-url|--pool|--credential-file) value="${2:?$1 needs a value}"; shift ;;
+        --sudo-group|--user|--home|--central-url|--pool|--credential-file|--run-as) value="${2:?$1 needs a value}"; shift ;;
     esac
     case "$opt" in
         --local-accounts) LOCAL_ACCOUNTS=1 ;;
@@ -68,6 +73,7 @@ while [ $# -gt 0 ]; do
         --central-url) CENTRAL_URL="$value" ;;
         --pool) POOL="$value" ;;
         --credential-file) CREDENTIAL_FILE="$value" ;;
+        --run-as) RUN_AS="$value" ;;
         -h|--help) sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) die "unknown option $1" ;;
     esac
@@ -83,9 +89,12 @@ if [ "$WORKER_ONLY" = 1 ]; then
     [ -z "$CENTRAL_URL" ] || [[ "$CENTRAL_URL" =~ ^https://[A-Za-z0-9.:/_-]+$ ]] || die "--central-url must be an https:// address"
     [ -z "$POOL" ] || [[ "$POOL" =~ ^[A-Za-z0-9_.-]+$ ]] || die "invalid pool name $POOL"
     [ -z "$CREDENTIAL_FILE" ] || [ -s "$CREDENTIAL_FILE" ] || die "$CREDENTIAL_FILE is missing or empty"
+    [ -z "$RUN_AS" ] || { [[ "$RUN_AS" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]] && [ "$RUN_AS" != root ] && [ "$RUN_AS" != "$ACCOUNT" ]; } \
+        || die "--run-as must name an unprivileged account other than $ACCOUNT"
+    [ -z "$RUN_AS" ] || [ -z "$SUDO_GROUP" ] || die "--run-as and --sudo-group exclude each other"
     [ -f "$REPO_DIR/src/worker/motuz_worker.py" ] || die "no src/worker/motuz_worker.py in $REPO_DIR"
-elif [ -n "$CENTRAL_URL$POOL$CREDENTIAL_FILE" ]; then
-    die "--central-url, --pool and --credential-file need --worker-only"
+elif [ -n "$CENTRAL_URL$POOL$CREDENTIAL_FILE$RUN_AS" ]; then
+    die "--central-url, --pool, --credential-file and --run-as need --worker-only"
 fi
 load_distro
 [ -d /run/systemd/system ] || die "systemd is not running (a container without systemd?)"
@@ -146,6 +155,11 @@ GROUP=$(id -gn "$ACCOUNT")
 chmod 750 "$HOME_DIR"
 loginctl enable-linger "$ACCOUNT"
 systemctl start "user@$(id -u "$ACCOUNT").service"
+if [ -n "$RUN_AS" ] && ! id "$RUN_AS" >/dev/null 2>&1; then
+    log "account $RUN_AS (rclone of the worker's jobs)"
+    useradd --system --user-group --create-home --home-dir "/var/lib/$RUN_AS" --shell /sbin/nologin \
+        --comment "Motuz worker jobs" "$RUN_AS"
+fi
 
 # ---------------------------------------------------------------- sudoers
 # The only privilege of the account: run rclone, ls, mkdir and env (the file viewer and the
@@ -155,10 +169,18 @@ systemctl start "user@$(id -u "$ACCOUNT").service"
 log "sudoers rule /etc/sudoers.d/motuz"
 RUNAS="ALL, !root"
 [ -z "$SUDO_GROUP" ] || RUNAS="%${SUDO_GROUP}, !root"
-cat > "$TMP/sudoers" <<EOF
+if [ -n "$RUN_AS" ]; then
+    # A cloud-to-cloud worker: rclone only, as one fixed account
+    cat > "$TMP/sudoers" <<EOF
+# Motuz (bin/systemd/install.sh --worker-only --run-as): rclone as $RUN_AS only
+$ACCOUNT ALL=($RUN_AS) NOPASSWD:SETENV: /usr/local/bin/rclone
+EOF
+else
+    cat > "$TMP/sudoers" <<EOF
 # Motuz (bin/systemd/install.sh): file and rclone operations as the logged-in user
 $ACCOUNT ALL=($RUNAS) NOPASSWD:SETENV: /usr/local/bin/rclone, /usr/bin/ls, /usr/bin/mkdir, /usr/bin/env
 EOF
+fi
 # The classic sudo (Amazon Linux; sudo-rs on Ubuntu does not) logs the variables of
 # --preserve-env with every allowed command ("ENV=RCLONE_CONFIG_..."), i.e. the
 # connections' secrets would go to the journal. Allowed commands are not logged for the
@@ -222,6 +244,8 @@ if [ "$WORKER_ONLY" = 1 ]; then
     env_set "$WORKER_ENV" MOTUZ_SSO_CONFIG_DIR /var/lib/motuz-aws-config
     [ -z "$CENTRAL_URL" ] || env_set "$WORKER_ENV" MOTUZ_CENTRAL_URL "$CENTRAL_URL"
     [ -z "$POOL" ] || env_set "$WORKER_ENV" MOTUZ_WORKER_POOL "$POOL"
+    # rclone as the jobs' owners, or with --run-as as that account (cloud-to-cloud only)
+    env_set "$WORKER_ENV" MOTUZ_WORKER_RUN_AS "$RUN_AS"
     chown "$ACCOUNT:$GROUP" "$WORKER_ENV"
     install -m 644 -o "$ACCOUNT" -g "$GROUP" "$REPO_DIR/src/worker/motuz-worker.service" "$HOME_DIR/.config/systemd/user/motuz-worker.service"
     if [ -n "$CREDENTIAL_FILE" ]; then
