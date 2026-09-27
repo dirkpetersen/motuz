@@ -44,6 +44,34 @@ export function appendChunk(chunks, result, max = MAX_CHUNKS) {
     return {chunks: dropped ? next.slice(dropped) : next, dropped};
 }
 
+// Follow mode appends many small answers (a few new lines each). They are merged into
+// the last chunk while it stays within a server chunk (256 KiB), so the window still
+// holds up to MAX_CHUNKS full chunks and not MAX_CHUNKS polls' worth of lines.
+export const MERGE_BYTES = 256 * 1024;
+
+/**
+ * The window with a follow poll's `result` appended: merged into the last chunk (which
+ * keeps its key, so the DOM keeps its place) when both fit into `mergeBytes`, else as a
+ * new chunk, dropping chunks from the top to keep at most `max`. `appended` is false,
+ * and the window unchanged, if `result` does not start where the window ends (the user
+ * scrolled far enough up that the bottom was dropped; the viewer then only counts the
+ * new lines).
+ */
+export function appendFollowChunk(chunks, result, max = MAX_CHUNKS, mergeBytes = MERGE_BYTES) {
+    const last = chunks[chunks.length - 1];
+    if (!last || result.offset !== last.end) {
+        return {chunks, dropped: 0, appended: false};
+    }
+    if (result.end <= result.offset) {
+        return {chunks, dropped: 0, appended: true};
+    }
+    if ((last.end - last.offset) + (result.end - result.offset) <= mergeBytes) {
+        const merged = {...last, end: result.end, content: last.content + (result.content || ''), eof: !!result.eof};
+        return {chunks: [...chunks.slice(0, -1), merged], dropped: 0, appended: true};
+    }
+    return {...appendChunk(chunks, result, max), appended: true};
+}
+
 /** Like appendChunk, before the first chunk, dropping chunks from the bottom */
 export function prependChunk(chunks, result, max = MAX_CHUNKS) {
     const first = chunks[0];

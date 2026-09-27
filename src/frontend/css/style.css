@@ -432,6 +432,113 @@ pre {
     font-size: 12px;
 }
 
+/* Follow mode: a badge in the toolbar, a "Paused: N new lines below" pill over the
+   bottom of the content and notices over its top (overlays: the content never moves) */
+.file-viewer-follow-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-right: auto;
+    padding: 1px 10px;
+    border-radius: 999px;
+    background: #e7f5ec;
+    color: #146c43;
+    font-size: 12.5px;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+.file-viewer-follow-status.paused {
+    background: #f1f3f5;
+    color: #495057;
+}
+
+.file-viewer-follow-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #198754;
+    animation: file-viewer-pulse 1.6s ease-in-out infinite;
+}
+
+.file-viewer-follow-status.paused .file-viewer-follow-dot {
+    background: #adb5bd;
+    animation: none;
+}
+
+.file-viewer-follow-error {
+    color: #b02a37;
+}
+
+@keyframes file-viewer-pulse {
+    0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(25, 135, 84, 0.45); }
+    50% { opacity: 0.55; box-shadow: 0 0 0 4px rgba(25, 135, 84, 0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .file-viewer-follow-dot {
+        animation: none;
+    }
+}
+
+.file-viewer-scroll-wrap {
+    position: relative;
+}
+
+.file-viewer-paused,
+.file-viewer-notice {
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 2;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    max-width: calc(100% - 24px);
+    padding: 3px 6px 3px 14px;
+    border-radius: 999px;
+    font-size: 13px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+    white-space: nowrap;
+}
+
+.file-viewer-paused {
+    bottom: 12px;
+    background: #212529;
+    color: #f8f9fa;
+    font-variant-numeric: tabular-nums;
+}
+
+.file-viewer-paused .file-viewer-new-lines {
+    font-weight: 600;
+}
+
+.file-viewer-paused .file-viewer-resume {
+    padding: 0 8px;
+    color: #8bb9fe;
+    font-size: 13px;
+    font-weight: 600;
+    text-decoration: none;
+}
+
+.file-viewer-notice {
+    top: 10px;
+    padding-right: 8px;
+    background: #fff3cd;
+    color: #664d03;
+    border: 1px solid #ffe69c;
+    white-space: normal;
+}
+
+.file-viewer-notice .btn-close {
+    margin-left: 6px;
+    font-size: 10px;
+}
+
+.file-viewer-empty {
+    padding: 10px 2px;
+}
+
 /* Drag and drop */
 
 .grid-files.drop-target {
