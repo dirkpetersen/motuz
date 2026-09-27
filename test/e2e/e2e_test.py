@@ -382,7 +382,11 @@ status, lj, _ = req('POST', '/api/copy-jobs/', A, job)
 time.sleep(4)
 RCLONE_PIDS = "grep -lx rclone /proc/[0-9]*/comm 2>/dev/null"
 running = sh('celery', RCLONE_PIDS).stdout.strip()
-status, mid, _ = req('GET', f"/api/copy-jobs/{lj['id']}", A)
+for _ in range(20): # the first percent can take a few seconds on a slow disk (VM)
+    status, mid, _ = req('GET', f"/api/copy-jobs/{lj['id']}", A)
+    if mid['progress_current'] > 0:
+        break
+    time.sleep(1)
 check('progress percent reported while running', 0 < mid['progress_current'] < 100, mid['progress_current'])
 check('long copy is running', bool(running), running)
 status, stopped, _ = req('PUT', f"/api/copy-jobs/{lj['id']}/stop/", A)

@@ -247,10 +247,8 @@ cleanup_inside() {
     [ -z "$AZURITE_PID" ] || kill "$AZURITE_PID" 2>/dev/null || true
 }
 trap cleanup_inside EXIT
-# In memory, like compose.yml's (--location is refused together with --inMemoryPersistence)
-mkdir -p "$WORK/azurite"
-(cd "$WORK/azurite" && exec "$INSIDE_ROOT/azurite/node_modules/.bin/azurite-blob" --blobHost 127.0.0.1 --blobPort 10000 \
-    --skipApiVersionCheck --loose --inMemoryPersistence) > "$LOGS/azurite.log" 2>&1 &
+"$INSIDE_ROOT/azurite/node_modules/.bin/azurite-blob" --blobHost 127.0.0.1 --blobPort 10000 --skipApiVersionCheck \
+    --loose --inMemoryPersistence > "$LOGS/azurite.log" 2>&1 &
 AZURITE_PID=$!
 
 OWN_APP=0

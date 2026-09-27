@@ -26,6 +26,8 @@ TARGET = os.environ.get('MOTUZ_E2E_TARGET', 'docker')  # docker | systemd
 # systemd: the configuration directory of the service account (bin/systemd/deploy.sh)
 SYSTEMD_CONFIG = os.environ.get('MOTUZ_E2E_SYSTEMD_CONFIG', '/var/lib/motuz/.config/motuz')
 # docker compose service -> systemd user unit
+# Where the server writes AWS SSO configs (MOTUZ_SSO_CONFIG_DIR of each install)
+SSO_CONFIG_DIR = '/var/lib/motuz-aws-config' if TARGET == 'systemd' else '/tmp/motuz-aws-config'
 SYSTEMD_UNITS = {'app': 'motuz-app.service', 'celery': 'motuz-celery.service', 'database': 'motuz-postgres.service'}
 
 
