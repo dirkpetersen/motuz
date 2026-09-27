@@ -141,6 +141,8 @@ We recommend using a machine running Ubuntu 24.04 (Noble).
 
 To run Motuz without Docker, as `systemd --user` services on Ubuntu 26.04 LTS (for
 example in a Proxmox VM), see [Install without Docker (Ubuntu 26.04)](#install-without-docker-ubuntu-2604).
+On EC2 the default is the same install on Amazon Linux 2027, see
+[Install on Amazon Linux 2027 (default on EC2)](#install-on-amazon-linux-2027-default-on-ec2).
 
 ### Authentication
 
@@ -934,6 +936,11 @@ motuz ALL=(ALL, !root) NOPASSWD:SETENV: /usr/local/bin/rclone, /usr/bin/ls, /usr
 - `!root`: never as root. `SETENV`: rclone gets a connection's credentials as
   `RCLONE_CONFIG_*` variables, passed with `sudo --preserve-env=<names>` (Ubuntu 26.04's
   default `sudo` is sudo-rs, which ignores `-E`; the classic `sudo` works as well).
+- With the classic `sudo` (Amazon Linux, or Ubuntu's `sudo.ws`) the file also gets
+  `Defaults:motuz !log_allowed`: that `sudo` logs the variables of `--preserve-env` with
+  every allowed command (`ENV=RCLONE_CONFIG_..._SECRET_ACCESS_KEY=...`), which would put
+  the connections' secrets into the journal. Refused commands are still logged; Motuz
+  logs the commands it runs itself, with the credentials masked.
 - `install.sh --sudo-group=GROUP` allows only the members of a group
   (`(%GROUP, !root)`).
 - Motuz refuses logins as root and as the account it runs as.
@@ -993,7 +1000,7 @@ the broker, and the central install needs no change for them.
 Other distributions: everything distribution specific (packages, the paths of the
 PostgreSQL and Redis binaries, how the distribution's own database service is kept from
 running, the PAM stack, the firewall hint) is in `bin/systemd/distro/<ID>.sh`, chosen by
-`ID` in `/etc/os-release`; only `ubuntu.sh` exists so far.
+`ID` in `/etc/os-release`: `ubuntu.sh` and `amzn.sh` ([Amazon Linux 2027](#install-on-amazon-linux-2027-default-on-ec2)).
 
 ### Migrating from the docker install
 
@@ -1029,6 +1036,133 @@ container, `test/e2e/systemd/vm.sh`; needs docker and `/dev/kvm`), runs `install
 `test/e2e/run.sh` against it (`MOTUZ_E2E_TARGET=systemd`), plus security checks
 (`test/e2e/systemd/security_test.sh`). `test/e2e/systemd/migration_test.sh` migrates
 the Docker e2e stack into such a VM.
+
+
+## Install on Amazon Linux 2027 (default on EC2)
+
+On EC2, install Motuz on Amazon Linux 2027 (AL2027, a public preview since September 2026)
+with the same scripts as [Install without Docker (Ubuntu 26.04)](#install-without-docker-ubuntu-2604):
+`systemd --user` services of the account `motuz`, the same units, settings
+(`~/.config/motuz/motuz.env`, including the `MOTUZ_RCLONE_*` defaults), sudoers rule,
+login helper, migration and update steps. They start faster than containers, run as fast,
+and work with SELinux enforcing. What differs is in `bin/systemd/distro/amzn.sh`:
+
+| | Amazon Linux 2027 | Ubuntu 26.04 |
+| --- | --- | --- |
+| PostgreSQL 18 | `postgresql18-server` (binaries in `/usr/bin`) | `postgresql-18` |
+| Celery broker (`motuz-redis`) | **Valkey 9** (`valkey-server`; AL2027 has neither RabbitMQ nor Redis) | Redis 8 |
+| Python of `~/motuz/venv` | the system's **Python 3.14** (`python3`, `python3-devel` for uWSGI) | Python 3.12 from uv |
+| Node.js (frontend build) | `nodejs24`, `nodejs24-npm` | `nodejs` 22 |
+| `/etc/pam.d/motuz` | `password-auth` (authselect) | `common-auth`, `common-account` |
+| SELinux | enforcing, nothing to change | (AppArmor, nothing to change) |
+
+rclone, Traefik and uv are the pinned downloads with their SHA256 in both cases (never
+AL2027's own `rclone` package, which is another version).
+
+**Broker.** Valkey speaks the Redis protocol, so Celery uses its Redis transport
+(`MOTUZ_CELERY_BROKER_URL=redis+socket://...`, written to `broker.env` by `deploy.sh`; the
+Docker install keeps `amqp://` RabbitMQ). The Redis transport redelivers a task that a
+worker has fetched but not acknowledged within `visibility_timeout`. Motuz acknowledges a
+task when it starts (Celery's default, `acks_late` off), so only jobs that wait behind
+other long jobs in the worker's prefetch are affected; their timeout is 30 days
+(`MOTUZ_CELERY_VISIBILITY_TIMEOUT`, seconds), far above any job. Tasks are not acknowledged
+late on purpose: a job whose worker dies is failed, not silently run again days later.
+Stopping a job (`revoke(terminate=True)`) goes through Celery's remote control, which the
+Redis transport supports (pub/sub on the same socket).
+
+**Python.** `requirements.txt` is compiled for 3.12, the Python of the Docker image. On
+AL2027 all backend unit tests and the end-to-end suites pass on its Python 3.14 with these
+pins (uWSGI 2.0.31 builds), so `deploy.sh` uses `/usr/bin/python3.14`
+(`DISTRO_PYTHON`): it gets the distribution's security updates and needs no download. On
+Ubuntu, `deploy.sh` keeps uv's 3.12.
+
+**SELinux** stays enforcing; no booleans, file contexts or policy modules are needed.
+`install.sh` runs `restorecon` on everything it writes. The account's user services
+(uWSGI, Celery, rclone, Traefik, PostgreSQL, Valkey) run as `unconfined_u` like any login
+of the account, `sudo` to the logged-in user keeps that context, and the login helper is a
+system service (`unconfined_service_t`) that may read `/etc/shadow`. Traefik binds 80 and
+443 through the same sysctl as on Ubuntu. Check with `sudo ausearch -m avc -ts boot`
+(empty).
+
+### Install on an instance
+
+Launch AL2027 (the AMI of the SSM parameter
+`/aws/service/ami-amazon-linux-latest/al2027-preview-ami-kernel-default-arm64`, or
+`-x86_64`), at least 4 GiB of memory (for example c7g.large) and a 16 GiB root volume,
+IMDSv2 only, an instance profile with `AmazonSSMManagedInstanceCore` for Session Manager
+(no SSH), and a security group with 443 (and 80, for the redirect and Let's Encrypt) open
+to your users only. As user data, `deployment/aws/user-data-al2027.sh` (edit `REPO`,
+`BRANCH` and `INSTALL_ARGS` first) clones the repository to `/root/motuz-install` and
+runs `bin/systemd/bootstrap.sh`, which runs `install.sh`, clones the account's
+`~/motuz` and runs `deploy.sh`; the output is in `/var/log/cloud-init-output.log`:
+
+```bash
+aws ec2 run-instances --image-id resolve:ssm:/aws/service/ami-amazon-linux-latest/al2027-preview-ami-kernel-default-arm64 \
+    --instance-type c7g.large --iam-instance-profile Name=<profile with AmazonSSMManagedInstanceCore> \
+    --security-group-ids <sg> --user-data file://deployment/aws/user-data-al2027.sh \
+    --metadata-options HttpTokens=required,HttpPutResponseHopLimit=1,HttpEndpoint=enabled \
+    --block-device-mappings 'DeviceName=/dev/xvda,Ebs={VolumeSize=20,VolumeType=gp3,Encrypted=true}' \
+    --tag-specifications 'ResourceType=instance,Tags=[{Key=Name,Value=motuz}]'
+```
+
+On an existing instance, as root (the same as the user data does):
+
+```bash
+sudo dnf -y install git
+sudo git clone --branch <branch> https://github.com/<you>/motuz.git /root/motuz-install
+sudo /root/motuz-install/bin/systemd/bootstrap.sh --repo=https://github.com/<you>/motuz.git --branch=<branch> --local-accounts
+```
+
+`install.sh` and `bootstrap.sh` run from root's own clone, never from the account's
+`~/motuz` (the account must not be able to change what root runs). Then add users
+(`useradd` + `passwd` with `--local-accounts`, or join the directory with
+`realm join` / SSSD and `authselect select sssd`, without `--local-accounts`), set
+`MOTUZ_ACME_DOMAIN` for a Let's Encrypt certificate (port 80 must be reachable) and
+connect with `aws ssm start-session --target <instance id>`.
+
+**Updates**: `sudo git -C /root/motuz-install pull && sudo /root/motuz-install/bin/systemd/bootstrap.sh
+--local-accounts` (idempotent: `install.sh` again, `git pull --ff-only` of `~/motuz`,
+`deploy.sh`), or only `sudo -iu motuz ~/motuz/bin/systemd/deploy.sh --pull` when the
+installed pieces did not change (`deploy.sh` warns otherwise). `dnf upgrade` keeps
+PostgreSQL 18 and Python 3.14; after a Python minor change `deploy.sh` rebuilds the venv.
+
+**Uninstall**: `sudo bin/systemd/uninstall.sh` stops Motuz and removes the units, the
+sudoers rule, the PAM service, the sysctl file and the login helper, and unmasks the
+distribution's PostgreSQL and Valkey services; the account and its data stay.
+`--purge --yes` also deletes the account, its home (database, secrets, certificates) and
+the pinned binaries. Packages stay installed.
+
+### Remote workers on AL2027
+
+`install.sh --worker-only` installs a [remote worker](#remote-workers-https-only) without
+the server: `python3`, `sudo`, the pinned rclone, the account with the same sudoers rule,
+and the user unit `motuz-worker.service` with `~/.config/motuz-worker/worker.env`
+(`MOTUZ_HOME` = the checkout it runs from, which must be readable by the account, for
+example a root-owned clone in `/opt/motuz`). Non-interactive, for example from user data:
+
+```bash
+git clone --branch <release> https://github.com/<you>/motuz.git /opt/motuz
+# a permanent worker: starts motuz-worker with the secret of `manage.py workers add`
+/opt/motuz/bin/systemd/install.sh --worker-only --central-url=https://motuz.example.org --pool=onprem --credential-file=/root/credential
+# a temporary worker: one job with a bootstrap token, then e.g. shutdown
+/opt/motuz/bin/systemd/install.sh --worker-only --central-url=https://motuz.example.org --pool=aws
+/opt/motuz/bin/systemd/worker_once.sh --bootstrap-token-file=/run/motuz-bootstrap
+```
+
+`worker_once.sh` moves the token into the account's private runtime directory and runs
+`motuz_worker.py --bootstrap-token-file ... --once` as the transient user service
+`motuz-worker-once` (so it runs as the account, in its user manager, not in cloud-init's
+context), deletes the token and exits with the worker's exit code (0 done, 1 error, 3 no
+job, 78 configuration error).
+
+### Tests on AL2027
+
+`test/e2e/run_systemd.sh --distro=al2027` runs the same suites as for Ubuntu against an
+AL2027 container with systemd as PID 1 (`test/e2e/systemd/container.sh`,
+`al2027.Dockerfile`: privileged, its own network namespace, so it needs no free ports on
+the host). There is no AL2027 VM image outside EC2 and a container cannot enforce SELinux,
+so SELinux is tested on an instance: the same `run_systemd.sh --inside-setup` and
+`--inside` run there as root, then `ausearch -m avc` must be empty.
 
 
 ## Developer Installation

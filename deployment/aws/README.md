@@ -20,6 +20,7 @@ This directory holds the IAM policies and launch template data. `${VARS}` are fi
 | `worker-ssm-debug-policy.json` | Optional `motuz-worker-ssm-debug`, **not attached**: Session Manager shell on workers |
 | `launch-template-amd64.json`, `launch-template-arm64.json` | Launch template data, Amazon Linux 2027 preview (default version) |
 | `launch-template-ubuntu-amd64.json`, `launch-template-ubuntu-arm64.json` | Launch template data, Ubuntu 26.04 (fallback version 1) |
+| `user-data-al2027.sh` | User data that installs the central Motuz node on Amazon Linux 2027 (`bin/systemd/bootstrap.sh`; top-level README, "Install on Amazon Linux 2027 (default on EC2)"). Workers: `bin/systemd/install.sh --worker-only` and `bin/systemd/worker_once.sh` |
 
 ## Design
 
