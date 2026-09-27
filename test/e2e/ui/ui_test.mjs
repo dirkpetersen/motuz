@@ -283,8 +283,11 @@ if (PHASE === 'paste') {
         await page.fill('input[name=username]', 'alice');
         await page.fill('input[name=password]', 'wrong');
         await page.keyboard.press('Enter');
-        await page.waitForTimeout(1500);
-        check('wrong password: still on the login form', await page.isVisible('input[name=password]'));
+        // The answer comes after PAM's delay for failures (2 s and more with authselect's
+        // pam_faildelay): a late failure would undo the next, successful login
+        await page.waitForSelector('text=No match for Username and Password', { timeout: 15000 }).catch(() => {});
+        check('wrong password: still on the login form', await page.isVisible('input[name=password]')
+            && await page.isVisible('text=No match for Username and Password'));
         await page.fill('input[name=password]', 'AlicePass1');
         await page.keyboard.press('Enter');
         await page.waitForSelector('.grid-files', { timeout: 20000 });
