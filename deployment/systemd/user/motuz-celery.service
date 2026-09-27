@@ -1,0 +1,30 @@
+# The job worker (copy and integrity-check jobs, rclone as the logged-in user via sudo).
+# Stopping it is a warm shutdown, like `docker stop`: SIGTERM to the main process only,
+# which waits for running jobs; after TimeoutStopSec everything is killed.
+[Unit]
+Description=Motuz Celery worker
+PartOf=motuz.target
+Requires=motuz-postgres.service
+Wants=motuz-redis.service
+After=motuz-postgres.service motuz-redis.service motuz-app.service
+
+[Service]
+Type=simple
+WorkingDirectory=%h/motuz/src/backend
+Environment=PYTHON_ENVIRONMENT=prod
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=%h/.config/motuz/motuz.env
+EnvironmentFile=%h/.config/motuz/secrets.env
+EnvironmentFile=%h/.config/motuz/broker.env
+# Only the app signs in and refreshes OAuth tokens (token broker)
+UnsetEnvironment=MOTUZ_ONEDRIVE_CLIENT_SECRET MOTUZ_GDRIVE_CLIENT_SECRET
+# Refuses to start (the unit fails, the journal says why) while MOTUZ_REQUIRED_PATHS /
+# MOTUZ_REQUIRED_MOUNTS are missing (api/utils/node_check.py; jobs check them too).
+# Retried every RestartSec, so the worker comes up once the mounts are there.
+ExecStartPre=%h/motuz/venv/bin/python -I %h/motuz/src/backend/api/utils/node_check.py start
+ExecStart=%h/motuz/venv/bin/celery -A api.tasks worker -l info
+KillMode=mixed
+TimeoutStopSec=300
+Restart=on-failure
+RestartSec=30
+LogRateLimitIntervalSec=0

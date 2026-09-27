@@ -1,0 +1,32 @@
+# The API, the built frontend and the OAuth token broker: uWSGI from ~/motuz/venv with
+# src/backend/wsgi.ini, http-sockets on 127.0.0.1:5000 (Traefik) and 127.0.0.1:5001
+# (token broker). Migrates the database before every start, like the docker app.
+# No sandboxing options: they would stop sudo (setuid), which runs every file and rclone
+# operation as the logged-in user.
+[Unit]
+Description=Motuz app (uWSGI on 127.0.0.1:5000 and :5001)
+PartOf=motuz.target
+Requires=motuz-postgres.service
+Wants=motuz-redis.service
+After=motuz-postgres.service motuz-redis.service
+
+[Service]
+Type=notify
+NotifyAccess=all
+WorkingDirectory=%h/motuz/src/backend
+Environment=PYTHON_ENVIRONMENT=prod
+Environment=PYTHONUNBUFFERED=1
+Environment=MOTUZ_FRONTEND_DIR=%h/motuz/build
+# Settings (motuz.env), secrets (secrets.env, mode 600) and the broker URL with its
+# password (broker.env, mode 600), all made by bin/systemd/deploy.sh
+EnvironmentFile=%h/.config/motuz/motuz.env
+EnvironmentFile=%h/.config/motuz/secrets.env
+EnvironmentFile=%h/.config/motuz/broker.env
+ExecStartPre=%h/motuz/venv/bin/python manage.py db upgrade
+ExecStart=%h/motuz/venv/bin/uwsgi --ini wsgi.ini
+KillSignal=SIGQUIT
+TimeoutStartSec=300
+Restart=on-failure
+RestartSec=5
+# The e2e suites and admins search the log; never drop lines
+LogRateLimitIntervalSec=0

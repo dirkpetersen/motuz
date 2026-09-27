@@ -20,3 +20,6 @@ build/
 test/e2e/.work/
 test/e2e/.env
 test/e2e/logs/
+# ... of the systemd install tests (VM disks)
+test/e2e/.work-systemd*/
+test/e2e/logs-systemd/

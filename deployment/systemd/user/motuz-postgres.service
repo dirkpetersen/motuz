@@ -1,0 +1,24 @@
+# The Motuz database: a cluster owned by the motuz account, run with the distribution's
+# PostgreSQL 18 binaries (deploy.sh replaces @PG_BINDIR@, from bin/systemd/distro/*.sh).
+# Data in ~/data/pg (deploy.sh runs initdb), TCP on 127.0.0.1:5432 only (password logins
+# of motuz_user), the unix socket in the private runtime directory (peer login of the
+# superuser `motuz`, for deploy.sh).
+[Unit]
+Description=Motuz PostgreSQL 18 (~/data/pg, 127.0.0.1:5432)
+PartOf=motuz.target
+ConditionPathExists=%h/data/pg/PG_VERSION
+
+[Service]
+Type=notify
+ExecStart=@PG_BINDIR@/postgres -D %h/data/pg -c listen_addresses=127.0.0.1 -c port=5432 -c unix_socket_directories=%t/motuz-postgres
+ExecReload=/bin/kill -HUP $MAINPID
+RuntimeDirectory=motuz-postgres
+RuntimeDirectoryMode=0700
+# Fast shutdown: SIGINT to the postmaster only, which stops its children
+KillMode=mixed
+KillSignal=SIGINT
+TimeoutStartSec=300
+TimeoutStopSec=120
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=yes

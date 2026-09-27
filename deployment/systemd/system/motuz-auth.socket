@@ -1,0 +1,17 @@
+# Motuz login helper (bin/systemd/install.sh --local-accounts): lets the unprivileged
+# motuz account check passwords of local /etc/shadow accounts. Only root and the motuz
+# group can connect; the helper also checks that the peer is the motuz account.
+# install.sh replaces `motuz` with the account's name if it differs.
+[Unit]
+Description=Motuz login helper socket
+
+[Socket]
+ListenStream=/run/motuz-auth.sock
+SocketUser=root
+SocketGroup=motuz
+SocketMode=0660
+Accept=yes
+MaxConnections=16
+
+[Install]
+WantedBy=sockets.target
