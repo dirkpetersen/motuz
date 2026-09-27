@@ -723,7 +723,7 @@ access, open no ports and need no VPN. Typical setups:
 
 - Motuz in the cloud (e.g. a small EC2 instance), workers on-prem next to the file systems
   (Proxmox VMs with the same mounts, users and versions as each other).
-- Later: temporary cloud workers for large cloud-to-cloud jobs (see "Ephemeral workers").
+- Temporary EC2 workers, one per large cloud-to-cloud job (see "Temporary EC2 workers").
 
 A worker runs the same job code as the Motuz server's Celery worker: rclone as the job's
 owner (`sudo -E -u <owner>`), the same output parsing, Stop, progress and final state in
@@ -830,7 +830,7 @@ the worker checks its mounts and that its release (`src/backend/api/version.py`:
 stops rclone and reports the job as failed. Exit code 78 (configuration error, revoked
 credential) stops systemd from restarting it.
 
-**Ephemeral workers** (for the later EC2 launcher): a single-use bootstrap token, valid
+**Ephemeral workers** (what the EC2 launcher uses): a single-use bootstrap token, valid
 for minutes and optionally bound to one job queued for the same pool, replaces the
 credential:
 
@@ -844,6 +844,128 @@ The worker exchanges the token (it cannot be used again), claims exactly its job
 reports the result and exits; the server then revokes the ephemeral worker. Code can call
 `worker_manager.create_bootstrap_token(pool, job='copy:123', ttl_seconds=900)`.
 
+
+### Temporary EC2 workers
+
+When the Motuz server runs in AWS, each large cloud-to-cloud job can get its own
+short-lived EC2 instance: a remote worker of the pool `aws` that boots, runs exactly this
+job and terminates. The Motuz server itself stays small; the copy runs on a
+network-optimized instance sized for the job. Off by default (`MOTUZ_EC2_WORKERS=false`).
+
+**How it works**
+
+1. A new copy or integrity-check job whose source is large (`MOTUZ_LARGE_JOB_BYTES` /
+   `_FILES`, see "Remote workers") is queued for the pool `MOTUZ_LARGE_JOB_POOL=aws`,
+   with the source size that `rclone size` measured.
+2. Right after (a Celery task, so creating the job does not wait for AWS), the launcher
+   (`src/backend/api/managers/ec2_launcher.py`) starts an instance if fewer than
+   `MOTUZ_EC2_MAX_WORKERS` are running; otherwise the job waits in the queue ("waiting for
+   a free EC2 worker slot") until one ends. It creates a single-use bootstrap token bound
+   to the job (valid for `MOTUZ_EC2_BOOT_TIMEOUT`), puts it into the instance's user data,
+   and calls `RunInstances` with the launch template of the instance type's architecture
+   (`deployment/aws/README.md`), the type from `MOTUZ_EC2_INSTANCE_TYPES`, the worker tags
+   and a `ClientToken` derived from the job, so that a repeated call never starts a
+   second instance for the same job.
+3. The instance (Amazon Linux 2027) restricts instance metadata to root, installs rclone
+   (the version pinned for the server, checksum verified) and Motuz at the server's commit,
+   and runs `motuz_worker.py --bootstrap-token-file ... --once`. The worker exchanges the
+   token, claims its job, reports progress over HTTPS like any remote worker, and exits;
+   then the instance shuts down, which terminates it.
+4. A reaper on the Motuz server (`manage.py ec2 reap --loop`, started by the Celery
+   container every `MOTUZ_EC2_REAP_INTERVAL`) cleans up and starts queued jobs whose
+   turn has come.
+
+The job table shows where a job runs, e.g. "aws · starting worker (c7gn.large)",
+"aws · running on c7gn.2xlarge"; the job dialog shows it as "Runs on".
+
+**Which jobs.** Only cloud-to-cloud jobs whose two connections are HTTPS APIs with
+credentials stored in Motuz: S3 (AWS or an `https://` endpoint on port 443), Azure Blob,
+Google Cloud Storage, Dropbox, OneDrive, Google Drive. The workers reach nothing but port
+443 and have none of the users' files, so large jobs with SFTP, WebDAV, Swift, an S3
+endpoint on another port, or "Credentials from your home directory" run on the Motuz
+server instead. Jobs with a local path never go to EC2 workers: the server refuses to
+start with `MOTUZ_LOCAL_JOB_POOL` set to the EC2 pool.
+
+**Settings** (`.env` of the Motuz server; passed to `app` and `celery`):
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `MOTUZ_EC2_WORKERS` | `false` | `true` launches workers for the jobs of the EC2 pool |
+| `MOTUZ_EC2_POOL` | `aws` | The pool; must equal `MOTUZ_LARGE_JOB_POOL` |
+| `MOTUZ_AWS_REGION` | (required) | Region of the launch templates, e.g. `us-west-2` |
+| `MOTUZ_PUBLIC_URL` | (required) | `https://` address of this server, reachable from the internet on 443 |
+| `MOTUZ_EC2_INSTANCE_TYPES` | `1T:c7gn.large,10T:c7gn.2xlarge,*:c7gn.4xlarge` | Instance type by source size (decimal: `1T` = 10^12 bytes): below 1 TB `c7gn.large`, below 10 TB `c7gn.2xlarge`, else (and when the listing timed out) `c7gn.4xlarge`. Graviton types (`c7gn`, `c8gn`) use the arm64 template, others (`c6in`, `c7i`) the x86_64 one; only types the IAM policy allows can start |
+| `MOTUZ_EC2_MAX_WORKERS` | 2 | Instances at the same time (worker instances without a record count too) |
+| `MOTUZ_EC2_MAX_RUNTIME` | `24h` | An instance running longer is terminated and its job failed with that reason |
+| `MOTUZ_EC2_BOOT_TIMEOUT` | `20m` | Lifetime of the bootstrap token; an instance that has not started its job by then is terminated and the job failed |
+| `MOTUZ_EC2_LAUNCH_TEMPLATE_ARM64`, `_AMD64` | `motuz-worker-arm64`, `motuz-worker` | Launch template names or ids (`lt-...`) |
+| `MOTUZ_EC2_LAUNCH_TEMPLATE_VERSION` | `$Default` | Or `$Latest` or a number (`1` = the Ubuntu 26.04 fallback; the user data was tested on Amazon Linux 2027 only) |
+| `MOTUZ_EC2_SUBNET_ID` | (none) | Subnet; unset: EC2 picks a default subnet |
+| `MOTUZ_EC2_REAP_INTERVAL` | `60s` | Reaper period |
+| `MOTUZ_EC2_HALT_DELAY` | `0` | For debugging: minutes a worker waits before shutting down after a failure |
+| `MOTUZ_WORKER_SOURCE` | `https://github.com/dirkpetersen/motuz` | Where workers get Motuz (a GitHub repository is fetched as an archive, anything else with git) |
+| `MOTUZ_WORKER_SOURCE_REF` | the image's commit | Commit, tag or branch; `bin/prod/build.sh` records the commit it builds (`MOTUZ_SOURCE_COMMIT`), which must be pushed to `MOTUZ_WORKER_SOURCE` |
+
+An invalid or inconsistent value stops the app and the Celery worker at startup with a
+message naming the variable. AWS credentials come from the server's instance profile
+(IMDSv2), never from a file.
+
+**Limits and cleanup.** IAM cannot limit the number of instances, and a stop could be
+requested instead of a termination, so Motuz enforces both itself:
+
+- `MOTUZ_EC2_MAX_WORKERS` concurrent instances; further jobs wait queued.
+- On the instance: `shutdown -h +<max runtime + 15 min>` right after boot, and a shutdown
+  when `motuz-worker --once` exits, successful or not. The worker gives up when it has no
+  job after `MOTUZ_EC2_BOOT_TIMEOUT` (also while the server is unreachable). The launch
+  templates set `InstanceInitiatedShutdownBehavior=terminate`; the launcher never passes
+  that parameter (nor any other that would override the template: image, security group,
+  instance profile, key pair, metadata options).
+- The reaper terminates instances whose job ended (finished, failed or stopped), that
+  run longer than `MOTUZ_EC2_MAX_RUNTIME`, that did not start their job within
+  `MOTUZ_EC2_BOOT_TIMEOUT`, that are stopped, and instances with the worker tags
+  (`Project=motuz`, `Component=worker`, `ManagedBy=motuz-central`) that have no record in
+  the `ec2_worker` table and are older than 10 minutes. So one account and region must
+  have at most one Motuz server with EC2 workers. It fails the job of an instance that
+  ended before or while running it, with the reason and the command for its console
+  output (`aws ec2 get-console-output --latest --instance-id ...`; EC2 keeps it only while
+  the instance exists, see `MOTUZ_EC2_HALT_DELAY`).
+- No capacity for a type (`InsufficientInstanceCapacity`, when launching or as the
+  reason an instance ended before claiming its job): the next type of the table is tried
+  once (the last type falls back to the one before it); then the job fails.
+
+**On the instance.** Before anything else a firewall rule (nftables, or iptables with the
+owner match; the Amazon Linux 2027 preview has neither, so nftables is installed with dnf
+first) lets only root reach the instance metadata service (169.254.169.254), which
+serves the user data with the bootstrap token and the (permissionless) instance role; the
+script checks it as an unprivileged account. `motuz-worker` runs as the account `motuz`,
+rclone as `motuzjob` (`MOTUZ_WORKER_RUN_AS`; `motuz` may run only `/usr/local/bin/rclone`
+as `motuzjob` through sudo): the job's owner does not exist on the instance, and the
+instance runs one job of one user. The bootstrap token is the only secret in the user
+data (single use, bound to the job, valid for minutes) and is never printed; the job's
+credentials arrive in the job ticket over HTTPS, as for any remote worker. The user data
+(`src/backend/api/templates/ec2/worker-user-data.sh`, about 10 KB of the 16 KB limit)
+skips the downloads when rclone and Motuz at the right version are already installed, the
+hook for a prebuilt AMI or the Amazon Linux 2027 installer's worker-only mode. Booting
+to a running worker takes about 20 seconds.
+
+**Commands** (in the `motuz_app` or `motuz_celery` container):
+
+```bash
+docker exec motuz_celery bash -c 'source ./load-secrets.sh >/dev/null && python3 manage.py ec2 check'   # IAM: RunInstances dry run per type
+docker exec motuz_celery bash -c 'source ./load-secrets.sh >/dev/null && python3 manage.py ec2 status'  # launches and live worker instances
+docker exec motuz_celery bash -c 'source ./load-secrets.sh >/dev/null && python3 manage.py ec2 reap'    # one reaper pass now
+```
+
+To debug a worker, set `MOTUZ_EC2_HALT_DELAY=30m`: a worker whose setup or job failed
+then stays up that long, and `aws ec2 get-console-output --latest --instance-id <id>` shows
+the boot steps (`motuz-boot: ...`) and the worker's log. The `motuz-worker-ssm-debug`
+policy (`deployment/aws/README.md`) would allow a Session Manager shell, but the Amazon
+Linux 2027 preview instances did not register with Systems Manager in a test; detach the
+policy again afterwards in any case.
+
+**Costs.** Only while instances run: e.g. `c7gn.large` about 0.12 USD/h, `c7gn.4xlarge`
+about 1 USD/h in us-west-2, plus 16 GiB gp3 and a public IPv4 address. With the defaults
+at most two workers of at most 24 hours each run at a time. Keep an AWS budget alert.
 
 
 ## Developer Installation
