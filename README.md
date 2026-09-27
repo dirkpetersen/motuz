@@ -1082,7 +1082,10 @@ Ubuntu, `deploy.sh` keeps uv's 3.12.
 of the account, `sudo` to the logged-in user keeps that context, and the login helper is a
 system service (`unconfined_service_t`) that may read `/etc/shadow`. Traefik binds 80 and
 443 through the same sysctl as on Ubuntu. Check with `sudo ausearch -m avc -ts boot`
-(empty).
+(empty). PostgreSQL and Valkey stay user services of `motuz`, as on Ubuntu, rather than
+the packages' system services (which would run confined as `postgresql_t` / `redis_t`):
+then `deploy.sh` manages everything as the account without root, both distributions
+share one design, and the database and the broker are reachable only by that account.
 
 ### Install on an instance
 
