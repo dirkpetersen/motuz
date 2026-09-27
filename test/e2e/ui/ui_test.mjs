@@ -7,7 +7,7 @@
 // Screenshots of failed flows go to $MOTUZ_E2E_LOGS (default test/e2e/logs), screenshots
 // of the connection dialog states to $MOTUZ_E2E_SCREENSHOTS (if set).
 import { chromium, request } from 'playwright';
-import { mkdirSync } from 'fs';
+import { mkdirSync, readFileSync } from 'fs';
 import { execFileSync } from 'child_process';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
@@ -18,6 +18,9 @@ const LOGS = process.env.MOTUZ_E2E_LOGS || join(dirname(fileURLToPath(import.met
 const SHOTS = process.env.MOTUZ_E2E_SCREENSHOTS || '';
 mkdirSync(LOGS, { recursive: true });
 if (SHOTS) mkdirSync(SHOTS, { recursive: true });
+
+// Fixtures of the image and Markdown viewer (run as alice with `python3 - <folder>`)
+const VIEWER_FIXTURES = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'viewer_fixtures.py'), 'utf8');
 
 const results = [];
 function check(name, ok, detail = '') {
@@ -1046,6 +1049,213 @@ os.utime(os.path.join(d, 'dirB'), (now - 86400,) * 2)
         check('follow: closing the dialog stops polling (0 requests to /files/view/chunk/ afterwards)', after.length === 0, after);
         check('follow: never two chunk requests at once', maxInFlight === 1, maxInFlight);
         check('follow: no page errors', pageErrors.length === 0, pageErrors);
+    });
+
+    // ------------------------------------------------ image and Markdown viewer
+    // Fixtures from ../viewer_fixtures.py, in /home/alice/ui-viewer and on Azurite
+    // (ui-azurite from the credentials-picker flow)
+    const VIEWER_DIR = '/home/alice/ui-viewer';
+    const imageState = () => page.evaluate(() => {
+        const i = document.querySelector('.image-viewer-image');
+        const s = document.querySelector('.image-viewer-stage');
+        if (!i || !s) {
+            return null;
+        }
+        const r = i.getBoundingClientRect(), sr = s.getBoundingClientRect();
+        return {
+            natural: `${i.naturalWidth}x${i.naturalHeight}`, src: i.src, width: Math.round(r.width), height: Math.round(r.height),
+            stageWidth: Math.round(sr.width), stageHeight: Math.round(sr.height), fit: s.classList.contains('fit'),
+            scrolls: s.scrollWidth > s.clientWidth + 1 && s.scrollHeight > s.clientHeight + 1,
+            info: (document.querySelector('.image-viewer-info') || {}).textContent || '',
+        };
+    });
+    const imageLoaded = () => page.waitForFunction(() => {
+        const i = document.querySelector('.image-viewer-image');
+        return i && i.complete && i.naturalWidth > 0;
+    }, null, { timeout: 30000 });
+    const closeViewer = async () => {
+        await page.keyboard.press('Escape');
+        await page.waitForSelector('.modal-content', { state: 'detached', timeout: 10000 });
+    };
+    const markdownState = () => page.evaluate(() => {
+        const b = document.querySelector('.markdown-body');
+        const safe = b.querySelector('a[href="https://example.org/docs"]');
+        const pre = b.querySelector('pre code');
+        const local = b.querySelector('img[data-md-image=local]');
+        return {
+            h1: (b.querySelector('h1') || {}).textContent,
+            rows: b.querySelectorAll('table.table tbody tr').length,
+            headers: [...b.querySelectorAll('table.table th')].map(t => t.textContent),
+            safe: safe && { rel: safe.rel, target: safe.target },
+            hrefs: [...b.querySelectorAll('a')].map(a => a.getAttribute('href')),
+            disabled: [...b.querySelectorAll('.md-link-disabled')].map(s => s.textContent),
+            scripts: document.querySelectorAll('.modal-content script').length,
+            xImages: b.querySelectorAll('img[src="x"]').length,
+            rawAsText: b.textContent.includes('<script>window.__mdXss = 1</script>'),
+            xss: window.__mdXss === undefined ? null : window.__mdXss,
+            remote: (b.querySelector('[data-md-image=remote]') || {}).textContent || '',
+            unsupported: (b.querySelector('[data-md-image=unsupported]') || {}).textContent || '',
+            local: local ? { width: local.naturalWidth, blob: local.src.startsWith('blob:') } : null,
+            images: [...document.querySelectorAll('.modal-content img')].map(i => i.src.slice(0, 5)),
+            code: pre ? { text: pre.textContent, font: getComputedStyle(pre).fontFamily } : null,
+            tasks: b.querySelectorAll('input[type=checkbox]').length,
+            footnote: !!b.querySelector('a[href^="#user-content-fn-"]'),
+        };
+    });
+    // Switches a pane to a connection (the Host select) and a path (the Path box)
+    async function paneGo(side, host, path) {
+        const zone = `#zone-${side}-commands`;
+        const inputs = page.locator(`${zone} input[id^="react-select"]`);
+        if (host) {
+            await inputs.nth(0).focus();
+            await page.keyboard.type(host);
+            await page.locator(`${zone} [class*="-option"]`, { hasText: host }).first().waitFor({ timeout: 10000 });
+            await page.keyboard.press('Enter');
+            await page.waitForTimeout(500);
+        }
+        await inputs.nth(1).focus();
+        await page.keyboard.type(path);
+        await page.locator(`${zone} [class*="-option"]`, { hasText: `Go to ${path}` }).first().waitFor({ timeout: 10000 });
+        await page.keyboard.press('Enter');
+    }
+
+    await flow('image-and-markdown-viewer', async () => {
+        appShell(`sudo -u alice python3 - ${VIEWER_DIR}`, VIEWER_FIXTURES);
+        const requests = [];
+        const onRequest = r => requests.push(r.url());
+        page.on('request', onRequest);
+        await page.goto(BASE + '/', { waitUntil: 'domcontentloaded' });
+        await leftPane.getByText('ui-viewer', { exact: true }).waitFor({ timeout: 20000 });
+        await leftPane.getByText('ui-viewer', { exact: true }).dblclick();
+        await leftPane.getByText('pic.png', { exact: true }).waitFor({ timeout: 20000 });
+        const scriptsAtStart = requests.filter(u => /\/js\/.*\.js$/.test(u));
+        check('the Markdown renderer is not in the initial bundle (lazy)', scriptsAtStart.length === 1
+            && /\/js\/app-[0-9a-f]+\.bundle\.js$/.test(scriptsAtStart[0]), scriptsAtStart);
+
+        // A PNG: fit to the window, 100% with a click, back with the button
+        await row('pic.png').dblclick();
+        await imageLoaded();
+        let img = await imageState();
+        check('image: double-click on a PNG shows it through a blob: URL (2400 x 1500)', img.natural === '2400x1500'
+            && img.src.startsWith('blob:'), img);
+        check('image: fit to the window by default', img.fit && img.width <= img.stageWidth && img.height <= img.stageHeight
+            && img.width > 300 && !img.scrolls, img);
+        check('image: type, dimensions and size in the footer', /^PNG · 2400 × 1500 px · 1\d\d KiB · read-only$/.test(img.info), img.info);
+        check('image: not the text pager', await page.locator('.file-viewer-content').count() === 0);
+        await shot('viewer-image-fit');
+        await page.click('.image-viewer-image');
+        img = await imageState();
+        check('image: a click shows it at 100%, with scrolling', !img.fit && img.width === 2400 && img.height === 1500 && img.scrolls, img);
+        await shot('viewer-image-100');
+        await page.click('.image-viewer-zoom');
+        img = await imageState();
+        check('image: the button fits it to the window again', img.fit && !img.scrolls, img);
+        const blobUrl = img.src;
+        await closeViewer();
+        check('image: Esc closes, the blob: URL is revoked', await page.evaluate(src => fetch(src).then(() => false, () => true), blobUrl));
+
+        for (const [name, type] of [['pic.jpg', 'JPEG'], ['PIC2.JPEG', 'JPEG'], ['pic.gif', 'GIF'], ['pic.webp', 'WebP']]) {
+            await row(name).dblclick();
+            await imageLoaded();
+            img = await imageState();
+            check(`image: ${name} shown (64 x 48, ${type})`, img.natural === '64x48' && img.info.startsWith(`${type} · 64 × 48 px`), img);
+            await closeViewer();
+        }
+
+        await row('fake.png').dblclick();
+        await page.waitForSelector('.file-viewer-error', { timeout: 20000 });
+        let error = await page.locator('.file-viewer-error').textContent();
+        check('image: a .png that is text: a message, not the text pager', error.includes('not a PNG, JPEG, GIF or WebP image')
+            && await page.locator('.file-viewer-content, .image-viewer-image').count() === 0, error);
+        await shot('viewer-image-not-an-image');
+        await closeViewer();
+        await row('big.png').dblclick();
+        await page.waitForSelector('.file-viewer-error', { timeout: 20000 });
+        error = await page.locator('.file-viewer-error').textContent();
+        check('image: above the size cap: a message', error.includes('images up to 2.0 MiB'), error);
+        await closeViewer();
+        await row('logo.svg').dblclick();
+        await page.waitForSelector('.file-viewer-content', { timeout: 20000 });
+        const svgText = await page.locator('.file-viewer-content').textContent();
+        check('SVG opens in the text pager, as text', svgText.includes('<svg xmlns') && await page.locator('.modal-content svg').count() === 0
+            && await page.evaluate(() => window.__svgXss === undefined), svgText.slice(0, 80));
+        await closeViewer();
+
+        // Markdown: rendered, no raw HTML, safe links, no remote images
+        await row('README.md').dblclick();
+        await page.waitForSelector('.markdown-body h1', { timeout: 20000 });
+        await page.waitForFunction(() => {
+            const i = document.querySelector('.markdown-body img[data-md-image=local]');
+            return i && i.complete && i.naturalWidth > 0;
+        }, null, { timeout: 30000 });
+        await page.waitForTimeout(1000); // time for an onerror handler to run, if one had been rendered
+        let md = await markdownState();
+        check('markdown: rendered heading, table (Bootstrap classes) and code block', md.h1 === 'Viewer test heading' && md.rows === 2
+            && JSON.stringify(md.headers) === '["Name","Value"]' && md.code && md.code.text.includes('hello from a code block')
+            && /mono|Menlo|Consolas|Courier/i.test(md.code.font) && md.tasks === 2 && md.footnote, md);
+        check('markdown: an http(s) link opens in a new tab with rel="noopener noreferrer"', md.safe && md.safe.target === '_blank'
+            && md.safe.rel === 'noopener noreferrer', md.safe);
+        check('markdown: javascript: and relative links are not links', !md.hrefs.some(h => h && !/^(https:\/\/example\.org\/docs|#user-content-)/.test(h))
+            && md.disabled.includes('script link') && md.disabled.includes('relative link'), md);
+        check('markdown: raw <script> and <img onerror> not executed (shown as text)', md.xss === null && md.scripts === 0
+            && md.xImages === 0 && md.rawAsText, md);
+        check('markdown: remote image not loaded, alt text and a hint shown', md.remote.includes('remote tracker')
+            && md.remote.includes('remote image not loaded') && !requests.some(u => u.includes('tracker.invalid')), md.remote);
+        check('markdown: SVG image not shown', md.unsupported.includes('vector logo'), md.unsupported);
+        check('markdown: relative image loaded from the same folder through the image endpoint', md.local && md.local.width === 2400
+            && md.local.blob && JSON.stringify(md.images) === '["blob:"]'
+            && requests.some(u => u.endsWith('/api/system/files/view/image/')), md);
+        const scriptsNow = requests.filter(u => /\/js\/.*\.js$/.test(u));
+        check('markdown: the renderer was loaded on demand', scriptsNow.length > scriptsAtStart.length, scriptsNow);
+        check('markdown: "Rendered" pressed', await page.locator('.viewer-mode-rendered[aria-pressed=true]').count() === 1);
+        await shot('viewer-markdown');
+
+        await page.click('.viewer-mode-source');
+        await page.waitForSelector('.file-viewer-content span', { timeout: 20000 });
+        const source = await page.locator('.file-viewer-content').textContent();
+        check('markdown: Source shows the pager with the raw text', source.startsWith('# Viewer test heading\n')
+            && source.includes('<script>window.__mdXss = 1</script>') && await page.locator('.markdown-body').count() === 0
+            && await page.locator('.file-viewer-follow').count() === 1
+            && await page.locator('.viewer-mode-source[aria-pressed=true]').count() === 1, source.slice(0, 60));
+        check('markdown: only one dialog after switching', await page.locator('.modal-content').count() === 1);
+        await shot('viewer-markdown-source');
+        await page.click('.viewer-mode-rendered');
+        await page.waitForSelector('.markdown-body h1', { timeout: 20000 });
+        check('markdown: Rendered switches back', await page.locator('.file-viewer-content').count() === 0);
+        await closeViewer();
+        check('markdown: nothing executed after all', await page.evaluate(() => window.__mdXss === undefined));
+
+        // The same on Azure (rclone as alice with the connection's credentials)
+        const out = appShell(`sudo -u alice /usr/local/bin/rclone --config /home/alice/.config/rclone/rclone.conf copy ${VIEWER_DIR} azurite:motuztest/ui-viewer && echo uploaded`);
+        check('Azure: viewer fixtures uploaded', out.includes('uploaded'), out);
+        await paneGo('left', 'ui-azurite', '/motuztest/ui-viewer');
+        await leftPane.getByText('pic.png', { exact: true }).waitFor({ timeout: 30000 });
+        await row('pic.png').dblclick();
+        await imageLoaded();
+        img = await imageState();
+        check('Azure: double-click on a PNG shows it', img.natural === '2400x1500' && img.fit
+            && (await page.locator('.file-viewer-path').textContent()).startsWith('ui-azurite: /motuztest/ui-viewer/pic.png'), img);
+        await closeViewer();
+        await row('fake.png').dblclick();
+        await page.waitForSelector('.file-viewer-error', { timeout: 30000 });
+        check('Azure: a .png that is text: a message', (await page.locator('.file-viewer-error').textContent()).includes('not a PNG'));
+        await closeViewer();
+        await row('README.md').dblclick();
+        await page.waitForSelector('.markdown-body h1', { timeout: 30000 });
+        await page.waitForFunction(() => {
+            const i = document.querySelector('.markdown-body img[data-md-image=local]');
+            return i && i.complete && i.naturalWidth > 0;
+        }, null, { timeout: 30000 });
+        md = await markdownState();
+        check('Azure: Markdown rendered, its relative image loaded from the container', md.h1 === 'Viewer test heading'
+            && md.rows === 2 && md.local && md.local.width === 2400 && md.xss === null, md);
+        await shot('viewer-markdown-azure');
+        await page.click('.viewer-mode-source');
+        await page.waitForSelector('.file-viewer-content span', { timeout: 30000 });
+        check('Azure: Source shows the pager', (await page.locator('.file-viewer-content').textContent()).startsWith('# Viewer test heading'));
+        await closeViewer();
+        page.off('request', onRequest);
+        check('viewer: no page errors', pageErrors.length === 0, pageErrors);
     });
 } else {
     // Callback mode: Microsoft (fake_ms.py) sends the sign-in tab back to Motuz, which

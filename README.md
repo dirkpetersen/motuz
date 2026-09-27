@@ -689,6 +689,22 @@ parsed as numbers or sizes and formatted by Motuz, one argv item per flag
 (`--transfers=32`), without a shell. The flags appear in the rclone command in the
 celery log (credentials stay masked).
 
+### File viewer
+
+A double-click on a file in a pane opens a read-only viewer; the file is read as the
+logged-in user (locally with their permissions, in the cloud with their connection):
+
+- `.png`, `.jpg`/`.jpeg`, `.gif`, `.webp`: the image, fit to the window (a click shows
+  100%). The server decides the type from the file's first bytes, not its name, and
+  shows only PNG, JPEG, GIF and WebP; SVG files open as text (an SVG can contain
+  scripts). Images above `MOTUZ_VIEW_IMAGE_MAX_BYTES` (default `25M`, at most `256M`,
+  set in `.env`) are refused before they are read.
+- `.md`, `.markdown`: rendered in the browser from the first 1 MiB, without raw HTML
+  (shown as text). Links open in a new tab and only for http, https and mailto;
+  remote images are never loaded, images next to the file (relative paths) are.
+  *Source* shows the text.
+- anything else: a text pager like `less`, with *Follow* (like `tail -f`).
+
 ### Using a custom database
 
 The [.env](/.env) file provides a set of default variables that can be overwritten with environment variables. This can be leveraged to use a custom database.

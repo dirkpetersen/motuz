@@ -20,8 +20,8 @@ import time
 import urllib.error
 import urllib.request
 
-from common import (BASE, CTX, NUMBERED_LOG_CODE, check, check_chunked_reads, compose, db_password, finish,
-                    numbered_log, psql, service_logs, sh, skip)
+from common import (BASE, CTX, NUMBERED_LOG_CODE, VIEWER_FIXTURES_CODE, check, check_chunked_reads, check_image_view,
+                    compose, db_password, finish, numbered_log, psql, service_logs, sh, skip)
 
 AWS_PROFILE = os.environ.get('MOTUZ_E2E_AWS_PROFILE')
 REGION = os.environ.get('MOTUZ_E2E_AWS_REGION', 'us-west-2')
@@ -413,6 +413,16 @@ check_r('Azure pager: length below 256 bytes refused (400)', status == 400, raw)
 status, v, raw = chunk(B, '/motuztest/copy/numbered.log', from_end=True)
 check_r('Azure pager: bob cannot use alice\'s connection (404)', status == 404 and 'numbered log' not in raw, raw)
 check('Azure pager: file contents never logged', 'of a numbered log' not in service_logs('app'), 'contents in the app log')
+
+# The image viewer on Azure: lsjson --stat (a file above the cap is never read), then
+# rclone cat --count cap+1; the type from the first bytes, not from rclone's MimeType
+sh('app', 'sudo -u alice python3 - /home/alice/azviewer', stdin=VIEWER_FIXTURES_CODE)
+out = sh('app', "sudo -u alice /usr/local/bin/rclone --config /home/alice/.config/rclone/rclone.conf "
+                "copy /home/alice/azviewer azurite:motuztest/viewer")
+check_r('viewer fixtures uploaded to Azurite', out.returncode == 0, out.stderr)
+check_image_view(A, B, '/motuztest/viewer', c5['id'], 'Azure image viewer', 404)
+status, v, raw = req('POST', '/api/system/files/view/chunk/', A, {'connection_id': c5['id'], 'path': '/motuztest/viewer/README.md'})
+check_r('Azure Markdown: the text through the pager\'s endpoint', status == 200 and v['content'].startswith('# Viewer test heading'), raw)
 
 # Follow mode (tail -f) on Azure: a poll without news is only `rclone lsjson --stat`, a
 # poll with news one `rclone cat` of the new range (no second cat for the text check)

@@ -8,7 +8,8 @@ import time
 import urllib.error
 import urllib.request
 
-from common import BASE, CTX, NUMBERED_LOG_CODE, check, check_chunked_reads, finish, numbered_log, psql, service_logs, sh
+from common import (BASE, CTX, NUMBERED_LOG_CODE, VIEWER_FIXTURES_CODE, check, check_chunked_reads, check_image_view, finish,
+                    numbered_log, psql, service_logs, sh)
 
 
 def req(method, path, token=None, body=None):
@@ -246,6 +247,30 @@ check('follow: a deleted file is 404', status == 404, (status, v))
 logs = service_logs('app')
 check('pager: file contents never logged', 'of a numbered log' not in logs and 'line 000001' not in logs, 'contents in the app log')
 
+# --- image viewer: PNG/JPEG/GIF/WebP by their first bytes, read as the user, size cap
+# (compose.yml: MOTUZ_VIEW_IMAGE_MAX_BYTES=2M); fixtures from viewer_fixtures.py
+sh('app', 'sudo -u alice python3 - /home/alice/viewer', stdin=VIEWER_FIXTURES_CODE)
+check_image_view(A, B, '/home/alice/viewer', 0, 'image viewer', 403)
+
+
+def view_image(token, path, connection_id=0):
+    return req('POST', '/api/system/files/view/image/', token, {'path': path, 'connection_id': connection_id})
+
+
+for bad in ('viewer/pic.png', '-la', '--help'):
+    status, v, _ = view_image(A, bad)
+    check(f'image viewer: relative path {bad!r} refused', status == 400 and 'absolute' in msg(v), (status, v))
+status, v, _ = view_image(A, '/dev/zero')
+check('image viewer: a device is refused, not read', status == 400 and 'regular file' in msg(v), (status, v))
+status, v, _ = view_image(A, '/home/alice/shadow-link')
+check('image viewer: a link to /etc/shadow is read as alice (403)', status == 403, (status, v))
+status, v, _ = view_image(A, '/home/alice/viewer/pic.png', 'x')
+check('image viewer: connection_id must be an integer', status == 400, (status, v))
+status, v, _ = chunk(A, '/home/alice/viewer/README.md')
+check('Markdown viewer: the text comes from the pager\'s endpoint', status == 200 and v['content'].startswith('# Viewer test heading\n')
+      and v['eof'], (status, v))
+check('image viewer: image bytes never logged', 'IHDR' not in service_logs('app'), 'image bytes in the app log')
+
 # --- connections, ownership and secrets
 conn = {'name': 'alice-s3', 'type': 's3', 'bucket': 'b', 's3_access_key_id': 'AKIAEXAMPLE',
         's3_secret_access_key': 'topsecret', 's3_region': 'us-west-2', 'owner': 'bob', 'id': 999}
@@ -275,6 +300,8 @@ status, body, _ = view(B, '/b/x.txt', cid)
 check('bob cannot view a file with alice connection', status == 404, (status, body))
 status, body, _ = chunk(B, '/b/x.txt', cid, from_end=True)
 check('bob cannot page a file with alice connection', status == 404, (status, body))
+status, body, _ = view_image(B, '/b/x.png', cid)
+check('bob cannot view an image with alice connection', status == 404, (status, body))
 status, body, _ = req('POST', '/api/system/files/', B, {'path': '/b', 'connection_id': cid})
 check('bob cannot list with alice connection', status == 404, (status, body))
 
