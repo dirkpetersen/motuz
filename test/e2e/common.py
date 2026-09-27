@@ -91,7 +91,9 @@ def pg_dump():
 def service_logs(*services):
     if TARGET == 'systemd':
         # The user units' lines in the journal (system journal: motuz is a system account)
-        matches = [f'_SYSTEMD_USER_UNIT={SYSTEMD_UNITS[s]}' for s in services]
+        # Only the services' own output: sudo's audit lines (syslog, in the same unit) repeat
+        # every command line
+        matches = [f'_SYSTEMD_USER_UNIT={SYSTEMD_UNITS[s]}' for s in services] + ['_TRANSPORT=stdout']
         return subprocess.run(['journalctl', '--no-pager', '-o', 'cat', *matches],
                               capture_output=True, text=True).stdout
     return compose('logs', *services).stdout
