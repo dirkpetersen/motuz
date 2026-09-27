@@ -124,6 +124,7 @@ def _copy_job_run(self, copy_job, connection, task_id, start_time):
         user=copy_job.owner,
         copy_links=copy_job.copy_links,
         job_id=task_id,
+        performance=copy_job.performance,
     )
 
     while not connection.copy_finished(task_id):
@@ -283,6 +284,7 @@ def _hashsum_job_single_run(self, hashsum_job, connection, rclone_connection_id,
         user=hashsum_job.owner,
         job_id=rclone_connection_id,
         download=hashsum_job.option_download,
+        performance=hashsum_job.performance,
     )
 
     while not connection.hashsum_finished(rclone_connection_id):

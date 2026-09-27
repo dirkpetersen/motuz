@@ -8,6 +8,16 @@ from ..managers import copy_job_manager
 
 api = Namespace('copy-jobs', description='CopyJob related operations')
 
+
+class Performance(fields.Raw):
+    """
+    rclone performance overrides of a job, e.g. {"transfers": 32, "s3_chunk_size": "64M"}.
+    Only the names in utils/rclone_tuning.PER_JOB; the manager validates them. null or {}:
+    the server's defaults.
+    """
+    __schema_type__ = ['object', 'null']
+    __schema_example__ = {'transfers': 32, 'checkers': 64}
+
 job_dto = api.model('copy-job', {
     'id': fields.Integer(readonly=True, example=1234),
     'description': fields.String(required=True, example='Task Description'),
@@ -18,6 +28,7 @@ job_dto = api.model('copy-job', {
 
     'copy_links': fields.Boolean(required=True, example=True),
     'notification_email': fields.String(required=False, example='hello@example.com'),
+    'performance': Performance(required=False, example={'transfers': 32, 'multi_thread_streams': 16, 's3_chunk_size': '64Mi'}),
 
     'owner': fields.String(required=False, example='owner'),
 
@@ -36,6 +47,9 @@ list_dto = api.model('copy-job-list', {
     'page': fields.Integer(example=1),
     'pages': fields.Integer(example=10)
 })
+
+performance_parser = reqparse.RequestParser()
+performance_parser.add_argument('dst_cloud_id', help='Destination connection (none or 0: local filesystem)', type=int, default=0)
 
 list_arg_parser = reqparse.RequestParser()
 list_arg_parser.add_argument('page', help='Current page', type=int, default=1)
@@ -69,6 +83,26 @@ class CopyJobList(Resource):
         """
         try:
             return copy_job_manager.create(request.json), 201
+        except HTTP_EXCEPTION as e:
+            api.abort(e.code, e.payload)
+        except Exception as e:
+            logging.exception(e, exc_info=True)
+            api.abort(500, str(e))
+
+
+@api.route('/performance/')
+class CopyJobPerformance(Resource):
+    @api.expect(performance_parser)
+    def get(self):
+        """
+        Performance fields, their limits, the presets and the memory budget of this
+        server for a destination connection (New Copy Job dialog)
+        """
+        dst_cloud_id = request.args.get('dst_cloud_id') or '0'
+        if not dst_cloud_id.isdigit():
+            api.abort(400, 'dst_cloud_id must be a connection id')
+        try:
+            return copy_job_manager.performance(int(dst_cloud_id))
         except HTTP_EXCEPTION as e:
             api.abort(e.code, e.payload)
         except Exception as e:
