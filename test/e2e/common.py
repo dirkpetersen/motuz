@@ -115,6 +115,18 @@ with open(os.path.join(HERE, 'viewer_fixtures.py')) as _f:
     VIEWER_FIXTURES_CODE = _f.read()
 VIEW_IMAGE_MAX = 2 * 1024 * 1024 # MOTUZ_VIEW_IMAGE_MAX_BYTES in compose.yml
 
+# Document viewer fixtures (document_fixtures.py), used the same way
+with open(os.path.join(HERE, 'document_fixtures.py')) as _f:
+    DOCUMENT_FIXTURES_CODE = _f.read()
+VIEW_DOCUMENT_MAX = 4 * 1024 * 1024 # MOTUZ_VIEW_DOCUMENT_MAX_BYTES in compose.yml
+DOCUMENT_RANGE_MAX = 4 * 1024 * 1024 # document_view.RANGE_MAX_BYTES
+
+
+def document_fixtures():
+    namespace = {'__name__': 'document_fixtures'}
+    exec(DOCUMENT_FIXTURES_CODE, namespace)
+    return namespace['fixtures']()
+
 
 def viewer_fixtures():
     namespace = {'__name__': 'viewer_fixtures'}
@@ -187,6 +199,74 @@ def check_image_view(token, other_token, folder, connection_id, label, other_sta
     status, body, _ = image('pic.png', tok=other_token)
     check(f'{label}: another user gets {other_status}', status == other_status and not isinstance(body, bytes), (status, body))
     status, body, _ = image('pic.png', tok=None)
+    check(f'{label}: needs a token (401)', status == 401, status)
+
+
+def check_document_view(token, other_token, folder, connection_id, label, other_status):
+    """
+    POST /api/system/files/view/document/ on the document fixtures in `folder`: whole
+    files with their container type and the security headers, PDF ranges (also of a PDF
+    above the whole-file cap), everything else refused. `other_token` (another user)
+    gets `other_status`.
+    """
+    files = document_fixtures()
+
+    def document(name, tok=token, path=None, **params):
+        return api_request('POST', '/api/system/files/view/document/', tok,
+                           dict(connection_id=connection_id, path=path or f'{folder}/{name}', **params))
+
+    def message(body):
+        return body.get('message', '') if isinstance(body, dict) else str(body)[:300]
+
+    for name, container, mime in (('letter.docx', 'zip', 'application/zip'), ('numbers.xlsx', 'zip', 'application/zip'),
+                                  ('slides.pptx', 'zip', 'application/zip'), ('legacy.doc', 'cfb', 'application/x-cfb'),
+                                  ('report.pdf', 'pdf', 'application/pdf')):
+        status, body, headers = document(name)
+        check(f'{label}: {name} read whole as {container}', status == 200 and body == files[name]
+              and headers.get('Content-Type') == mime and headers.get('X-Motuz-Document-Type') == container
+              and headers.get('X-Motuz-File-Size') == str(len(files[name])) and headers.get('X-Motuz-Range-Start') == '0',
+              (status, dict(headers), len(body) if isinstance(body, bytes) else body))
+    status, body, headers = document('letter.docx')
+    check(f'{label}: security headers (nosniff, sandbox CSP, no-store, attachment)',
+          headers.get('X-Content-Type-Options') == 'nosniff'
+          and headers.get('Content-Security-Policy') == "default-src 'none'; sandbox"
+          and headers.get('Cache-Control') == 'no-store'
+          and headers.get('Content-Disposition', '').startswith('attachment; filename="letter.docx"'), dict(headers))
+
+    pdf = files['report.pdf']
+    status, body, headers = document('report.pdf', offset=0, length=100)
+    check(f'{label}: PDF range from the start', status == 200 and body == pdf[:100]
+          and headers.get('X-Motuz-File-Size') == str(len(pdf)) and headers.get('X-Motuz-Range-Start') == '0', (status, headers))
+    status, body, headers = document('report.pdf', offset=1500, length=64)
+    check(f'{label}: PDF range further in (type checked on the first bytes)', status == 200 and body == pdf[1500:1564]
+          and headers.get('X-Motuz-Range-Start') == '1500', (status, body if not isinstance(body, bytes) else len(body)))
+    big = files['big.pdf']
+    status, body, _ = document('big.pdf')
+    check(f'{label}: a PDF above MOTUZ_VIEW_DOCUMENT_MAX_BYTES is not read whole (413)', status == 413
+          and 'documents up to 4.0 MiB' in message(body), (status, body))
+    status, body, headers = document('big.pdf', offset=len(big) - 5000, length=DOCUMENT_RANGE_MAX)
+    check(f'{label}: ... but in ranges; the last range ends at the end of the file', status == 200 and body == big[-5000:]
+          and headers.get('X-Motuz-File-Size') == str(len(big)), (status, len(body) if isinstance(body, bytes) else body))
+    status, body, _ = document('report.pdf', offset=len(pdf), length=10)
+    check(f'{label}: a range beyond the end is refused (400)', status == 400 and 'beyond the end' in message(body), (status, body))
+    for params in ({'offset': 0}, {'length': 10}, {'offset': 0, 'length': DOCUMENT_RANGE_MAX + 1}, {'offset': -1, 'length': 1},
+                   {'offset': 0, 'length': 0}):
+        status, body, _ = document('report.pdf', **params)
+        check(f'{label}: invalid range {params} refused (400)', status == 400, (status, body))
+    status, body, _ = document('letter.docx', offset=10, length=10)
+    check(f'{label}: only PDFs are read in ranges (415)', status == 415 and 'only PDFs' in message(body), (status, body))
+    status, body, _ = document('notreally.docx')
+    check(f'{label}: a .docx that is text is refused (415)', status == 415 and 'not a PDF, Office' in message(body), (status, body))
+    status, body, _ = document('huge.xlsx')
+    check(f'{label}: above MOTUZ_VIEW_DOCUMENT_MAX_BYTES refused (413)', status == 413
+          and 'documents up to 4.0 MiB' in message(body) and '5.0 MiB' in message(body), (status, body))
+    status, body, _ = document(None, path=folder)
+    check(f'{label}: a folder is refused (400)', status == 400 and 'folder' in message(body), (status, body))
+    status, body, _ = document('missing.pdf', offset=0, length=10)
+    check(f'{label}: a missing file is refused', status in (400, 404) and 'does not exist' in message(body), (status, body))
+    status, body, _ = document('report.pdf', tok=other_token, offset=0, length=10)
+    check(f'{label}: another user gets {other_status}', status == other_status and not isinstance(body, bytes), (status, body))
+    status, body, _ = document('report.pdf', tok=None)
     check(f'{label}: needs a token (401)', status == 401, status)
 
 

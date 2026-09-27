@@ -20,7 +20,8 @@ import time
 import urllib.error
 import urllib.request
 
-from common import (BASE, CTX, NUMBERED_LOG_CODE, VIEWER_FIXTURES_CODE, check, check_chunked_reads, check_image_view,
+from common import (BASE, CTX, DOCUMENT_FIXTURES_CODE, NUMBERED_LOG_CODE, VIEWER_FIXTURES_CODE, check, check_chunked_reads,
+                    check_document_view, check_image_view,
                     compose, db_password, finish, numbered_log, psql, service_logs, sh, skip)
 
 AWS_PROFILE = os.environ.get('MOTUZ_E2E_AWS_PROFILE')
@@ -423,6 +424,14 @@ check_r('viewer fixtures uploaded to Azurite', out.returncode == 0, out.stderr)
 check_image_view(A, B, '/motuztest/viewer', c5['id'], 'Azure image viewer', 404)
 status, v, raw = req('POST', '/api/system/files/view/chunk/', A, {'connection_id': c5['id'], 'path': '/motuztest/viewer/README.md'})
 check_r('Azure Markdown: the text through the pager\'s endpoint', status == 200 and v['content'].startswith('# Viewer test heading'), raw)
+
+# The document viewer on Azure: whole files after lsjson --stat (413 before any cat),
+# PDFs in ranges with rclone cat --offset --count (+ cat --count 1024 for the type)
+sh('app', 'sudo -u alice python3 - /home/alice/azdocs', stdin=DOCUMENT_FIXTURES_CODE)
+out = sh('app', "sudo -u alice /usr/local/bin/rclone --config /home/alice/.config/rclone/rclone.conf "
+                "copy /home/alice/azdocs azurite:motuztest/docs")
+check_r('document fixtures uploaded to Azurite', out.returncode == 0, out.stderr)
+check_document_view(A, B, '/motuztest/docs', c5['id'], 'Azure document viewer', 404)
 
 # Follow mode (tail -f) on Azure: a poll without news is only `rclone lsjson --stat`, a
 # poll with news one `rclone cat` of the new range (no second cat for the text check)

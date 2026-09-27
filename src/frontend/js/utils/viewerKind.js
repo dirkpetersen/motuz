@@ -6,11 +6,59 @@
  *   by the file's first bytes, the extension only picks the viewer. SVG is not an
  *   image here (it can carry scripts): it opens in the text pager.
  * - Markdown (.md .markdown): rendered, with a switch to the pager (Source)
+ * - documents (DOCUMENT_EXTENSIONS: PDF, Word, spreadsheets, PowerPoint): the document
+ *   viewer, rendered in the browser; legacy binary Office files get "No preview"
  * - everything else: the text pager
  */
 
 export const IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'gif', 'webp'];
 export const MARKDOWN_EXTENSIONS = ['md', 'markdown'];
+
+// Document viewer kinds by extension. The server checks the content (PDF, ZIP, OLE2)
+// and the document worker the ZIP's [Content_Types].xml, so a wrong extension ends in
+// an error message, never in the wrong renderer.
+export const DOCUMENT_EXTENSIONS = Object.freeze({
+    pdf: 'pdf',
+    docx: 'docx',
+    docm: 'docx', // macros are never run: docx-preview ignores them
+    dotx: 'docx',
+    dotm: 'docx',
+    xlsx: 'sheet',
+    xlsm: 'sheet', // values only: no macros, no formula evaluation
+    xltx: 'sheet',
+    xltm: 'sheet',
+    xlsb: 'sheet',
+    xls: 'sheet',
+    ods: 'sheet',
+    pptx: 'pptx',
+    pptm: 'pptx',
+    ppsx: 'pptx',
+    ppsm: 'pptx',
+    potx: 'pptx',
+    potm: 'pptx',
+    // Legacy binary Office formats and other documents without a preview
+    doc: 'unsupported',
+    dot: 'unsupported',
+    ppt: 'unsupported',
+    pps: 'unsupported',
+    pot: 'unsupported',
+    odt: 'unsupported',
+    odp: 'unsupported',
+    pages: 'unsupported',
+    numbers: 'unsupported',
+    key: 'unsupported',
+});
+
+export const DOCUMENT_LABELS = Object.freeze({
+    pdf: 'PDF',
+    docx: 'Word document',
+    sheet: 'Spreadsheet',
+    pptx: 'Presentation',
+    unsupported: 'Document',
+});
+
+// rel of every link from a previewed file (Markdown, PDF, DOCX) to another site
+export const SAFE_LINK_REL = 'noopener noreferrer';
 
 /** The extension of a file name, lower case, without the dot ('' if none) */
 export function extensionOf(name) {
@@ -25,7 +73,13 @@ export function extensionOf(name) {
     return base.slice(dot + 1).toLowerCase();
 }
 
-/** 'image' | 'markdown' | 'text' for a file name */
+/** 'pdf' | 'docx' | 'sheet' | 'pptx' | 'unsupported' (no preview) | null (not a document) */
+export function documentKind(name) {
+    const extension = extensionOf(name);
+    return Object.prototype.hasOwnProperty.call(DOCUMENT_EXTENSIONS, extension) ? DOCUMENT_EXTENSIONS[extension] : null;
+}
+
+/** 'image' | 'markdown' | 'document' | 'text' for a file name */
 export function viewerKind(name) {
     const extension = extensionOf(name);
     if (IMAGE_EXTENSIONS.includes(extension)) {
@@ -33,6 +87,9 @@ export function viewerKind(name) {
     }
     if (MARKDOWN_EXTENSIONS.includes(extension)) {
         return 'markdown';
+    }
+    if (documentKind(name)) {
+        return 'document';
     }
     return 'text';
 }
@@ -43,7 +100,8 @@ const UNSAFE_CHARS = /[\u0000- \u007f-\u009f\u2028\u2029]/;
 const SCHEME = /^([a-zA-Z][a-zA-Z0-9+.-]*):/;
 
 /**
- * The href of a link in rendered Markdown, or null if it must not be a link. Only
+ * The href of a link in rendered Markdown or a previewed document (PDF link
+ * annotations, DOCX hyperlinks), or null if it must not be a link. Only
  * http:, https: and mailto: URLs are links; relative URLs, fragments and every other
  * scheme (javascript:, data:, vbscript:, file:, ...) are not.
  */
@@ -70,6 +128,9 @@ export function safeLinkUrl(url) {
     }
     if ((parsed.protocol !== 'http:' && parsed.protocol !== 'https:') || !parsed.hostname) {
         return null;
+    }
+    if (parsed.username || parsed.password) {
+        return null; // https://trusted.example@evil.example/ misleads
     }
     return url;
 }

@@ -1,4 +1,7 @@
 import React from 'react';
+import { Modal, Button } from 'react-bootstrap';
+
+import { hideFileViewerDialog } from 'actions/dialogActions.jsx';
 
 import NewCopyJobDialog from 'views/Dialogs/NewCopyJobDialog.jsx';
 import EditCopyJobDialog from 'views/Dialogs/EditCopyJobDialog.jsx';
@@ -11,6 +14,22 @@ import SettingsDialog from 'views/Dialogs/SettingsDialog.jsx';
 import FileViewerDialog from 'views/Dialogs/FileViewerDialog.jsx';
 import ImageViewerDialog from 'views/Dialogs/ImageViewerDialog.jsx';
 import MarkdownViewerDialog from 'views/Dialogs/MarkdownViewerDialog.jsx';
+
+// PDF, Word, spreadsheet and PowerPoint previews: the dialog and each renderer are
+// loaded on the first double-click on such a file, never with the main bundle
+const DocumentViewerDialog = React.lazy(() => import(
+    /* webpackChunkName: "viewer-document" */ 'views/Dialogs/DocumentViewer/DocumentViewerDialog.jsx'
+).catch(() => ({default: ViewerLoadFailed})));
+
+// Shown when the viewer's chunk cannot be loaded (e.g. the app was updated meanwhile)
+const ViewerLoadFailed = connect(null, dispatch => ({onClose: () => dispatch(hideFileViewerDialog())}))(
+    ({onClose}) => (
+        <Modal show={true} onHide={onClose}>
+            <Modal.Header closeButton><Modal.Title>Viewer not available</Modal.Title></Modal.Header>
+            <Modal.Body>The viewer could not be loaded. Reload the page and try again.</Modal.Body>
+            <Modal.Footer><Button variant='secondary' onClick={onClose}>Close</Button></Modal.Footer>
+        </Modal>
+    ));
 
 class Dialogs extends React.PureComponent {
     constructor(props) {
@@ -30,6 +49,13 @@ class Dialogs extends React.PureComponent {
         }
         if (data.kind === 'markdown' && data.mode !== 'source') {
             return <MarkdownViewerDialog key={key} animation={animation} />;
+        }
+        if (data.kind === 'document') {
+            return (
+                <React.Suspense key={key} fallback={null}>
+                    <DocumentViewerDialog animation={animation} />
+                </React.Suspense>
+            );
         }
         return <FileViewerDialog key={key} animation={animation} />;
     }

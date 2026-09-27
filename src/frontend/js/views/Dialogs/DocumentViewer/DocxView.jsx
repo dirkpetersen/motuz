@@ -2,7 +2,7 @@ import React from 'react';
 import { renderAsync } from 'docx-preview';
 import createDOMPurify from 'dompurify';
 
-import { SAFE_LINK_REL, internalAnchor, safeLinkUrl } from 'utils/safeLinks.js';
+import { SAFE_LINK_REL, fragmentTarget, safeLinkUrl } from 'utils/viewerKind.js';
 import { stripCssUrls } from 'utils/cssSafe.js';
 
 const RENDER_TIMEOUT_MS = 30000;
@@ -40,7 +40,8 @@ const HOST_CSS = `
 :host { display: block; }
 .docx-wrapper { padding: 20px !important; }
 .docx-link-removed { text-decoration: underline dotted; cursor: not-allowed; }
-a[href] { cursor: pointer; }
+a[href] { cursor: pointer; color: #0563c1; text-decoration: underline; }
+img.docx-image-removed { outline: 1px dashed #adb5bd; color: #6c757d; font: 12px sans-serif; }
 `;
 
 function blobPrefix() {
@@ -58,7 +59,7 @@ export function processLink(node, value) {
     // resolves against the page: that is an internal link too
     const page = window.location.href.split('#')[0];
     const local = typeof value === 'string' && value.startsWith(`${page}#`) ? value.slice(page.length) : value;
-    const anchor = internalAnchor(local);
+    const anchor = fragmentTarget(local);
     const url = anchor ? null : safeLinkUrl(value);
     node.removeAttribute('xlink:href');
     if (anchor) {
@@ -178,8 +179,17 @@ export default class DocxView extends React.Component {
             processLink(link, link.getAttribute('href'));
         }
         const purify = makeSanitizer();
-        purify.sanitize(body, {IN_PLACE: true, FORBID_TAGS, ALLOW_DATA_ATTR: true});
+        // URLs: DOMPurify's default list has no blob: (the pictures); the hook narrows
+        // this to the page's own blob: URLs, http(s)/mailto links and bookmarks
+        purify.sanitize(body, {IN_PLACE: true, FORBID_TAGS, ALLOW_DATA_ATTR: true,
+                               ALLOWED_URI_REGEXP: /^(?:blob:|https?:|mailto:|#)/i});
         const prefix = blobPrefix();
+        // Pictures without a source: linked (external) ones, never loaded
+        for (const img of body.querySelectorAll('img:not([src])')) {
+            img.classList.add('docx-image-removed');
+            img.setAttribute('alt', 'Linked picture (not loaded)');
+            img.setAttribute('title', 'Pictures linked from other sites are not loaded');
+        }
         const css = [...styles.querySelectorAll('style')].map(style => stripCssUrls(style.textContent, prefix));
 
         const shadow = this.host.shadowRoot || this.host.attachShadow({mode: 'open'});

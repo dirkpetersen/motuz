@@ -64,8 +64,10 @@ function cellText(XLSX, cell) {
  * totalCols, widths}], where rows[r][c] is the cell's formatted text (rows and cells
  * may be missing: empty), counted from A1 like the spreadsheet shows them, and
  * rowCount/colCount are what is shown (at most `limits`), totalRows/totalCols what
- * the sheet has. Workbooks read with `dense: true` and `sheetRows: maxRows` keep only
- * the first rows; `!fullref` still tells the real size.
+ * the sheet has (rowsKnown: false when the file does not say how many rows there are
+ * beyond the ones read). Workbooks are read with `dense: true` and `sheetRows: maxRows
+ * + 1`, which keeps only the first rows; `!fullref` tells the real size when the file
+ * has a <dimension>.
  */
 export function workbookToSheets(XLSX, workbook, limits = SHEET_LIMITS) {
     const names = (workbook.SheetNames || []).slice(0, limits.maxSheets);
@@ -73,16 +75,20 @@ export function workbookToSheets(XLSX, workbook, limits = SHEET_LIMITS) {
     return names.map((name, index) => {
         const sheet = workbook.Sheets[name];
         const hidden = !!(meta[index] && meta[index].Hidden);
-        const empty = {name, hidden, rows: [], rowCount: 0, colCount: 0, totalRows: 0, totalCols: 0, widths: []};
+        const empty = {name, hidden, rows: [], rowCount: 0, colCount: 0, totalRows: 0, totalCols: 0, rowsKnown: true, widths: []};
         if (!sheet || !sheet['!ref']) {
             return empty;
         }
         const ref = XLSX.utils.decode_range(sheet['!ref']);
         const full = XLSX.utils.decode_range(sheet['!fullref'] || sheet['!ref']);
-        const totalRows = full.e.r + 1;
-        const totalCols = full.e.c + 1;
-        const rowCount = Math.min(ref.e.r + 1, limits.maxRows);
+        // Read with sheetRows = maxRows + 1: one row more than shown means "truncated",
+        // also for files without a <dimension> (then the real count is unknown)
+        const parsedRows = ref.e.r + 1;
+        const totalRows = Math.max(full.e.r + 1, parsedRows);
+        const totalCols = Math.max(full.e.c + 1, ref.e.c + 1);
+        const rowCount = Math.min(parsedRows, limits.maxRows);
         const colCount = Math.min(ref.e.c + 1, limits.maxCols);
+        const rowsKnown = parsedRows <= limits.maxRows || !!sheet['!fullref'];
         const dense = sheet['!data'];
         const rows = [];
         for (let r = ref.s.r; r < rowCount; r++) {
@@ -109,6 +115,7 @@ export function workbookToSheets(XLSX, workbook, limits = SHEET_LIMITS) {
             colCount,
             totalRows,
             totalCols,
+            rowsKnown,
             widths: columnWidths(sheet['!cols'], colCount),
         };
     });

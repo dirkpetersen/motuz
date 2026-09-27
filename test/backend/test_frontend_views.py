@@ -53,6 +53,18 @@ class FrontendTestCase(unittest.TestCase):
         self.assertIn(b'app-abc.bundle.js', response.data)
         self.assertEqual(response.headers['Cache-Control'], 'no-store')
 
+    def test_index_restricts_resources_to_this_server(self):
+        for path in ('/', '/clouds'):
+            csp = self.get(path).headers['Content-Security-Policy']
+            directives = dict(d.strip().split(' ', 1) for d in csp.split(';'))
+            self.assertEqual(directives['img-src'], "'self' blob: data:", path)
+            self.assertEqual(directives['font-src'], "'self' blob: data:")
+            self.assertEqual(directives['connect-src'], "'self' blob: data:")
+            self.assertEqual(directives['frame-src'], "'none'")
+            self.assertEqual(directives['object-src'], "'none'")
+            self.assertNotIn('script-src', directives) # webpack chunks and dev source maps
+        self.assertNotIn('Content-Security-Policy', self.get('/favicon.ico').headers)
+
     def test_spa_routes_get_index(self):
         for path in ('/clouds', '/some/deep/route'):
             response = self.get(path)

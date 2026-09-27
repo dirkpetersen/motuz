@@ -3,7 +3,7 @@ import { Modal, Button } from 'react-bootstrap';
 
 import 'documentViewer.css';
 import formatBytes from 'utils/formatBytes.jsx';
-import { DOCUMENT_LABELS, documentKind } from 'utils/documentKinds.js';
+import { DOCUMENT_LABELS, documentKind } from 'utils/viewerKind.js';
 import { fetchDocument } from 'actions/documentActions.jsx';
 import { runDocumentWorker } from 'views/Dialogs/DocumentViewer/documentWorkerClient.js';
 
@@ -39,7 +39,7 @@ class ViewerBoundary extends React.Component {
 /**
  * Read-only previews of PDF, Word (DOCX), spreadsheet (XLSX, XLSM, XLSB, XLS, ODS)
  * and PowerPoint (PPTX) files, opened by a double-click on such a file in a pane
- * (utils/documentKinds.js). Everything is rendered in the browser; the file is read
+ * (utils/viewerKind.js documentKind). Everything is rendered in the browser; the file is read
  * as the user by POST /api/system/files/view/document/ and never sent anywhere else.
  * PDFs are read in ranges by pdf.js (PdfView); the other formats are read whole (at
  * most MOTUZ_VIEW_DOCUMENT_MAX_BYTES) and parsed in a Web Worker with ZIP limits

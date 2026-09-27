@@ -8,7 +8,8 @@ import time
 import urllib.error
 import urllib.request
 
-from common import (BASE, CTX, NUMBERED_LOG_CODE, VIEWER_FIXTURES_CODE, check, check_chunked_reads, check_image_view, finish,
+from common import (BASE, CTX, DOCUMENT_FIXTURES_CODE, NUMBERED_LOG_CODE, VIEWER_FIXTURES_CODE, check, check_chunked_reads,
+                    check_document_view, check_image_view, finish,
                     numbered_log, psql, service_logs, sh)
 
 
@@ -270,6 +271,28 @@ status, v, _ = chunk(A, '/home/alice/viewer/README.md')
 check('Markdown viewer: the text comes from the pager\'s endpoint', status == 200 and v['content'].startswith('# Viewer test heading\n')
       and v['eof'], (status, v))
 check('image viewer: image bytes never logged', 'IHDR' not in service_logs('app'), 'image bytes in the app log')
+
+# --- document viewer: PDF/ZIP/OLE2 by their first bytes, whole files up to the cap
+# (compose.yml: MOTUZ_VIEW_DOCUMENT_MAX_BYTES=4M), PDFs in ranges; fixtures from
+# document_fixtures.py
+sh('app', 'sudo -u alice python3 - /home/alice/docs', stdin=DOCUMENT_FIXTURES_CODE)
+check_document_view(A, B, '/home/alice/docs', 0, 'document viewer', 403)
+
+
+def view_document(token, path, connection_id=0, **params):
+    return req('POST', '/api/system/files/view/document/', token, dict(path=path, connection_id=connection_id, **params))
+
+
+for bad in ('docs/report.pdf', '-la', '--help'):
+    status, v, _ = view_document(A, bad)
+    check(f'document viewer: relative path {bad!r} refused', status == 400 and 'absolute' in msg(v), (status, v))
+status, v, _ = view_document(A, '/dev/zero', offset=0, length=10)
+check('document viewer: a device is refused, not read', status == 400 and 'regular file' in msg(v), (status, v))
+status, v, _ = view_document(A, '/home/alice/shadow-link', offset=0, length=10)
+check('document viewer: a link to /etc/shadow is read as alice (403)', status == 403, (status, v))
+logs = service_logs('app')
+check('document viewer: document contents never logged', 'motuz-needle' not in logs and 'Quarterly Report' not in logs,
+      'document text in the app log')
 
 # --- connections, ownership and secrets
 conn = {'name': 'alice-s3', 'type': 's3', 'bucket': 'b', 's3_access_key_id': 'AKIAEXAMPLE',

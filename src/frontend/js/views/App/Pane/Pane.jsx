@@ -21,7 +21,7 @@ function rowTitle(file) {
     if (!isCopyableFile(file)) {
         return file.name === '..' ? 'Double-click to open the parent folder' : '';
     }
-    return `${file.name}\n${file.type === 'dir' ? 'Double-click to open' : 'Double-click to view (text files, read-only)'}`;
+    return `${file.name}\n${file.type === 'dir' ? 'Double-click to open' : 'Double-click to view (read-only)'}`;
 }
 
 // Column headers; `asc`/`desc` describe the order in words (ascending age = newest first)

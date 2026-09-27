@@ -21,6 +21,8 @@ if (SHOTS) mkdirSync(SHOTS, { recursive: true });
 
 // Fixtures of the image and Markdown viewer (run as alice with `python3 - <folder>`)
 const VIEWER_FIXTURES = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'viewer_fixtures.py'), 'utf8');
+// Fixtures of the document viewer (PDF, DOCX, XLSX, PPTX)
+const DOCUMENT_FIXTURES = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'document_fixtures.py'), 'utf8');
 
 const results = [];
 function check(name, ok, detail = '') {
@@ -1256,6 +1258,273 @@ os.utime(os.path.join(d, 'dirB'), (now - 86400,) * 2)
         await closeViewer();
         page.off('request', onRequest);
         check('viewer: no page errors', pageErrors.length === 0, pageErrors);
+    });
+
+    // ------------------------------------------------ document viewer (PDF, DOCX, XLSX, PPTX)
+    // Fixtures from ../document_fixtures.py, in /home/alice/ui-docs and on Azurite
+    const DOCS_DIR = '/home/alice/ui-docs';
+    const docError = async () => {
+        await page.waitForSelector('.document-viewer-error, .document-viewer-unsupported', { timeout: 30000 });
+        return page.locator('.document-viewer-error, .document-viewer-unsupported').first().textContent();
+    };
+    const pdfState = () => page.evaluate(() => {
+        const c = document.querySelector('.pdf-viewer-canvas');
+        const stage = document.querySelector('.pdf-viewer-page');
+        if (!c || !stage || stage.hidden || !c.width) return null;
+        const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+        let dark = 0;
+        for (let i = 0; i < d.length; i += 4 * 101) if (d[i] < 128) dark++;
+        return {
+            width: c.width, cssWidth: Math.round(c.getBoundingClientRect().width), dark,
+            count: (document.querySelector('.pdf-viewer-page-count') || {}).textContent,
+            page: (document.querySelector('.pdf-viewer-page-input') || {}).value,
+            text: (document.querySelector('.pdf-viewer .textLayer') || {}).textContent || '',
+            links: [...document.querySelectorAll('.pdf-viewer-link')].map(a => ({ href: a.getAttribute('href'), rel: a.rel, target: a.target,
+                internal: a.classList.contains('internal') })),
+            highlights: document.querySelectorAll('.pdf-viewer .textLayer .highlight').length,
+            info: (document.querySelector('.document-viewer-info') || {}).textContent || '',
+            js: window.__motuzPdfJs === undefined ? null : window.__motuzPdfJs,
+        };
+    });
+    const pdfRendered = (text) => page.waitForFunction((text) => {
+        const t = document.querySelector('.pdf-viewer .textLayer');
+        const p = document.querySelector('.pdf-viewer-page');
+        return p && !p.hidden && t && t.textContent.includes(text);
+    }, text, { timeout: 30000 });
+    const docxState = () => page.evaluate(() => {
+        const host = document.querySelector('.docx-viewer-host');
+        const root = host && host.shadowRoot;
+        if (!root) return null;
+        return {
+            text: root.textContent,
+            heading: [...root.querySelectorAll('p')].map(p => p.textContent).find(t => t.includes('Quarterly Report')) || null,
+            cells: [...root.querySelectorAll('td')].map(td => td.textContent.trim()),
+            images: [...root.querySelectorAll('img')].map(i => ({ blob: i.src.startsWith('blob:'), width: i.naturalWidth })),
+            hrefs: [...root.querySelectorAll('a[href]')].map(a => ({ href: a.getAttribute('href'), rel: a.rel || null, target: a.target || null })),
+            removed: root.querySelectorAll('.docx-link-removed').length,
+            iframes: document.querySelectorAll('.modal-content iframe').length + root.querySelectorAll('iframe').length,
+            scripts: root.querySelectorAll('script').length,
+            handlers: [...root.querySelectorAll('*')].filter(e => [...e.attributes].some(a => /^on/i.test(a.name))).length,
+            notice: (document.querySelector('.docx-viewer .document-viewer-notice') || {}).textContent || '',
+            js: window.__motuzDocx === undefined ? null : window.__motuzDocx,
+        };
+    });
+    const sheetState = () => page.evaluate(() => {
+        const cell = ref => (document.querySelector(`.sheet-viewer-cell[data-cell="${ref}"]`) || {}).textContent;
+        return {
+            tabs: [...document.querySelectorAll('.sheet-viewer-tab')].map(t => t.textContent),
+            active: (document.querySelector('.sheet-viewer-tab.active') || {}).textContent,
+            hiddenTabs: [...document.querySelectorAll('.sheet-viewer-tab.hidden-sheet')].map(t => t.textContent),
+            a1: cell('A1'), a2: cell('A2'), b2: cell('B2'), c2: cell('C2'), b4: cell('B4'),
+            colHeads: [...document.querySelectorAll('.sheet-viewer-colhead')].slice(0, 3).map(h => h.textContent),
+            rendered: document.querySelectorAll('.sheet-viewer-cell').length,
+            notice: (document.querySelector('.sheet-viewer-truncated') || {}).textContent || '',
+            info: (document.querySelector('.document-viewer-info') || {}).textContent || '',
+        };
+    });
+    const pptxState = () => page.evaluate(() => ({
+        slides: document.querySelectorAll('.pptx-viewer-slide').length,
+        titles: [...document.querySelectorAll('.pptx-viewer-slide-title')].map(h => h.textContent),
+        list: [...document.querySelectorAll('.pptx-viewer-list-title')].map(t => t.textContent),
+        bullets: [...document.querySelectorAll('.pptx-viewer-text li')].map(li => [li.textContent, li.style.marginLeft]),
+        cells: [...document.querySelectorAll('.pptx-viewer-table td')].map(td => td.textContent),
+        images: [...document.querySelectorAll('.pptx-viewer-picture img')].map(i => ({ blob: i.src.startsWith('blob:'), width: i.naturalWidth })),
+        unsupported: [...document.querySelectorAll('.pptx-viewer-unsupported')].map(u => u.textContent),
+        notes: [...document.querySelectorAll('.pptx-viewer-notes p')].map(p => p.textContent),
+    }));
+
+    await flow('document-viewer', async () => {
+        appShell(`sudo -u alice python3 - ${DOCS_DIR}`, DOCUMENT_FIXTURES);
+        const requests = [];
+        const documentReads = [];
+        const onRequest = r => {
+            requests.push(r.url());
+            if (r.url().endsWith('/api/system/files/view/document/')) {
+                documentReads.push(JSON.parse(r.postData() || '{}'));
+            }
+        };
+        page.on('request', onRequest);
+        await page.goto(BASE + '/', { waitUntil: 'domcontentloaded' });
+        await leftPane.getByText('ui-docs', { exact: true }).waitFor({ timeout: 20000 });
+        await leftPane.getByText('ui-docs', { exact: true }).dblclick();
+        await leftPane.getByText('report.pdf', { exact: true }).waitFor({ timeout: 20000 });
+        const scriptsAtStart = requests.filter(u => /\/js\/.*\.js$/.test(u));
+        check('documents: no viewer code in the initial bundle (lazy)', scriptsAtStart.length === 1
+            && /\/js\/app-[0-9a-f]+\.bundle\.js$/.test(scriptsAtStart[0]), scriptsAtStart);
+        const csp = (await api.get('/')).headers()['content-security-policy'] || '';
+        check('documents: the app page allows resources only from Motuz (CSP)', csp.includes("img-src 'self' blob: data:")
+            && csp.includes("connect-src 'self'") && csp.includes("frame-src 'none'"), csp);
+
+        // PDF: canvas, page count, text layer, safe links only, no PDF JavaScript
+        await row('report.pdf').dblclick();
+        await pdfRendered('Page 1 of 5');
+        await page.waitForTimeout(1500); // time for PDF JavaScript to run, if anything ran it
+        let pdf = await pdfState();
+        check('PDF: page 1 drawn on a canvas, "/ 5" pages', pdf && pdf.dark > 20 && pdf.count.includes('5') && pdf.page === '1'
+            && pdf.info.startsWith('PDF · 5 pages'), pdf);
+        check('PDF: only the https link and the internal link are links (javascript:, JS and Launch actions are not)',
+            pdf.links.length === 2 && pdf.links[0].href === 'https://example.org/motuz-pdf' && pdf.links[0].target === '_blank'
+            && pdf.links[0].rel === 'noopener noreferrer' && pdf.links[1].internal, pdf.links);
+        check('PDF: its JavaScript (OpenAction, link actions) never ran', pdf.js === null
+            && await page.locator('.modal-content a[href^="javascript"]').count() === 0, pdf.js);
+        await shot('viewer-pdf');
+        await page.click('button[aria-label="Next page"]');
+        await pdfRendered('Page 2 of 5');
+        pdf = await pdfState();
+        check('PDF: Next page shows page 2', pdf.page === '2' && pdf.text.includes('motuz-needle'), pdf.page);
+        await page.click('button[aria-label="Previous page"]');
+        await pdfRendered('Page 1 of 5');
+        await page.click('.pdf-viewer-link.internal');
+        await pdfRendered('Page 3 of 5');
+        check('PDF: the internal link goes to page 3', (await pdfState()).page === '3');
+        await page.locator('.pdf-viewer-stage').focus();
+        await page.keyboard.press('Control+f');
+        await page.keyboard.type('motuz-needle');
+        await page.keyboard.press('Enter');
+        await pdfRendered('Page 2 of 5');
+        await page.waitForFunction(() => document.querySelectorAll('.pdf-viewer .textLayer .highlight').length > 0, null, { timeout: 20000 });
+        const findStatus = await page.locator('.document-viewer-find-status').textContent();
+        check('PDF: Ctrl+F finds the word on page 2 and highlights it', findStatus === '1 of 1'
+            && (await pdfState()).highlights > 0, findStatus);
+        await shot('viewer-pdf-find');
+        await page.keyboard.press('Escape');
+        check('PDF: Esc closes the find bar, not the dialog', await page.locator('.document-viewer-find').count() === 0
+            && await page.locator('.pdf-viewer').count() === 1);
+        const widthFit = (await pdfState()).cssWidth;
+        await page.selectOption('.pdf-viewer-zoom select', '2');
+        await page.waitForFunction(w => {
+            const c = document.querySelector('.pdf-viewer-canvas');
+            return c && Math.round(c.getBoundingClientRect().width) !== w;
+        }, widthFit, { timeout: 20000 });
+        pdf = await pdfState();
+        check('PDF: zoom 200% draws the page at 1632 px (612 pt x 96/72 x 2)', pdf.cssWidth === 1632, pdf.cssWidth);
+        await closeViewer();
+
+        // A PDF above the whole-file cap opens after a few range reads
+        documentReads.length = 0;
+        await row('big.pdf').dblclick();
+        await pdfRendered('Page 1 of 40');
+        pdf = await pdfState();
+        const bytesRead = documentReads.reduce((sum, r) => sum + (r.length || 0), 0);
+        check('PDF: a 6 MiB PDF (above the 4 MiB cap) opens with range reads, not read whole',
+            pdf.count.includes('40') && documentReads.length >= 1 && documentReads.every(r => Number.isInteger(r.offset) && r.length > 0)
+            && bytesRead < 3 * 1024 * 1024, { reads: documentReads.length, bytesRead });
+        await closeViewer();
+
+        // DOCX: heading, table, picture; unsafe links removed; no altChunk, no remote picture
+        await row('letter.docx').dblclick();
+        await page.waitForFunction(() => {
+            const h = document.querySelector('.docx-viewer-host');
+            return h && h.shadowRoot && h.shadowRoot.textContent.includes('Quarterly Report');
+        }, null, { timeout: 30000 });
+        await page.waitForTimeout(1000);
+        const docx = await docxState();
+        check('DOCX: heading, text and table rendered', docx.heading && docx.text.includes('nothing leaves Motuz')
+            && docx.cells.includes('Region') && docx.cells.includes('3,400'), docx);
+        check('DOCX: the picture from the file is shown (blob:)', docx.images.some(i => i.blob && i.width === 64), docx.images);
+        check('DOCX: links: https (new tab, noopener noreferrer) and the bookmark only; the javascript: link is removed',
+            docx.hrefs.length === 2 && docx.hrefs.some(h => h.href === 'https://example.org/motuz-docx' && h.target === '_blank'
+                && h.rel === 'noopener noreferrer') && docx.hrefs.some(h => h.href === '#results') && docx.removed >= 1
+            && docx.notice.includes('removed'), docx);
+        check('DOCX: no altChunk iframe, no scripts, no event handlers, nothing ran', docx.iframes === 0 && docx.scripts === 0
+            && docx.handlers === 0 && docx.js === null && !docx.text.includes('altChunk HTML'), docx);
+        check('DOCX: the linked (external) picture was never requested', !requests.some(u => u.includes('tracker.invalid')),
+            requests.filter(u => u.includes('tracker.invalid')));
+        await shot('viewer-docx');
+        await closeViewer();
+
+        // XLSX: sheet tabs, formatted values, cached formula result, truncation notice
+        await row('numbers.xlsx').dblclick();
+        await page.waitForSelector('.sheet-viewer-cell[data-cell="A2"]', { timeout: 30000 });
+        let sheet = await sheetState();
+        check('XLSX: sheet tabs (the hidden one marked) and formatted values', JSON.stringify(sheet.tabs) === '["Summary","Data","Secret"]'
+            && sheet.active === 'Summary' && JSON.stringify(sheet.hiddenTabs) === '["Secret"]' && sheet.a2 === 'alpha'
+            && sheet.b2 === '1,234.50' && sheet.c2 === '2023-03-15' && JSON.stringify(sheet.colHeads) === '["A","B","C"]', sheet);
+        check('XLSX: a formula shows its stored value, never evaluated', sheet.b4 === '42', sheet.b4);
+        await shot('viewer-xlsx');
+        await page.click('.sheet-viewer-tab:has-text("Data")');
+        await page.waitForSelector('.sheet-viewer-cell[data-cell="B2"]', { timeout: 20000 });
+        sheet = await sheetState();
+        check('XLSX: a large sheet: a notice, and only the cells in view are rendered',
+            sheet.notice.includes('first 5,000 of 6,000 rows') && sheet.notice.includes('first 200 of 230 columns')
+            && sheet.rendered > 50 && sheet.rendered < 3000, sheet);
+        await page.locator('.sheet-viewer-body').evaluate(b => { b.scrollTop = b.scrollHeight; });
+        await page.waitForSelector('.sheet-viewer-cell[data-cell="A5000"]', { timeout: 20000 });
+        check('XLSX: scrolled to the end: row 5,000', (await page.locator('.sheet-viewer-cell[data-cell="A5000"]').textContent()) === '5000');
+        await shot('viewer-xlsx-large');
+        await closeViewer();
+
+        // PPTX: the outline with titles, text levels, a table, the picture and notes
+        await row('slides.pptx').dblclick();
+        await page.waitForSelector('.pptx-viewer-slide', { timeout: 30000 });
+        await page.waitForFunction(() => {
+            const i = document.querySelector('.pptx-viewer-picture img');
+            return i && i.complete && i.naturalWidth > 0;
+        }, null, { timeout: 20000 });
+        const pptx = await pptxState();
+        check('PPTX: slide titles in the list and on the cards', pptx.slides === 2 && JSON.stringify(pptx.titles) === '["Motuz Slides","Results & Plans"]'
+            && JSON.stringify(pptx.list) === '["Motuz Slides","Results & Plans"]', pptx);
+        check('PPTX: text with levels, a table and the notes', pptx.bullets.some(([t, m]) => t === 'Detail of the first point' && m === '1.5em')
+            && pptx.cells.includes('1,024') && pptx.notes.includes('Speaker note: mention the chart'), pptx);
+        check('PPTX: the picture from the file (blob:), the linked one not fetched', pptx.images.length === 1 && pptx.images[0].blob
+            && pptx.images[0].width === 64 && pptx.unsupported.some(u => u.includes('Linked picture'))
+            && !requests.some(u => u.includes('tracker.invalid')), pptx);
+        await shot('viewer-pptx');
+        await closeViewer();
+
+        // Refused files: messages, never a renderer
+        for (const [name, expected, what] of [
+            ['bomb.docx', /more than 200 MiB uncompressed|250 MiB uncompressed/, 'a zip bomb (250 MiB of zeros)'],
+            ['many.xlsx', /10003 entries; at most 10000/, 'a ZIP with too many entries'],
+            ['slides-named.docx', /PowerPoint presentation, not a Word document/, 'a PPTX named .docx'],
+            ['notreally.docx', /not a PDF, Office or OpenDocument file/, 'a .docx that is text'],
+            ['huge.xlsx', /documents up to 4\.0 MiB/, 'a file above the size cap'],
+            ['legacy.doc', /No preview for this file type/, 'an old binary .doc'],
+        ]) {
+            documentReads.length = 0;
+            await row(name).dblclick();
+            const text = await docError();
+            check(`documents: ${what}: a message`, expected.test(text)
+                && await page.locator('.docx-viewer-host, .sheet-viewer-grid, .pptx-viewer-slide').count() === 0, text);
+            if (name === 'bomb.docx') await shot('viewer-docx-zip-bomb');
+            if (name === 'legacy.doc') {
+                check('documents: .doc is not even read', documentReads.length === 0, documentReads);
+                await shot('viewer-legacy-doc');
+            }
+            await closeViewer();
+        }
+
+        // The same on Azure (rclone as alice with the connection's credentials)
+        const out = appShell(`sudo -u alice /usr/local/bin/rclone --config /home/alice/.config/rclone/rclone.conf copy ${DOCS_DIR} azurite:motuztest/ui-docs && echo uploaded`);
+        check('Azure: document fixtures uploaded', out.includes('uploaded'), out);
+        await paneGo('left', 'ui-azurite', '/motuztest/ui-docs');
+        await leftPane.getByText('report.pdf', { exact: true }).waitFor({ timeout: 30000 });
+        await row('report.pdf').dblclick();
+        await pdfRendered('Page 1 of 5');
+        pdf = await pdfState();
+        check('Azure: PDF drawn, 5 pages', pdf.dark > 20 && pdf.count.includes('5')
+            && (await page.locator('.file-viewer-path').textContent()).startsWith('ui-azurite: /motuztest/ui-docs/report.pdf'), pdf);
+        await shot('viewer-pdf-azure');
+        await closeViewer();
+        await row('letter.docx').dblclick();
+        await page.waitForFunction(() => {
+            const h = document.querySelector('.docx-viewer-host');
+            return h && h.shadowRoot && h.shadowRoot.textContent.includes('Quarterly Report');
+        }, null, { timeout: 30000 });
+        check('Azure: DOCX rendered', (await docxState()).cells.includes('Revenue'));
+        await closeViewer();
+        await row('numbers.xlsx').dblclick();
+        await page.waitForSelector('.sheet-viewer-cell[data-cell="A2"]', { timeout: 30000 });
+        check('Azure: XLSX values', (await sheetState()).b2 === '1,234.50');
+        await closeViewer();
+        await row('slides.pptx').dblclick();
+        await page.waitForSelector('.pptx-viewer-slide-title', { timeout: 30000 });
+        check('Azure: PPTX outline', (await pptxState()).titles.includes('Results & Plans'));
+        await closeViewer();
+        page.off('request', onRequest);
+        const elsewhere = requests.filter(u => !u.startsWith(BASE) && !u.startsWith('blob:') && !u.startsWith('data:'));
+        check('documents: nothing requested from other sites', elsewhere.length === 0, elsewhere);
+        check('documents: no page errors', pageErrors.length === 0, pageErrors);
     });
 } else {
     // Callback mode: Microsoft (fake_ms.py) sends the sign-in tab back to Motuz, which

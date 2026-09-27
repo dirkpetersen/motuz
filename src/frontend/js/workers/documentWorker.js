@@ -52,7 +52,7 @@ async function sheet(data, container) {
         workbook = XLSX.read(input, {
             type: 'array',
             dense: true,
-            sheetRows: SHEET_LIMITS.maxRows,
+            sheetRows: SHEET_LIMITS.maxRows + 1, // one more: tells that there are more
             cellFormula: false,
             cellHTML: false,
             cellStyles: false,

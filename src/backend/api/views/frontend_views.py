@@ -6,7 +6,8 @@ cannot serve files. Werkzeug's send_file uses uWSGI's wsgi.file_wrapper (sendfil
 so the Python side only picks the file and the cache headers:
 - /js and /css have content hashes in their names and are cached for 30 days,
   /img for 7 days
-- index.html is never stored, so a deploy is picked up on the next page load
+- index.html is never stored, so a deploy is picked up on the next page load, and
+  carries APP_CSP (resources only from this server)
 - any other path gets index.html for react-router (e.g. /clouds), except the
   backend prefixes, which keep returning a real 404
 - /privacy and /terms are server-side pages (views/legal_views.py); their rules win
@@ -29,6 +30,24 @@ ASSET_MAX_AGE = {
     'css': 30 * 24 * 3600,
     'img': 7 * 24 * 3600,
 }
+
+# Content-Security-Policy of the app's pages: where the page may load resources from.
+# Only this server (and the page's own blob:/data: URLs): previews of the user's files
+# (PDF, DOCX, spreadsheets, PPTX, images, Markdown; rendered in the browser) can never
+# make the browser fetch pictures, fonts, frames or anything else from another site,
+# even if a renderer let a URL from a file through, so nothing about a file leaves
+# Motuz. Scripts and styles are not restricted here (webpack's chunks, React's inline
+# styles); links to other sites are navigation, which this does not affect.
+APP_CSP = '; '.join((
+    "img-src 'self' blob: data:",
+    "media-src 'self' blob:",
+    "font-src 'self' blob: data:",
+    "connect-src 'self' blob: data:",
+    "worker-src 'self' blob:",
+    "frame-src 'none'",
+    "object-src 'none'",
+    "base-uri 'self'",
+))
 
 # Paths below these are never answered with index.html
 BACKEND_PREFIXES = ('api', 'swaggerui', 'internal') + LEGAL_PAGES
@@ -58,4 +77,6 @@ def index(path):
     filename = path if path and os.path.isfile(safe_join(root, path) or '') else 'index.html'
     response = send_from_directory(root, filename)
     response.headers['Cache-Control'] = 'no-store'
+    if filename == 'index.html':
+        response.headers['Content-Security-Policy'] = APP_CSP
     return response

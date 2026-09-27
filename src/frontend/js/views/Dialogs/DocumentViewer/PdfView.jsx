@@ -11,7 +11,7 @@ import {
     getDocument,
 } from 'pdfjs-dist/legacy/build/pdf.min.mjs';
 
-import { SAFE_LINK_REL, safeLinkUrl } from 'utils/safeLinks.js';
+import { SAFE_LINK_REL, safeLinkUrl } from 'utils/viewerKind.js';
 import {
     CLOUD_CHUNK_BYTES, INITIAL_BYTES, LOCAL_CHUNK_BYTES, RANGE_MAX_BYTES, joinPieces, limiter, splitRange,
 } from 'utils/pdfRanges.js';
@@ -40,7 +40,7 @@ const LINK = 'Link';
  *
  * Safety: PDF JavaScript is never run (the scripting sandbox is not loaded), XFA forms
  * are off, pdf.js 6 has no eval() code path, forms are only drawn (no inputs), and
- * link annotations become links only for http, https and mailto (utils/safeLinks.js),
+ * link annotations become links only for http, https and mailto (viewerKind.safeLinkUrl),
  * opened in a new tab without opener or referrer; other actions (launch, JavaScript,
  * file links) are ignored. Nothing is loaded from other sites: fonts, character maps
  * and decoders come from this server.
@@ -319,13 +319,14 @@ export default class PdfView extends React.Component {
             if (seq !== this.renderSeq) return;
             this.highlightMatches();
         } catch (e) {
-            // no text layer
+            console.warn('PDF viewer: no text layer', e); // eslint-disable-line no-console
         }
         try {
             const annotations = await page.getAnnotations({intent: 'display'});
             if (seq !== this.renderSeq) return;
             this.setState({links: this.linksOf(annotations, viewport)});
         } catch (e) {
+            console.warn('PDF viewer: no links', e); // eslint-disable-line no-console
             this.setState({links: []});
         }
     }
@@ -334,7 +335,8 @@ export default class PdfView extends React.Component {
         const links = [];
         for (const annotation of annotations) {
             if (annotation.subtype !== LINK || !Array.isArray(annotation.rect)) continue;
-            const [x1, y1, x2, y2] = viewport.convertToViewportRectangle(annotation.rect);
+            const [x1, y1] = viewport.convertToViewportPoint(annotation.rect[0], annotation.rect[1]);
+            const [x2, y2] = viewport.convertToViewportPoint(annotation.rect[2], annotation.rect[3]);
             const box = {
                 left: Math.min(x1, x2),
                 top: Math.min(y1, y2),

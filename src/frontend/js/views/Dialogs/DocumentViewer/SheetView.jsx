@@ -104,7 +104,9 @@ export default class SheetView extends React.Component {
     renderNotice(sheet) {
         const notes = [];
         if (sheet.totalRows > sheet.rowCount) {
-            notes.push(`the first ${sheet.rowCount.toLocaleString()} of ${sheet.totalRows.toLocaleString()} rows`);
+            notes.push(sheet.rowsKnown
+                ? `the first ${sheet.rowCount.toLocaleString()} of ${sheet.totalRows.toLocaleString()} rows`
+                : `the first ${sheet.rowCount.toLocaleString()} rows (the sheet has more)`);
         }
         if (sheet.totalCols > sheet.colCount) {
             notes.push(`the first ${sheet.colCount} of ${sheet.totalCols.toLocaleString()} columns`);

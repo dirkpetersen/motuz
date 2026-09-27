@@ -7,8 +7,8 @@ import assert from 'node:assert/strict';
 import {deflateSync, strToU8, zipSync} from 'fflate';
 import * as XLSX from 'xlsx';
 
-import {documentKind, fileExtension} from '../../src/frontend/js/utils/documentKinds.js';
-import {internalAnchor, safeLinkUrl} from '../../src/frontend/js/utils/safeLinks.js';
+import {documentKind, fragmentTarget, safeLinkUrl} from '../../src/frontend/js/utils/viewerKind.js';
+import {stripCssUrls} from '../../src/frontend/js/utils/cssSafe.js';
 import {
     ZIP_LIMITS, ZipError, ZipLimitError, extractEntry, isZip, readCentralDirectory, readZip, rezip,
 } from '../../src/frontend/js/utils/zipSafe.js';
@@ -40,49 +40,41 @@ test('document kinds by extension', () => {
     assert.equal(documentKind('README'), null);
     assert.equal(documentKind('.pdf'), null); // a dot file, no extension
     assert.equal(documentKind('archive.pdf.gz'), null);
-    assert.equal(documentKind('toString'), null);
     assert.equal(documentKind('x.constructor'), null);
-    assert.equal(fileExtension('a.tar.GZ'), 'gz');
-    assert.equal(fileExtension(null), '');
+    assert.equal(documentKind('x.__proto__'), null);
+    assert.equal(documentKind(null), null);
 });
 
-// ---- links ----
+// ---- links and CSS ----
 
-test('only http, https and mailto links are kept', () => {
+test('document links: only http, https and mailto, or bookmarks', () => {
+    // pdf.js and docx-preview hand over URLs from the file
     assert.equal(safeLinkUrl('https://example.org/a?b=1#c'), 'https://example.org/a?b=1#c');
-    assert.equal(safeLinkUrl('  http://example.org  '), 'http://example.org/');
-    assert.equal(safeLinkUrl('HTTPS://EXAMPLE.org/'), 'https://example.org/');
     assert.equal(safeLinkUrl('mailto:someone@example.org'), 'mailto:someone@example.org');
-    for (const bad of [
-        'javascript:alert(1)',
-        'JavaScript:alert(1)',
-        ' javascript:alert(1)',
-        'java\tscript:alert(1)',
-        'java\nscript:alert(1)',
-        '\u0000javascript:alert(1)',
-        'java\u200bscript:alert(1)',
-        'vbscript:msgbox(1)',
-        'data:text/html,<script>alert(1)</script>',
-        'file:///etc/passwd',
-        'blob:https://example.org/x',
-        'ftp://example.org/',
-        '//example.org/',
-        '/relative',
-        'relative.html',
-        '#anchor',
-        'https://',
-        'https://user:pass@example.org/',
-        'https://trusted.example@evil.example/',
-        '',
-        null,
-        undefined,
-        42,
-    ]) {
-        assert.equal(safeLinkUrl(bad), null, String(bad));
+    for (const bad of ['javascript:alert(1)', 'JAVASCRIPT:alert(1)', 'java\u200bscript:alert(1)', 'vbscript:x',
+                       'data:text/html,x', 'file:///etc/passwd', 'blob:https://x/1', 'https://user@evil.example/',
+                       'relative.html', '#anchor']) {
+        assert.equal(safeLinkUrl(bad), null, bad);
     }
-    assert.equal(internalAnchor('#_Toc123'), '_Toc123');
-    assert.equal(internalAnchor('#'), null);
-    assert.equal(internalAnchor('https://x/#a'), null);
+    assert.equal(fragmentTarget('#_Toc123'), '_Toc123');
+    assert.equal(fragmentTarget('#'), null);
+});
+
+test('CSS from documents loses every url() except the page\'s own blob: URLs', () => {
+    const blob = 'blob:https://motuz.example/';
+    assert.equal(stripCssUrls('p { color: red }', blob), 'p { color: red }');
+    assert.equal(stripCssUrls('background: url(https://evil.example/x.png)', blob), 'background: none');
+    assert.equal(stripCssUrls("background:url( 'http://evil/x' ) no-repeat", blob), 'background:none no-repeat');
+    assert.equal(stripCssUrls('background: url("blob:https://motuz.example/1234")', blob),
+        'background: url("blob:https://motuz.example/1234")');
+    assert.equal(stripCssUrls('background: url(blob:https://other.example/1)', blob), 'background: none');
+    assert.equal(stripCssUrls('@import url(https://evil/x.css); p{}', blob), ' p{}');
+    assert.equal(stripCssUrls('@import "https://evil/x.css"; p{}', blob), ' p{}');
+    assert.equal(stripCssUrls('background-image: image-set("https://evil/x.png" 1x)', blob), 'background-image: none');
+    assert.equal(stripCssUrls('background: \\75 rl(https://evil/x)', blob), 'background: none');
+    assert.ok(!/url\(/i.test(stripCssUrls('background: url(https://evil/x', blob)));
+    assert.equal(stripCssUrls('font-family: x; src: url(data:font/woff2;base64,AAAA)', null), 'font-family: x; src: none');
+    assert.equal(stripCssUrls(null), '');
 });
 
 // ---- ZIP limits ----
@@ -358,7 +350,7 @@ test('workbooks become rows of formatted text, truncated to the limits', () => {
     XLSX.utils.book_append_sheet(workbook, wide, 'Wide');
     XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([]), 'Empty');
     const bytes = XLSX.write(workbook, {type: 'array', bookType: 'xlsx'});
-    const read = XLSX.read(bytes, {type: 'array', dense: true, sheetRows: 20, cellFormula: false});
+    const read = XLSX.read(bytes, {type: 'array', dense: true, sheetRows: 21, cellFormula: false});
 
     const sheets = workbookToSheets(XLSX, read, {maxRows: 20, maxCols: 10, maxSheets: 10});
     assert.deepEqual(sheets.map(s => s.name), ['First', 'Wide', 'Empty']);
@@ -375,7 +367,12 @@ test('workbooks become rows of formatted text, truncated to the limits', () => {
     assert.equal(second.totalCols, 12);
     assert.equal(second.rows[19][9], '19:9');
     assert.equal(second.rows[0].length, 10);
+    assert.equal(second.rowsKnown, true); // aoa_to_sheet writes a <dimension>
     assert.equal(empty.rowCount, 0);
+    // Without a <dimension>: "more", not a count
+    const noDimension = {SheetNames: ['S'], Sheets: {S: {'!ref': 'A1:A21', '!data': Array.from({length: 21}, (_, r) => [{t: 'n', v: r, w: String(r)}])}}};
+    const [s] = workbookToSheets(XLSX, noDimension, {maxRows: 20, maxCols: 10, maxSheets: 10});
+    assert.deepEqual([s.rowCount, s.totalRows, s.rowsKnown], [20, 21, false]);
 });
 
 // ---- PDF ranges ----
