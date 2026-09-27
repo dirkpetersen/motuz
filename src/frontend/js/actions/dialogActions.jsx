@@ -34,6 +34,7 @@ export const HIDE_MKDIR_DIALOG = '@@dialog/HIDE_MKDIR_DIALOG';
 
 export const SHOW_FILE_VIEWER_DIALOG = '@@dialog/SHOW_FILE_VIEWER_DIALOG';
 export const HIDE_FILE_VIEWER_DIALOG = '@@dialog/HIDE_FILE_VIEWER_DIALOG';
+export const SET_FILE_VIEWER_MODE = '@@dialog/SET_FILE_VIEWER_MODE';
 
 export const SHOW_SETTINGS_DIALOG = '@@dialog/SHOW_SETTINGS_DIALOG';
 export const HIDE_SETTINGS_DIALOG = '@@dialog/HIDE_SETTINGS_DIALOG';
@@ -228,6 +229,12 @@ export const hideMkdirDialog = () => ({
 // Opened by apiActions.viewFile, which also loads the file
 export const hideFileViewerDialog = () => ({
     type: HIDE_FILE_VIEWER_DIALOG,
+});
+
+// Markdown files: 'rendered' (MarkdownViewerDialog) or 'source' (the pager)
+export const setFileViewerMode = (mode) => ({
+    type: SET_FILE_VIEWER_MODE,
+    payload: {mode},
 });
 
 export const showSettingsDialog = () => ({

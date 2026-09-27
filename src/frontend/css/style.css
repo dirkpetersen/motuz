@@ -539,6 +539,223 @@ pre {
     padding: 10px 2px;
 }
 
+/* "Rendered | Source" of a Markdown file, in the dialog's header */
+.viewer-mode-switch {
+    flex-shrink: 0;
+}
+
+/* Image viewer: fit to the window (default) or 100% with scrolling; a checkerboard
+   shows transparency */
+.image-viewer-stage {
+    height: calc(100vh - 15rem);
+    min-height: 200px;
+    overflow: auto;
+    border: 1px solid #dee2e6;
+    border-radius: 4px;
+    background-color: #fff;
+    background-image:
+        linear-gradient(45deg, #eef0f2 25%, transparent 25%),
+        linear-gradient(-45deg, #eef0f2 25%, transparent 25%),
+        linear-gradient(45deg, transparent 75%, #eef0f2 75%),
+        linear-gradient(-45deg, transparent 75%, #eef0f2 75%);
+    background-size: 16px 16px;
+    background-position: 0 0, 0 8px, 8px -8px, -8px 0;
+}
+
+.image-viewer-stage:focus {
+    outline: none;
+    border-color: #86b7fe;
+    box-shadow: 0 0 0 0.2rem rgba(13, 110, 253, 0.2);
+}
+
+.image-viewer-stage.fit {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.image-viewer-stage.fit .image-viewer-image {
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+    cursor: zoom-in;
+}
+
+.image-viewer-stage.actual .image-viewer-image {
+    display: block;
+    max-width: none;
+    margin: auto;
+    cursor: zoom-out;
+}
+
+.image-viewer-info {
+    font-variant-numeric: tabular-nums;
+}
+
+/* Markdown viewer: rendered in the browser, no raw HTML */
+.markdown-viewer-scroll {
+    height: calc(100vh - 15rem);
+    min-height: 200px;
+    overflow: auto;
+    border: 1px solid #dee2e6;
+    border-radius: 4px;
+    padding: 16px 24px;
+}
+
+.markdown-viewer-scroll:focus {
+    outline: none;
+    border-color: #86b7fe;
+    box-shadow: 0 0 0 0.2rem rgba(13, 110, 253, 0.2);
+}
+
+.markdown-viewer-truncated {
+    font-size: 13px;
+}
+
+.markdown-body {
+    max-width: 980px;
+    font-size: 15px;
+    line-height: 1.6;
+    overflow-wrap: break-word;
+    user-select: text;
+}
+
+.markdown-body > :first-child {
+    margin-top: 0;
+}
+
+.markdown-body h1,
+.markdown-body h2,
+.markdown-body h3,
+.markdown-body h4,
+.markdown-body h5,
+.markdown-body h6 {
+    margin: 1.4em 0 0.6em;
+    font-weight: 600;
+    line-height: 1.25;
+}
+
+.markdown-body h1 { font-size: 1.9em; padding-bottom: 0.3em; border-bottom: 1px solid #dee2e6; }
+.markdown-body h2 { font-size: 1.5em; padding-bottom: 0.3em; border-bottom: 1px solid #dee2e6; }
+.markdown-body h3 { font-size: 1.25em; }
+.markdown-body h4 { font-size: 1.05em; }
+.markdown-body h5,
+.markdown-body h6 { font-size: 0.95em; }
+.markdown-body h6 { color: #6c757d; }
+
+.markdown-body p,
+.markdown-body ul,
+.markdown-body ol,
+.markdown-body blockquote,
+.markdown-body pre,
+.markdown-body .table-responsive {
+    margin: 0 0 1em;
+}
+
+.markdown-body ul,
+.markdown-body ol {
+    padding-left: 2em;
+}
+
+.markdown-body li + li {
+    margin-top: 0.25em;
+}
+
+.markdown-body li > input[type="checkbox"] {
+    margin: 0 0.4em 0.2em -1.4em;
+    vertical-align: middle;
+}
+
+.markdown-body .contains-task-list {
+    list-style: none;
+}
+
+.markdown-body blockquote {
+    padding: 0 1em;
+    color: #59636e;
+    border-left: 0.25em solid #d1d9e0;
+}
+
+.markdown-body code {
+    font-family: SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    font-size: 85%;
+    padding: 0.15em 0.35em;
+    border-radius: 4px;
+    background: #f1f3f5;
+    color: inherit;
+}
+
+.markdown-body pre {
+    padding: 12px 16px;
+    overflow: auto;
+    border-radius: 6px;
+    background: #f6f8fa;
+    line-height: 1.45;
+}
+
+.markdown-body pre code {
+    padding: 0;
+    font-size: 13px;
+    background: none;
+    white-space: pre;
+}
+
+.markdown-body hr {
+    margin: 1.5em 0;
+    border: 0;
+    border-top: 2px solid #dee2e6;
+    opacity: 1;
+}
+
+.markdown-body .md-table {
+    width: auto;
+    margin-bottom: 0;
+    font-size: 14px;
+}
+
+.markdown-body .md-table th {
+    background: #f6f8fa;
+}
+
+.markdown-body .md-image {
+    max-width: 100%;
+}
+
+.markdown-body .md-link-disabled {
+    color: #495057;
+    text-decoration: underline dotted;
+}
+
+.md-image-placeholder {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 6px;
+    max-width: 100%;
+    padding: 1px 8px;
+    border: 1px dashed #adb5bd;
+    border-radius: 4px;
+    background: #f8f9fa;
+    font-size: 13px;
+    vertical-align: baseline;
+}
+
+.md-image-placeholder-alt {
+    font-style: italic;
+    color: #343a40;
+}
+
+.md-image-placeholder-hint {
+    color: #6c757d;
+    font-size: 12px;
+}
+
+.markdown-body section.footnotes {
+    margin-top: 2em;
+    padding-top: 0.5em;
+    border-top: 1px solid #dee2e6;
+    font-size: 13px;
+}
+
 /* Drag and drop */
 
 .grid-files.drop-target {
