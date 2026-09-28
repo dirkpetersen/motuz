@@ -221,6 +221,18 @@ itself right away, or after `MOTUZ_EC2_HALT_DELAY`. EC2 kept no console output o
 instance that terminated within a minute: use `MOTUZ_EC2_HALT_DELAY` to debug boots. No
 token appeared in the console output.
 
+**Real end-to-end test (2026-09-28)**, on the deployed osu instance (motuz-osu README, "Update
+2026-09-28"): `MOTUZ_EC2_WORKERS=true` against the real `motuz-ssm` role, six `c7gn.large`
+workers launched through the actual `job_routing`/`ec2_launcher`/reaper path (not a manual boot
+test), one for each real S3->S3 copy job, S3 hashsum job, and a Google Drive -> S3 copy (HTTPS
+token broker) on both Amazon Linux 2027 (launch template version 2, the default) and Ubuntu
+26.04 (version 1). All 6 succeeded (SUCCESS, correct file contents, matching hashes) and
+self-terminated within 60-90s of launch; `manage.py ec2 check`/`status` and the reaper needed no
+changes. `worker-user-data.sh` ran unmodified on Ubuntu 26.04: its IMDS-restriction step (`nft`,
+else `iptables`, else `dnf install nftables`) found `iptables`/`nft` already on the Ubuntu AMI, so
+the AL2027-only `dnf` fallback was never exercised, and `useradd --shell /sbin/nologin` worked
+because Ubuntu's `/sbin` is a symlink to `/usr/sbin`. No code changes were needed for either OS.
+
 ## Cost guardrails
 
 - IAM, the instance profile, the security group and launch templates are free. Workers cost only

@@ -924,7 +924,7 @@ start with `MOTUZ_LOCAL_JOB_POOL` set to the EC2 pool.
 | `MOTUZ_EC2_MAX_RUNTIME` | `24h` | An instance running longer is terminated and its job failed with that reason |
 | `MOTUZ_EC2_BOOT_TIMEOUT` | `20m` | Lifetime of the bootstrap token; an instance that has not started its job by then is terminated and the job failed |
 | `MOTUZ_EC2_LAUNCH_TEMPLATE_ARM64`, `_AMD64` | `motuz-worker-arm64`, `motuz-worker` | Launch template names or ids (`lt-...`) |
-| `MOTUZ_EC2_LAUNCH_TEMPLATE_VERSION` | `$Default` | Or `$Latest` or a number (`1` = the Ubuntu 26.04 fallback; the user data was tested on Amazon Linux 2027 only) |
+| `MOTUZ_EC2_LAUNCH_TEMPLATE_VERSION` | `$Default` | Or `$Latest` or a number (`1` = the Ubuntu 26.04 fallback, also tested end to end 2026-09-28: real copy, hashsum and Google Drive -> S3 broker jobs, no code changes needed) |
 | `MOTUZ_EC2_SUBNET_ID` | (none) | Subnet; unset: EC2 picks a default subnet |
 | `MOTUZ_EC2_REAP_INTERVAL` | `60s` | Reaper period |
 | `MOTUZ_EC2_HALT_DELAY` | `0` | For debugging: minutes a worker waits before shutting down after a failure |
@@ -960,7 +960,8 @@ requested instead of a termination, so Motuz enforces both itself:
 
 **On the instance.** Before anything else a firewall rule (nftables, or iptables with the
 owner match; the Amazon Linux 2027 preview has neither, so nftables is installed with dnf
-first) lets only root reach the instance metadata service (169.254.169.254), which
+first; Ubuntu 26.04's AMI ships `iptables`/`nft` already, so this dnf fallback is AL2027
+only) lets only root reach the instance metadata service (169.254.169.254), which
 serves the user data with the bootstrap token and the (permissionless) instance role; the
 script checks it as an unprivileged account. `motuz-worker` runs as the account `motuz`,
 rclone as `motuzjob` (`MOTUZ_WORKER_RUN_AS`; `motuz` may run only `/usr/local/bin/rclone`
