@@ -161,6 +161,11 @@ export const viewFile = (side, index) => {
                 kind,
                 mode: kind === 'markdown' ? 'rendered' : null,
                 requestId: ++viewRequestId,
+                // Image viewer Previous/Next: the pane and folder to step over
+                // (state.pane.files[side], in the displayed order) and the file's index
+                side,
+                folder: currPane.path,
+                index,
             }},
         });
     }

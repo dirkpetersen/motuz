@@ -2,16 +2,18 @@
  * Which viewer a double-click opens, and the URL rules of the Markdown viewer. Plain
  * JS (node tests in test/frontend/test_viewer_kind.mjs).
  *
- * - images (.png .jpg .jpeg .gif .webp): the image viewer; the server decides the type
- *   by the file's first bytes, the extension only picks the viewer. SVG is not an
- *   image here (it can carry scripts): it opens in the text pager.
+ * - images (.png .jpg .jpeg .gif .webp .heic .heif .avif): the image viewer; the server
+ *   decides the type by the file's first bytes, the extension only picks the viewer.
+ *   SVG is not an image here (it can carry scripts): it opens in the text pager. HEIC/
+ *   HEIF and AVIF are shown only if the browser can decode them itself (see
+ *   ImageViewerDialog.jsx and README "File viewer" — Motuz never bundles a decoder).
  * - Markdown (.md .markdown): rendered, with a switch to the pager (Source)
  * - documents (DOCUMENT_EXTENSIONS: PDF, Word, spreadsheets, PowerPoint): the document
  *   viewer, rendered in the browser; legacy binary Office files get "No preview"
  * - everything else: the text pager
  */
 
-export const IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'gif', 'webp'];
+export const IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'heic', 'heif', 'avif'];
 export const MARKDOWN_EXTENSIONS = ['md', 'markdown'];
 
 // Document viewer kinds by extension. The server checks the content (PDF, ZIP, OLE2)

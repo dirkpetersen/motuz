@@ -699,15 +699,40 @@ celery log (credentials stay masked).
 A double-click on a file in a pane opens a read-only viewer; the file is read as the
 logged-in user (locally with their permissions, in the cloud with their connection):
 
-- `.png`, `.jpg`/`.jpeg`, `.gif`, `.webp`: the image, fit to the window (a click shows
-  100%). The server decides the type from the file's first bytes, not its name, and
-  shows only PNG, JPEG, GIF and WebP; SVG files open as text (an SVG can contain
-  scripts). Images above `MOTUZ_VIEW_IMAGE_MAX_BYTES` (default `25M`, at most `256M`,
-  set in `.env`) are refused before they are read.
+- `.png`, `.jpg`/`.jpeg`, `.gif`, `.webp`, `.heic`/`.heif`, `.avif`: the image, fit to
+  the window (a click shows 100%), with Previous/Next buttons (also `←`/`→`, PageUp/
+  PageDown) to step through the other images in the same folder, in the order shown,
+  without wrapping at the ends. The server decides the type from the file's first
+  bytes, not its name (an ISO-BMFF `ftyp` box for HEIC/HEIF/AVIF); SVG files open as
+  text instead (an SVG can contain scripts). Images above `MOTUZ_VIEW_IMAGE_MAX_BYTES`
+  (default `25M`, at most `256M`, set in `.env`) are refused before they are read.
+  Motuz never decodes, converts or transcodes an image itself: PNG, JPEG, GIF and WebP
+  always show; AVIF (the AV1 codec, royalty-free) decodes in every current major
+  browser; HEIC/HEIF (Apple's photo format, HEVC/H.265 coded) shows only in a browser
+  with its own decoder for it, currently Safari — Motuz does not bundle a software HEVC
+  decoder, since HEVC is patent pooled (MPEG-LA, Access Advance, Velos Media) unlike
+  AV1's royalty-free patent cross-license; a browser without one shows a message
+  instead of the picture. (No third-party code is bundled for this: the browser's own
+  decoder does the work, so no LGPL or other license applies to Motuz's code here.)
 - `.md`, `.markdown`: rendered in the browser from the first 1 MiB, without raw HTML
   (shown as text). Links open in a new tab and only for http, https and mailto;
   remote images are never loaded, images next to the file (relative paths) are.
   *Source* shows the text.
+- `.pdf`; `.docx`/`.dotx`/`.docm`/`.dotm`; `.xlsx`/`.xlsm`/`.xltx`/`.xltm`/`.xlsb`/`.xls`/
+  `.ods`; `.pptx`/`.pptm`/`.ppsx`/`.ppsm`/`.potx`/`.potm`: a read-only preview, rendered
+  entirely in the browser (pdf.js, docx-preview, SheetJS, a Motuz-written PPTX outline
+  reader) — there is no LibreOffice or other server-side conversion, and files are never
+  sent to an external viewer service. PDFs open a page at a time with find, page
+  navigation, zoom and safe (http/https/mailto only) links; PDF JavaScript never runs.
+  Word documents keep headings, text, tables and pictures; unsafe links (`javascript:`,
+  etc.) are shown struck through instead of working, and remote pictures are never
+  fetched. Spreadsheets show sheet tabs and formatted values only — formulas keep their
+  last calculated value and are never recalculated, and a sheet is capped at 5,000 rows
+  by 200 columns with a notice when cut off. PowerPoint files show an outline (titles,
+  text, tables, pictures, speaker notes) rather than rendered slides. Files above
+  `MOTUZ_VIEW_DOCUMENT_MAX_BYTES` (default `50M`) are refused, except PDFs, which are
+  read in small ranges regardless of size. Old binary Office files (`.doc`, `.ppt`, ...)
+  and other formats without a browser renderer show "No preview for this file type".
 - anything else: a text pager like `less`, with *Follow* (like `tail -f`).
 
 ### Using a custom database

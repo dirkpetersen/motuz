@@ -592,6 +592,19 @@ pre {
     font-variant-numeric: tabular-nums;
 }
 
+/* Previous/Next over the pane's other images */
+.image-viewer-nav {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.image-viewer-position {
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
 /* Markdown viewer: rendered in the browser, no raw HTML */
 .markdown-viewer-scroll {
     height: calc(100vh - 15rem);

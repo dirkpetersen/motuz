@@ -1172,10 +1172,37 @@ os.utime(os.path.join(d, 'dirB'), (now - 86400,) * 2)
             await closeViewer();
         }
 
-        await row('fake.png').dblclick();
+        // AVIF (AV1, royalty-free): decodes natively in Chromium, shown like any other image
+        await row('photo.avif').dblclick();
+        await imageLoaded();
+        img = await imageState();
+        check('image: photo.avif decodes natively and is shown (64 x 48, AVIF)', img.natural === '64x48'
+            && img.info.startsWith('AVIF · 64 × 48 px') && img.src.startsWith('blob:'), img);
+        await shot('viewer-image-avif');
+        await closeViewer();
+
+        // HEIC (HEVC): Chromium has no native decoder and Motuz does not bundle one
+        // (patent-licensed codec) — a clear message, not a broken image
+        await row('photo.heic').dblclick();
+        await page.waitForSelector('.image-viewer-decode-error', { timeout: 20000 });
+        let decodeMsg = await page.locator('.image-viewer-decode-error').textContent();
+        check('image: photo.heic: this browser cannot show it, a clear message (not a broken image)',
+            decodeMsg.includes('cannot display HEIC') && decodeMsg.includes('HEVC')
+            && await page.locator('.image-viewer-image').isVisible().catch(() => false) === false, decodeMsg);
+        await shot('viewer-image-heic-unsupported');
+        await closeViewer();
+
+        await row('fake.heic').dblclick();
         await page.waitForSelector('.file-viewer-error', { timeout: 20000 });
         let error = await page.locator('.file-viewer-error').textContent();
-        check('image: a .png that is text: a message, not the text pager', error.includes('not a PNG, JPEG, GIF or WebP image')
+        check('image: fake.heic (text, not really HEIC): refused by content, not by name',
+            error.includes('not a PNG, JPEG, GIF, WebP, HEIC/HEIF or AVIF image'), error);
+        await closeViewer();
+
+        await row('fake.png').dblclick();
+        await page.waitForSelector('.file-viewer-error', { timeout: 20000 });
+        error = await page.locator('.file-viewer-error').textContent();
+        check('image: a .png that is text: a message, not the text pager', error.includes('not a PNG, JPEG, GIF, WebP, HEIC/HEIF or AVIF image')
             && await page.locator('.file-viewer-content, .image-viewer-image').count() === 0, error);
         await shot('viewer-image-not-an-image');
         await closeViewer();
@@ -1190,6 +1217,110 @@ os.utime(os.path.join(d, 'dirB'), (now - 86400,) * 2)
         check('SVG opens in the text pager, as text', svgText.includes('<svg xmlns') && await page.locator('.modal-content svg').count() === 0
             && await page.evaluate(() => window.__svgXss === undefined), svgText.slice(0, 80));
         await closeViewer();
+
+        // ------------------------------------------------ image viewer: Previous / Next
+        // A folder with 3 images and one non-image file (utils/imageNeighbors.js: pane
+        // order, images only, no folders)
+        appShell(`sudo -u alice mkdir -p ${VIEWER_DIR}/nav && sudo -u alice cp ${VIEWER_DIR}/pic.jpg ${VIEWER_DIR}/nav/a.jpg `
+            + `&& sudo -u alice cp ${VIEWER_DIR}/pic.gif ${VIEWER_DIR}/nav/b.gif && sudo -u alice cp ${VIEWER_DIR}/pic.webp ${VIEWER_DIR}/nav/c.webp `
+            + `&& sudo -u alice sh -c 'echo notes > ${VIEWER_DIR}/nav/notes.txt'`);
+        await paneGo('left', null, `${VIEWER_DIR}/nav`);
+        await leftPane.getByText('a.jpg', { exact: true }).waitFor({ timeout: 20000 });
+
+        const navState = () => page.evaluate(() => {
+            const prevBtn = document.querySelector('button[aria-label="Previous image"]');
+            const nextBtn = document.querySelector('button[aria-label="Next image"]');
+            return {
+                position: (document.querySelector('.image-viewer-position') || {}).textContent || '',
+                prevDisabled: prevBtn ? prevBtn.disabled : null,
+                nextDisabled: nextBtn ? nextBtn.disabled : null,
+                name: (document.querySelector('.file-viewer-name') || {}).textContent || '',
+            };
+        });
+        const imageRequests = () => requests.filter(u => u.endsWith('/api/system/files/view/image/'));
+
+        const beforeOpen = imageRequests().length;
+        await row('a.jpg').dblclick();
+        await imageLoaded();
+        let nav = await navState();
+        check('image nav: position 1 / 3, name a.jpg, Previous disabled at the start', nav.position === '1 / 3'
+            && nav.prevDisabled === true && nav.nextDisabled === false && nav.name === 'a.jpg', nav);
+        await page.waitForTimeout(500); // the next image (b.gif) is preloaded in the background
+        check('image nav: the next image was preloaded before Next was clicked',
+            imageRequests().length >= beforeOpen + 2, imageRequests().length - beforeOpen);
+        img = await imageState();
+        const urlA = img.src;
+
+        await page.click('button[aria-label="Next image"]');
+        await imageLoaded();
+        nav = await navState();
+        check('image nav: the Next button moves to b.gif (2 / 3)', nav.position === '2 / 3' && nav.name === 'b.gif'
+            && nav.prevDisabled === false && nav.nextDisabled === false, nav);
+        check('image nav: stepping past a.jpg revokes its blob: URL',
+            await page.evaluate(src => fetch(src).then(() => false, () => true), urlA));
+        img = await imageState();
+        const urlB = img.src;
+
+        await page.keyboard.press('ArrowRight');
+        await imageLoaded();
+        nav = await navState();
+        check('image nav: ArrowRight moves to c.webp (3 / 3), Next disabled at the end (no wrap)',
+            nav.position === '3 / 3' && nav.name === 'c.webp' && nav.nextDisabled === true && nav.prevDisabled === false, nav);
+        check('image nav: stepping past b.gif revokes its blob: URL too',
+            await page.evaluate(src => fetch(src).then(() => false, () => true), urlB));
+        await shot('viewer-image-nav');
+
+        await page.keyboard.press('ArrowLeft');
+        await imageLoaded();
+        nav = await navState();
+        check('image nav: ArrowLeft moves back to b.gif', nav.position === '2 / 3' && nav.name === 'b.gif', nav);
+        await page.keyboard.press('PageUp');
+        await imageLoaded();
+        nav = await navState();
+        check('image nav: PageUp moves back to a.jpg (1 / 3), Previous disabled', nav.position === '1 / 3'
+            && nav.name === 'a.jpg' && nav.prevDisabled === true, nav);
+        await page.keyboard.press('PageUp'); // already at the start: no wrap-around, no error
+        await page.waitForTimeout(300);
+        nav = await navState();
+        check('image nav: no wrap-around at the start', nav.position === '1 / 3' && nav.name === 'a.jpg', nav);
+
+        // The fit/100% choice is kept across a step
+        await page.click('.image-viewer-image');
+        img = await imageState();
+        check('image nav: switched to 100% before stepping', !img.fit, img);
+        await page.click('button[aria-label="Next image"]');
+        await imageLoaded();
+        img = await imageState();
+        check('image nav: the 100% choice is kept after stepping to b.gif', !img.fit, img);
+        check('image nav: the pane selection follows the shown file (so closing leaves the cursor there)',
+            await page.evaluate(() => {
+                const active = document.querySelector('#zone-left-pane .grid-file-name.active');
+                return active && active.textContent.trim() === 'b.gif';
+            }));
+        await closeViewer();
+
+        // Fast stepping with a slow network: the display must end on the last requested
+        // image, never an earlier, now-stale one (a fresh dialog: nothing cached yet)
+        let routeCount = 0;
+        await page.route('**/api/system/files/view/image/', async (route) => {
+            routeCount++;
+            await new Promise(r => setTimeout(r, routeCount === 1 ? 1200 : 150));
+            await route.continue();
+        });
+        await row('a.jpg').dblclick();
+        await page.waitForTimeout(100);
+        await page.click('button[aria-label="Next image"]'); // -> b.gif, still loading
+        await page.waitForTimeout(80);
+        await page.click('button[aria-label="Next image"]'); // -> c.webp, requested after
+        await imageLoaded();
+        await page.waitForTimeout(1500); // let the slower, now-stale a.jpg/b.gif fetches finish too
+        nav = await navState();
+        img = await imageState();
+        check('image nav: fast stepping past a still-loading image ends on the last one requested (c.webp)',
+            nav.position === '3 / 3' && nav.name === 'c.webp' && img.natural === '64x48', nav);
+        await page.unroute('**/api/system/files/view/image/');
+        await closeViewer();
+        await paneGo('left', null, VIEWER_DIR); // back out of the nav/ subfolder
 
         // Markdown: rendered, no raw HTML, safe links, no remote images
         await row('README.md').dblclick();

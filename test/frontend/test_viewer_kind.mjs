@@ -13,7 +13,8 @@ import {
 } from '../../src/frontend/js/utils/viewerKind.js';
 
 test('the viewer is chosen by extension, case-insensitive', () => {
-    for (const name of ['a.png', 'A.PNG', 'photo.jpg', 'photo.JPeG', 'x.gif', 'y.webp', 'dir.v2/scan.Jpg']) {
+    for (const name of ['a.png', 'A.PNG', 'photo.jpg', 'photo.JPeG', 'x.gif', 'y.webp', 'dir.v2/scan.Jpg',
+                        'IMG_0001.heic', 'IMG_0001.HEIC', 'scan.heif', 'photo.avif', 'photo.AVIF']) {
         assert.equal(viewerKind(name), 'image', name);
     }
     for (const name of ['README.md', 'notes.MD', 'doc.markdown', 'Doc.MarkDown']) {
