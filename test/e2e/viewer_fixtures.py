@@ -3,7 +3,9 @@ Fixtures of the image and Markdown viewer, written into the folder given as argv
 as the user, e.g. `sudo -u alice python3 - /home/alice/viewer < viewer_fixtures.py`);
 used by e2e_test.py (local files), cred_test.py (uploaded to Azurite) and ui/ui_test.mjs.
 Stdlib only (the app image has no PIL): the PNG is generated, the small JPEG, GIF and
-WebP were made once with PIL (64 x 48).
+WebP were made once with PIL (64 x 48); the HEIC and AVIF fixtures (48 x 64 portrait,
+a red bar along the visual top edge) were made once with pillow-heif/pillow-avif-plugin
+in a throwaway venv (never a runtime dependency of Motuz).
 """
 import base64
 import os
@@ -35,6 +37,24 @@ WEBP = base64.b64decode(
     'wAFlwOBO1vVE91roLMqPySZguao9mbzdG8FQ37AAAP7Kzn+wL9OW9Q6WYmeQoUBAFwqU8LxsKf5L50+v/IP1ruwcysX8wO1/U83hiZz/Bx2QPZjBCcd4YKm1'
     'ED8wgMLTS+RSCFPaLiacS7H454adFs4iI8kNEBduhPnNYNjj5OFbZyqzGx1a52UlWIM9+n0Vv+hYjBTJQIOVA42vtVJp+dVzj9ncj+dBYyDp+EDoxv3zAGdA'
     'udb0Nhgei+pDiQou7AjjHN0L5n7mnI3T3cAvEVCthowgpil19Dv1C2H9xqhj31O3Z8a62Lvhq3OhENJNCDxNRd4Om0TfU52S6t6lYX42T61n+7AA')
+# HEIC (heic major brand, HEVC coded) and AVIF (avif major brand, AV1 coded): 48 x 64
+# portrait, a red bar along the top so a missing rotation transform is visible. Neither
+# is expected to decode in every browser (see image_view.py / ImageViewerDialog.jsx):
+# Chromium (used by the UI suite) decodes AVIF natively and cannot decode HEIC at all.
+HEIC = base64.b64decode(
+    'AAAAHGZ0eXBoZWljAAAAAG1pZjFoZWljbWlhZgAAAX1tZXRhAAAAAAAAACFoZGxyAAAAAAAAAABwaWN0AAAAAAAAAAAAAAAAAAAAACJpbG9jAAAAAERA'
+    'AAEAAQAAAAABoQABAAAAAAAAAIYAAAAjaWluZgAAAAAAAQAAABVpbmZlAgAAAAABAABodmMxAAAAAA5waXRtAAAAAAABAAAA/WlwcnAAAADdaXBjbwAA'
+    'AHZodmNDAQNwAAAAAAAAAAAAHvAA/P34+AAADwNgAAEAGEABDAH//wNwAAADAJAAAAMAAAMAHroCQGEAAQAqQgEBA3AAAAMAkAAAAwAAAwAeoCCBBZbq'
+    '5Ka5uAhoMCAAAAMDIAAAAwAhYgABAAZEAcFzwIkAAAATY29scm5jbHgAAQANAAaAAAAAFGlzcGUAAAAAAAAAQAAAAEAAAAAoY2xhcAAAADAAAAABAAAA'
+    'QAAAAAH////wAAAAAgAAAAAAAAACAAAAEHBpeGkAAAAAAwgICAAAABhpcG1hAAAAAAAAAAEAAQWBAgMFhAAAAI5tZGF0AAAAgigBrxOA5U3NOntUtvy4'
+    'iRzFHT/mYfl1Sr66+0UNvp+AfnfNclikXJ9zC8Q/FI1HZtKBIKUn0dFcQs2+v3QKkyECTV7uP+neb+giYr1XmN2538nYVfOlcoTi2FecJhLLEUT1NhHw'
+    'BAZClldzn+DHAi+tQREoBxdcXtKTZaOEYXfxdsA=')
+AVIF = base64.b64decode(
+    'AAAAIGZ0eXBhdmlmAAAAAGF2aWZtaWYxbWlhZk1BMUIAAADrbWV0YQAAAAAAAAAhaGRscgAAAAAAAAAAcGljdAAAAAAAAAAAAAAAAAAAAAAOcGl0bQAA'
+    'AAAAAQAAAB5pbG9jAAAAAEQAAAEAAQAAAAEAAAETAAAAhgAAAChpaW5mAAAAAAABAAAAGmluZmUCAAAAAAEAAGF2MDFDb2xvcgAAAABqaXBycAAAAEtp'
+    'cGNvAAAAFGlzcGUAAAAAAAAAQAAAADAAAAAQcGl4aQAAAAADCAgIAAAADGF2MUOBAAwAAAAAE2NvbHJuY2x4AAEADQAGgAAAABdpcG1hAAAAAAAAAAEA'
+    'AQQBAoMEAAAAjm1kYXQSAAoJGBV/vaICGg0IMncZR4eGIYeeeeaFVQDcX5Xd9Y36dnviR/6F/1NMeYTdo+YV51134JGjuxSafGZ72fk2eSAcyTh7UHG/'
+    'paDaIBLMskruKheG6VxCXH7ImnId+bIh2PV4sV6jKeIFTPlO3JrQb/Y5jeocUylIFdCEPduLo8Enl018QA==')
 
 SVG = (b'<?xml version="1.0"?>\n<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10">'
        b'<script>window.__svgXss = 1</script><rect width="10" height="10"/></svg>\n')
@@ -102,7 +122,10 @@ def fixtures():
         'PIC2.JPEG': JPEG,
         'pic.gif': GIF,
         'pic.webp': WEBP,
+        'photo.heic': HEIC,
+        'photo.avif': AVIF,
         'fake.png': b'this is text, not a PNG\n',
+        'fake.heic': b'this is text, not a HEIC\n',
         'logo.svg': SVG,
         'svg-named.png': SVG,
         # 3 MiB, above the e2e stack's MOTUZ_VIEW_IMAGE_MAX_BYTES=2M

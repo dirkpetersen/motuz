@@ -95,7 +95,7 @@ class LocalConnection(AbstractConnection):
 
     def view_image(self, data, path, max_bytes):
         """
-        (bytes, type) of a PNG, JPEG, GIF or WebP image, read as the user by the same
+        (bytes, type) of a PNG, JPEG, GIF, WebP, HEIC/HEIF or AVIF image, read as the user by the same
         reader as the text viewer: a file larger than `max_bytes` is refused before it
         is read, and at most max_bytes + 1 bytes are read (see image_view).
         """

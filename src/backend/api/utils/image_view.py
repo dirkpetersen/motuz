@@ -1,14 +1,24 @@
 """
-Image viewer: POST /api/system/files/view/image/ returns the bytes of a PNG, JPEG, GIF
-or WebP image, read as the logged-in user like the text viewer (file_view.py):
-LocalConnection.view_image / RcloneConnection.view_image.
+Image viewer: POST /api/system/files/view/image/ returns the bytes of a PNG, JPEG, GIF,
+WebP, HEIC/HEIF or AVIF image, read as the logged-in user like the text viewer
+(file_view.py): LocalConnection.view_image / RcloneConnection.view_image.
 
-The type is decided on the file's first bytes (magic numbers), never on its name or
-on what a cloud reports. Anything else is refused with 415, SVG in particular: an SVG
-document can carry scripts, and one opened from a blob: URL would run in the app's
-origin. The size is checked before reading (stat) and again on what was read, against
-MOTUZ_VIEW_IMAGE_MAX_BYTES (413 above it). The response headers keep a browser from
-treating the bytes as anything but the detected image. Image contents are never logged.
+The type is decided on the file's first bytes (magic numbers; HEIC/HEIF/AVIF from the
+ISO-BMFF 'ftyp' box's brands), never on its name or on what a cloud reports. Anything
+else is refused with 415, SVG in particular: an SVG document can carry scripts, and one
+opened from a blob: URL would run in the app's origin. The size is checked before
+reading (stat) and again on what was read, against MOTUZ_VIEW_IMAGE_MAX_BYTES (413
+above it). The response headers keep a browser from treating the bytes as anything but
+the detected image. Image contents are never logged.
+
+Motuz sends HEIC/HEIF/AVIF bytes as detected and lets the browser decide whether it can
+show them; it never decodes or transcodes them server- or client-side. AVIF (AV1) is
+royalty-free and decodes natively in current Chrome, Firefox and Safari. HEIC/HEIF
+(HEVC/H.265) decodes natively only where the OS provides an HEVC decoder (currently
+Safari/macOS/iOS); Motuz deliberately does not bundle a software HEVC decoder (HEVC is
+patent pooled across MPEG-LA, Access Advance and Velos Media, unlike AV1 — see README
+"File viewer"), so in a browser without native HEIC support the viewer shows a message
+instead of the picture.
 """
 import os
 import re
@@ -24,13 +34,25 @@ MIN_MAX_BYTES = 1024
 MAX_MAX_BYTES = 256 * MiB # the whole image is held in memory by an app worker
 ENV_MAX_BYTES = 'MOTUZ_VIEW_IMAGE_MAX_BYTES'
 
-# The only types the viewer shows: raster formats a browser decodes in an <img>
+# The types the viewer shows: raster formats a browser can decode in an <img>. PNG,
+# JPEG, GIF and WebP decode everywhere. HEIC/HEIF (Apple's photo format, HEVC/H.265
+# coded) and AVIF (AV1 coded) are also served as their detected type — Motuz never
+# decodes or transcodes them itself, so whether one is actually shown depends entirely
+# on the browser: AVIF (royalty-free under AOM's patent cross-license) decodes natively
+# in current Chrome, Firefox and Safari; HEIC/HEIF decodes natively only where the OS
+# provides an HEVC decoder (currently Safari/macOS/iOS). Motuz deliberately does not
+# bundle a software HEVC decoder (see README "File viewer" and CLAUDE.md): HEVC is
+# patent pooled (MPEG-LA, Access Advance, Velos Media) and shipping a decoder would be
+# a licensing decision for the operator, not something to guess at in code.
 PNG = 'image/png'
 JPEG = 'image/jpeg'
 GIF = 'image/gif'
 WEBP = 'image/webp'
-TYPES = (PNG, JPEG, GIF, WEBP)
-SNIFF_BYTES = 16
+HEIC = 'image/heic'
+HEIF = 'image/heif'
+AVIF = 'image/avif'
+TYPES = (PNG, JPEG, GIF, WEBP, HEIC, HEIF, AVIF)
+SNIFF_BYTES = 64 # enough for an ISO-BMFF 'ftyp' box's major and compatible brands
 
 # Sent with every image: the type is the detected one and must not be sniffed, the
 # bytes can never run anything (a sandboxed, empty policy even if opened as a page),
@@ -52,7 +74,7 @@ class TooLargeError(file_view.ViewError):
 
 
 class NotAnImageError(file_view.ViewError):
-    """Not PNG, JPEG, GIF or WebP (SVG included)"""
+    """Not PNG, JPEG, GIF, WebP, HEIC/HEIF or AVIF (SVG included)"""
     status = 415
 
 
@@ -95,7 +117,7 @@ def max_bytes(environ=None):
 
 
 def detect_type(data):
-    """The image type of `data` by its magic number (PNG, JPEG, GIF, WebP), or None"""
+    """The image type of `data` by its magic number (PNG, JPEG, GIF, WebP, HEIC/HEIF, AVIF), or None"""
     if data.startswith(b'\x89PNG\r\n\x1a\n'):
         return PNG
     if data.startswith(b'\xff\xd8\xff'):
@@ -104,6 +126,45 @@ def detect_type(data):
         return GIF
     if len(data) >= 16 and data[:4] == b'RIFF' and data[8:12] == b'WEBP' and data[12:16] in (b'VP8 ', b'VP8L', b'VP8X'):
         return WEBP
+    return _isobmff_type(data)
+
+
+# ISO-BMFF ('ftyp' box) brand codes that identify a HEIC/HEIF/AVIF file (ISO/IEC
+# 14496-12 + 23008-12 for HEIF, and the AVIF spec). Checked against the major brand and
+# every compatible brand, never the file's name: an HEIC file's major brand is often
+# the generic 'mif1'/'msf1' with 'heic' only listed as a compatible brand.
+_HEIC_BRANDS = frozenset((b'heic', b'heix', b'heim', b'heis', b'hevc', b'hevx'))
+_HEIF_BRANDS = frozenset((b'mif1', b'msf1'))
+_AVIF_BRANDS = frozenset((b'avif', b'avis'))
+
+
+def _isobmff_brands(data):
+    """(major_brand, [compatible_brands]) of a leading ISO-BMFF 'ftyp' box, or (None, [])"""
+    if len(data) < 12 or data[4:8] != b'ftyp':
+        return None, []
+    major = bytes(data[8:12])
+    box_size = int.from_bytes(data[0:4], 'big')
+    # Compatible brands are 4-byte codes after the major brand + minor version (from
+    # offset 16), up to the box's declared size or what we have, whichever is smaller;
+    # a size that looks wrong (0, the 64-bit-extended marker 1, or past what we read)
+    # is ignored in favor of scanning everything we were given.
+    end = box_size if 16 <= box_size <= len(data) else len(data)
+    compatible = [bytes(data[i:i + 4]) for i in range(16, end - 3, 4)]
+    return major, compatible
+
+
+def _isobmff_type(data):
+    """'image/heic', 'image/heif', 'image/avif' or None, from the ftyp box's brands"""
+    major, compatible = _isobmff_brands(data)
+    if major is None:
+        return None
+    brands = {major, *compatible}
+    if brands & _AVIF_BRANDS:
+        return AVIF
+    if brands & _HEIC_BRANDS:
+        return HEIC
+    if brands & _HEIF_BRANDS:
+        return HEIF
     return None
 
 
@@ -135,7 +196,7 @@ def image_result(name, data, size, cap):
     """
     (bytes, type) of an image read with a limit of cap + 1 bytes. Raises TooLargeError
     when more than `cap` bytes arrived (the file grew since the stat) and
-    NotAnImageError (415) for anything but PNG, JPEG, GIF and WebP.
+    NotAnImageError (415) for anything but PNG, JPEG, GIF, WebP, HEIC/HEIF or AVIF.
     """
     if len(data) > cap:
         raise too_large(name, max(len(data), size or 0), cap)
@@ -143,7 +204,7 @@ def image_result(name, data, size, cap):
     if mime is None:
         if _looks_like_svg(data):
             raise NotAnImageError("'{}' is an SVG image; SVG is shown as text, not as an image".format(name))
-        raise NotAnImageError("'{}' is not a PNG, JPEG, GIF or WebP image".format(name))
+        raise NotAnImageError("'{}' is not a PNG, JPEG, GIF, WebP, HEIC/HEIF or AVIF image".format(name))
     return data, mime
 
 

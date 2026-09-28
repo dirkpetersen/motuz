@@ -125,16 +125,18 @@ class SystemFilesViewChunk(Resource):
 class SystemFilesViewImage(Resource):
     @api.expect(dto, validate=True)
     @api.produces(list(image_view.TYPES))
-    @api.response(200, 'The image (image/png, image/jpeg, image/gif or image/webp)')
+    @api.response(200, 'The image (image/png, image/jpeg, image/gif, image/webp, image/heic, image/heif or image/avif)')
     @api.response(400, 'A folder, not a regular file, a relative local path')
     @api.response(403, 'The user cannot read the file')
     @api.response(404, 'No such file (or connection)')
     @api.response(413, 'Larger than MOTUZ_VIEW_IMAGE_MAX_BYTES')
-    @api.response(415, 'Not a PNG, JPEG, GIF or WebP image (SVG is refused)')
+    @api.response(415, 'Not a PNG, JPEG, GIF, WebP, HEIC/HEIF or AVIF image (SVG is refused)')
     def post(self):
         """
-        The bytes of a PNG, JPEG, GIF or WebP image, read as the logged-in user (image viewer).
-        The type is detected from the file's first bytes, never from its name.
+        The bytes of a PNG, JPEG, GIF, WebP, HEIC/HEIF or AVIF image, read as the logged-in
+        user (image viewer). The type is detected from the file's first bytes, never from
+        its name; whether HEIC/HEIF or AVIF actually show is up to the browser (Motuz
+        never bundles a decoder).
         """
         try:
             content, mime, path = system_manager.view_image(request.json)

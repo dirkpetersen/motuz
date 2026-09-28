@@ -216,7 +216,8 @@ def check_image_view(token, other_token, folder, connection_id, label, other_sta
         return body.get('message', '') if isinstance(body, dict) else str(body)
 
     for name, mime in (('pic.png', 'image/png'), ('small.png', 'image/png'), ('pic.jpg', 'image/jpeg'),
-                       ('PIC2.JPEG', 'image/jpeg'), ('pic.gif', 'image/gif'), ('pic.webp', 'image/webp')):
+                       ('PIC2.JPEG', 'image/jpeg'), ('pic.gif', 'image/gif'), ('pic.webp', 'image/webp'),
+                       ('photo.heic', 'image/heic'), ('photo.avif', 'image/avif')):
         status, body, headers = image(name)
         check(f'{label}: {name} served as {mime}', status == 200 and body == files[name]
               and headers.get('Content-Type') == mime and headers.get('Content-Length') == str(len(files[name])),
@@ -228,7 +229,10 @@ def check_image_view(token, other_token, folder, connection_id, label, other_sta
           and headers.get('Cache-Control') == 'no-store'
           and headers.get('Content-Disposition') == 'inline; filename="pic.png"; filename*=UTF-8\'\'pic.png', dict(headers))
     status, body, _ = image('fake.png')
-    check(f'{label}: a .png that is text is refused (415)', status == 415 and 'not a PNG, JPEG, GIF or WebP' in message(body), (status, body))
+    check(f'{label}: a .png that is text is refused (415)', status == 415 and 'not a PNG, JPEG, GIF, WebP, HEIC/HEIF or AVIF' in message(body), (status, body))
+    status, body, _ = image('fake.heic')
+    check(f'{label}: a .heic that is text is refused (415), detected by content not name', status == 415
+          and 'not a PNG, JPEG, GIF, WebP, HEIC/HEIF or AVIF' in message(body), (status, body))
     for name in ('logo.svg', 'svg-named.png'):
         status, body, _ = image(name)
         check(f'{label}: SVG refused ({name}, 415)', status == 415 and 'SVG' in message(body), (status, body))

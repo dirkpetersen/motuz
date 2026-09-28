@@ -143,7 +143,7 @@ def view_chunk(data):
 @token_required
 def view_image(data):
     """
-    A PNG, JPEG, GIF or WebP image for the viewer, read as the logged-in user:
+    A PNG, JPEG, GIF, WebP, HEIC/HEIF or AVIF image for the viewer, read as the logged-in user:
     (bytes, type detected from the magic number, path). Anything else is 415 (SVG
     too), a file larger than VIEW_IMAGE_MAX_BYTES 413. Contents are never logged.
     """

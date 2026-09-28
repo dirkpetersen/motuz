@@ -176,7 +176,7 @@ class RcloneConnection(AbstractConnection):
 
     def view_image(self, data, path, max_bytes):
         """
-        (bytes, type) of a PNG, JPEG, GIF or WebP image, read by rclone as the user with
+        (bytes, type) of a PNG, JPEG, GIF, WebP, HEIC/HEIF or AVIF image, read by rclone as the user with
         the connection's credentials: `lsjson --stat` (size; a folder is refused, and a
         file larger than `max_bytes` is refused before it is read), then
         `cat --count max_bytes+1`, so a file that grew meanwhile is refused too
