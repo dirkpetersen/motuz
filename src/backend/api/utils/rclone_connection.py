@@ -1,3 +1,4 @@
+import concurrent.futures
 import functools
 import json
 import logging
@@ -10,6 +11,7 @@ from . import local_credentials
 from .file_times import rfc3339_to_iso_utc
 from . import file_view
 from . import image_view
+from . import document_view
 from . import rclone_tuning
 from .copy_job_queue import CopyJobQueue
 from .hashsum_job_queue import HashsumJobQueue
@@ -189,6 +191,48 @@ class RcloneConnection(AbstractConnection):
         self._log_command(command, credentials)
         content = self._run_view_command(command, credentials, path)
         return image_view.image_result(name, content, size, max_bytes)
+
+
+    def view_document(self, data, path, max_bytes, request):
+        """
+        A document for the document viewer, read by rclone as the user with the
+        connection's credentials: (bytes, container, file size, start).
+        `lsjson --stat` first (size; a folder is refused). The whole file is refused
+        above `max_bytes` before any `cat`, then read with `cat --count max_bytes+1`.
+        A range (PDFs only) is `cat --offset --count`, plus, unless it starts at the
+        beginning, `cat --count 1024` for the type check, run at the same time.
+        """
+        name = path.rstrip('/').split('/')[-1]
+        credentials, base, remote = self._view_base(data, path)
+        size = self._view_stat(base, remote, credentials, path)
+
+        if not request.is_range:
+            document_view.check_size(name, size, max_bytes)
+            command = base + ['cat', '--count', str(max_bytes + 1), remote]
+            self._log_command(command, credentials)
+            content = self._run_view_command(command, credentials, path)
+            content, container = document_view.document_result(name, content, size, max_bytes)
+            return content, container, size if size is not None else len(content), 0
+
+        if size is None:
+            raise file_view.ViewError("The size of '{}' is unknown; it cannot be read in ranges".format(path))
+        document_view.check_range(name, request, size)
+        count = min(request.length, size - request.offset)
+        commands = [base + ['cat', '--offset', str(request.offset), '--count', str(count), remote]]
+        head_in_range = request.offset == 0 and count >= min(size, document_view.HEAD_BYTES)
+        if not head_in_range:
+            commands.append(base + ['cat', '--count', str(document_view.HEAD_BYTES), remote])
+        for command in commands:
+            self._log_command(command, credentials)
+        if len(commands) == 1:
+            content = self._run_view_command(commands[0], credentials, path)
+            head = content[:document_view.HEAD_BYTES]
+        else:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+                futures = [pool.submit(self._run_view_command, command, credentials, path) for command in commands]
+                content, head = [future.result() for future in futures]
+        content, container = document_view.range_result(name, head, content)
+        return content, container, size, request.offset
 
 
     def _view_base(self, data, path):

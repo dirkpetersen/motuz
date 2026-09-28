@@ -83,6 +83,9 @@ x-variables:
     - &viewer-environment
         # Largest image the file viewer shows, e.g. 25M (the default); larger is refused
         MOTUZ_VIEW_IMAGE_MAX_BYTES: ${MOTUZ_VIEW_IMAGE_MAX_BYTES:-}
+        # Largest DOCX/XLSX/PPTX/ODS/XLS the viewer reads, e.g. 50M (the default); PDFs
+        # are read in ranges and have no limit
+        MOTUZ_VIEW_DOCUMENT_MAX_BYTES: ${MOTUZ_VIEW_DOCUMENT_MAX_BYTES:-}
     - &shared-volumes
         volumes:
             # Using system users for authentication

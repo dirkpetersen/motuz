@@ -5,7 +5,7 @@ from flask_restx import Resource, Namespace, fields
 
 from ..managers import system_manager
 from ..exceptions import HTTP_EXCEPTION
-from ..utils import image_view
+from ..utils import document_view, image_view
 
 
 api = Namespace('system', description='System related operations')
@@ -144,6 +144,41 @@ class SystemFilesViewImage(Resource):
             logging.exception(e, exc_info=True)
             api.abort(500, str(e))
         return Response(content, status=200, headers=image_view.response_headers(path, mime),
+                        direct_passthrough=True)
+
+
+document_dto = api.model('system-file-view-document-request', {
+    'connection_id': fields.Integer(required=True, example=0, description='0 for the local filesystem'),
+    'path': fields.String(required=True, example='/home/alice/report.pdf'),
+    'offset': fields.Integer(description='With length: read a range of a PDF from this byte'),
+    'length': fields.Integer(description='With offset: at most this many bytes (1 to 4194304)'),
+})
+
+
+@api.route('/files/view/document/')
+class SystemFilesViewDocument(Resource):
+    @api.expect(document_dto, validate=True)
+    @api.produces(list(document_view.CONTENT_TYPES.values()))
+    @api.response(200, 'The bytes; X-Motuz-Document-Type (pdf, zip, cfb), X-Motuz-File-Size, X-Motuz-Range-Start')
+    @api.response(400, 'A folder, not a regular file, a relative local path, an invalid range')
+    @api.response(403, 'The user cannot read the file')
+    @api.response(404, 'No such file (or connection)')
+    @api.response(413, 'The whole file is larger than MOTUZ_VIEW_DOCUMENT_MAX_BYTES')
+    @api.response(415, 'Not a PDF, ZIP (Office Open XML, OpenDocument) or OLE2 file; ranges only for PDFs')
+    def post(self):
+        """
+        A document (PDF, DOCX, XLSX, PPTX, ODS, XLS) read as the logged-in user, for the
+        viewer that renders it in the browser: the whole file, or a range of a PDF.
+        The type is detected from the file's first bytes, never from its name.
+        """
+        try:
+            content, container, size, start, path = system_manager.view_document(request.json)
+        except HTTP_EXCEPTION as e:
+            api.abort(e.code, e.payload)
+        except Exception as e:
+            logging.exception(e, exc_info=True)
+            api.abort(500, str(e))
+        return Response(content, status=200, headers=document_view.response_headers(path, container, size, start),
                         direct_passthrough=True)
 
 
