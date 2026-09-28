@@ -107,11 +107,21 @@ def pdf(pages=PDF_PAGES, padding=0, hostile=True):
 
 # ---- ZIP based (OOXML) ----
 
+# ZipFile.writestr(name, data) stamps each entry with the current wall-clock time
+# (time.localtime()), so two calls a second apart would produce byte-different but
+# same-length files; e2e_test.py/cred_test.py/ui_test.mjs compare these fixtures byte
+# for byte against a second, independent call to fixtures() (or a re-run of this
+# script), so every entry gets a fixed timestamp instead.
+_FIXED_DATE_TIME = (1980, 1, 1, 0, 0, 0)
+
+
 def _zip(files, compression=zipfile.ZIP_DEFLATED):
     out = io.BytesIO()
     with zipfile.ZipFile(out, 'w', compression) as z:
         for name, data in files.items():
-            z.writestr(name, data.encode('utf-8') if isinstance(data, str) else data)
+            info = zipfile.ZipInfo(name, date_time=_FIXED_DATE_TIME)
+            info.compress_type = compression
+            z.writestr(info, data.encode('utf-8') if isinstance(data, str) else data)
     return out.getvalue()
 
 
