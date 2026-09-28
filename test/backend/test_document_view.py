@@ -235,7 +235,10 @@ class TestCloudDocument(unittest.TestCase):
                                       path='/dir/a.docx')
         self.assertEqual(result, (ZIP_DATA, ZIP, len(ZIP_DATA), 0))
         stat, cat = calls[0][0], calls[1][0]
-        self.assertEqual(stat[:4], ['sudo', '-E', '-u', 'alice'])
+        # sudo -n --preserve-env=<the variables Motuz sets> -u alice rclone, like the image/text viewers
+        self.assertEqual(stat[:2], ['sudo', '-n'])
+        self.assertTrue(stat[2].startswith('--preserve-env='), stat[2])
+        self.assertEqual(stat[3:5], ['-u', 'alice'])
         self.assertEqual(stat[-3:], ['lsjson', '--stat', 'current:/dir/a.docx'])
         self.assertEqual(cat[-4:], ['cat', '--count', str(CAP + 1), 'current:/dir/a.docx'])
         self.assertFalse(any(key.startswith('MOTUZ_') for key in calls[1][1]))
