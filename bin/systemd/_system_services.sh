@@ -148,6 +148,9 @@ setup_system_postgres() {
         port=5433
         SYSTEM_PG_PORT=5433
         wait_postgres || die "the system PostgreSQL does not answer on port 5433"
+    elif [ "$EXISTING_PG" = private ] && [ "$port" = 5433 ]; then
+        # already away from 5432 (Ubuntu's pg_createcluster picks the next free port): remember to move back
+        install -d -m 755 /etc/motuz && : > "$PG_PORT_MARKER"
     elif [ "$EXISTING_PG" = system ] && [ -f "$PG_PORT_MARKER" ] && [ "$port" = 5433 ] && ! ss -ltnH | awk '{print $4}' | grep -qE ':5432$'; then
         # the private cluster is gone: back to the standard port
         log "the private cluster is stopped: the system PostgreSQL goes back to port 5432"
