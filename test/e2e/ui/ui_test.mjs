@@ -1181,9 +1181,8 @@ os.utime(os.path.join(d, 'dirB'), (now - 86400,) * 2)
         await shot('viewer-image-avif');
         await closeViewer();
 
-        // HEIC (HEVC): Chromium cannot decode it, so the server converts it to a JPEG (a child
-        // process as alice). The first HEIC image of a page is fetched plain, found undecodable
-        // and fetched again with convert=jpeg; from then on the JPEG is asked for at once.
+        // HEIC (HEVC): Chromium cannot decode it (a probe with a tiny HEIC picture says so), so
+        // the JPEG the server makes of it (a child process as alice) is asked for at once.
         const imageBodies = [];
         const onImageRequest = r => { if (r.url().endsWith('/api/system/files/view/image/')) imageBodies.push(JSON.parse(r.postData() || '{}')); };
         page.on('request', onImageRequest);
@@ -1192,8 +1191,9 @@ os.utime(os.path.join(d, 'dirB'), (now - 86400,) * 2)
         img = await imageState();
         check('image: photo.heic is shown as the server\'s JPEG (48 x 64, "HEIC, converted to JPEG")',
             img.natural === '48x64' && img.src.startsWith('blob:') && img.info.startsWith('HEIC, converted to JPEG · 48 × 64 px'), img);
-        check('image: photo.heic was fetched with convert=jpeg (after a plain try, or at once if this browser had failed before)',
-            imageBodies.some(b => b.convert === 'jpeg' && b.path.endsWith('/photo.heic')), imageBodies);
+        check('image: photo.heic was fetched with convert=jpeg at once (the probe found that Chromium cannot decode HEIC), never plain',
+            imageBodies.some(b => b.convert === 'jpeg' && b.path.endsWith('/photo.heic'))
+            && !imageBodies.some(b => !b.convert && b.path.endsWith('/photo.heic')), imageBodies);
         check('image: no message about an unsupported browser', await page.locator('.image-viewer-decode-error').count() === 0);
         await shot('viewer-image-heic');
         await closeViewer();
@@ -1370,6 +1370,21 @@ os.utime(os.path.join(d, 'dirB'), (now - 86400,) * 2)
         await page.waitForFunction(() => ((document.querySelector('.image-viewer-info') || {}).textContent || '').startsWith('HEIC, converted'),
             null, { timeout: 30000 });
         check('image nav: ... and back to the HEIC image', (await navState()).position === '2 / 3');
+        await closeViewer();
+
+        // The server busy (503): the message, "Try again", and nothing remembered meanwhile
+        await page.route('**/api/system/files/view/image/', route => route.fulfill({
+            status: 503, contentType: 'application/json',
+            body: JSON.stringify({ message: 'The server is converting other images; try again in a moment' }) }));
+        await row('b.heic').dblclick();
+        await page.waitForSelector('.image-viewer-retry', { timeout: 20000 });
+        const busy = await page.locator('.file-viewer-error').textContent();
+        check('image: the server busy converting (503): its message and a "Try again" button', busy.includes('try again in a moment'), busy);
+        await page.unroute('**/api/system/files/view/image/');
+        await page.click('.image-viewer-retry');
+        await page.waitForFunction(() => ((document.querySelector('.image-viewer-info') || {}).textContent || '').startsWith('HEIC, converted'),
+            null, { timeout: 30000 });
+        check('image: "Try again" fetches it again and the converted image is shown', await page.locator('.image-viewer-retry').count() === 0);
         await closeViewer();
         await paneGo('left', null, VIEWER_DIR); // back out of the nav/ subfolder
 

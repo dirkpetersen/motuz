@@ -10,8 +10,9 @@ XMP, thumbnails, depth maps are all dropped; only the ICC color profile is kept 
 colors stay right). argv[1]: a directory with pi-heif and Pillow (put first on
 sys.path; '' = the interpreter's own packages). The exit code says what happened (EXIT_*).
 
-Limits, set in the child before it reads anything: address space, CPU seconds, no file
-may be written, few open files, no core dumps; plus a pixel cap checked from the header
+Limits, set in the child before it reads anything (each one to the wanted value or the
+lower hard limit it was started with; if one cannot be set nothing is decoded, EXIT_LIMITS):
+address space, CPU seconds, no file may be written, few open files, no core dumps; plus a pixel cap checked from the header
 before any pixel is decoded, and a cap on the long side of the output.
 """
 import io
@@ -22,6 +23,7 @@ EXIT_TOO_LARGE = 10 # more pixels than MAX_PIXELS
 EXIT_MEMORY = 11 # ran out of memory (RLIMIT_AS)
 EXIT_NOT_DECODABLE = 12 # not a HEIC/HEIF image libheif can decode
 EXIT_UNAVAILABLE = 13 # pi-heif / Pillow cannot be imported
+EXIT_LIMITS = 14 # a resource limit could not be set: nothing is decoded without them
 
 MAX_PIXELS = 100 * 1000 * 1000 # 100 megapixels (an iPhone's 48 MP photo is half of it)
 MAX_SIDE = 8192 # px of the longer side of the JPEG
@@ -36,9 +38,43 @@ LIMITS = { # resource name -> (soft = hard limit)
 
 
 def set_limits(limits=LIMITS):
-    import resource
-    for name, value in limits.items():
-        resource.setrlimit(getattr(resource, name), (value, value))
+    """
+    Sets each limit on its own, to the wanted value or, if the hard limit the process was
+    started with (pam_limits, a container) is lower, to that. Returns the names of the
+    limits that could not be applied; main() decodes nothing unless that list is empty.
+    """
+    try:
+        import resource
+    except ImportError: # not Linux/Unix: no limits can be set
+        return list(limits)
+    failed = []
+    for name, wanted in limits.items():
+        try:
+            which = getattr(resource, name)
+            hard = resource.getrlimit(which)[1]
+            target = wanted if hard == resource.RLIM_INFINITY else min(wanted, hard)
+            resource.setrlimit(which, (target, target))
+            soft, hard = resource.getrlimit(which)
+            if soft > wanted or hard > wanted:
+                failed.append(name)
+        except (AttributeError, TypeError, ValueError, OSError):
+            failed.append(name)
+    return failed
+
+
+def flatten(image):
+    """An RGB (or L) image for JPEG: transparency goes onto white, the ICC profile stays"""
+    from PIL import Image
+    icc = image.info.get('icc_profile')
+    if 'A' in image.mode or image.mode == 'P':
+        rgba = image.convert('RGBA') # JPEG has no alpha: on white
+        image = Image.new('RGB', rgba.size, (255, 255, 255))
+        image.paste(rgba, mask=rgba.getchannel('A'))
+    elif image.mode not in ('RGB', 'L'):
+        image = image.convert('RGB')
+    if icc:
+        image.info['icc_profile'] = icc
+    return image
 
 
 def convert(data, max_pixels=MAX_PIXELS, max_side=MAX_SIDE, quality=QUALITY):
@@ -58,12 +94,7 @@ def convert(data, max_pixels=MAX_PIXELS, max_side=MAX_SIDE, quality=QUALITY):
         raise ValueError('too large')
     image.load() # the primary image only; libheif applies irot/imir
     image = ImageOps.exif_transpose(image) # a leftover EXIF orientation (once, never twice)
-    if 'A' in image.mode or image.mode == 'P':
-        rgba = image.convert('RGBA') # JPEG has no alpha: on white
-        image = Image.new('RGB', rgba.size, (255, 255, 255))
-        image.paste(rgba, mask=rgba.getchannel('A'))
-    elif image.mode not in ('RGB', 'L'):
-        image = image.convert('RGB')
+    image = flatten(image)
     if max(image.size) > max_side:
         image.thumbnail((max_side, max_side))
     out = io.BytesIO()
@@ -80,10 +111,8 @@ def main(argv=None, stdin=None, stdout=None):
     site = argv[1] if len(argv) > 1 else ''
     if site:
         sys.path.insert(0, site)
-    try:
-        set_limits()
-    except (ImportError, ValueError, OSError):
-        pass # no resource module (not Linux): the parent's timeout still applies
+    if set_limits(): # before anything is read: no limits, no decoding
+        return EXIT_LIMITS
     data = (stdin or sys.stdin.buffer).read()
     try:
         jpeg = convert(data)

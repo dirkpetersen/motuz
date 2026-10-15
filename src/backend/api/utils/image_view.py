@@ -102,6 +102,31 @@ def parse_max_bytes(value):
     return parse_size_setting(value, ENV_MAX_BYTES, DEFAULT_MAX_BYTES, MIN_MAX_BYTES, MAX_MAX_BYTES)
 
 
+ENV_HEIC_CONCURRENT = 'MOTUZ_HEIC_MAX_CONCURRENT'
+DEFAULT_HEIC_CONCURRENT = 2
+MAX_HEIC_CONCURRENT = 16
+
+
+def parse_heic_concurrency(value):
+    """
+    How many HEIC/HEIF conversions (heic_convert.py, each a child process using up to
+    2 GiB of address space) run at once, from MOTUZ_HEIC_MAX_CONCURRENT: 1 to 16, default
+    2. Raises ImageConfigError.
+    """
+    value = (value or '').strip()
+    if not value:
+        return DEFAULT_HEIC_CONCURRENT
+    if not value.isdigit() or not 1 <= int(value) <= MAX_HEIC_CONCURRENT:
+        raise ImageConfigError('{} must be a number from 1 to {}, not {!r}'.format(
+            ENV_HEIC_CONCURRENT, MAX_HEIC_CONCURRENT, value))
+    return int(value)
+
+
+def heic_concurrency(environ=None):
+    environ = os.environ if environ is None else environ
+    return parse_heic_concurrency(environ.get(ENV_HEIC_CONCURRENT))
+
+
 def max_bytes(environ=None):
     environ = os.environ if environ is None else environ
     return parse_max_bytes(environ.get(ENV_MAX_BYTES))

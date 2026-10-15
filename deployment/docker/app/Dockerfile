@@ -28,16 +28,16 @@ RUN set -x \
     && rm -rf /var/lib/apt/lists/*
 
 ENV PATH=/root/.local/bin:$PATH
-COPY ./requirements.txt /code/requirements.txt
+COPY ./requirements.txt ./requirements-heic.txt /code/
 RUN pip install --no-cache-dir --user -r /code/requirements.txt
 
 # The HEIC/HEIF -> JPEG converter of the image viewer (api/utils/heic_convert.py) runs in a
 # child process as the logged-in user, never as root: its packages (pi-heif with
 # libheif/libde265, LGPL-3.0, decode only; Pillow) go where every user can read them, not
-# into /root/.local. The pins are those of requirements.txt.
-RUN grep -iE '^(pi-heif|pillow)==' /code/requirements.txt > /code/heic-requirements.txt \
-    && test "$(wc -l < /code/heic-requirements.txt)" -eq 2 \
-    && pip install --no-cache-dir --no-deps --only-binary=:all: --target /opt/motuz-heic/site -r /code/heic-requirements.txt \
+# into /root/.local. Installed with the hashes of requirements-heic.txt (the versions of
+# requirements.txt).
+RUN pip install --no-cache-dir --require-hashes --no-deps --only-binary=:all: \
+        --target /opt/motuz-heic/site -r /code/requirements-heic.txt \
     && chmod -R a+rX /opt/motuz-heic
 
 

@@ -23,15 +23,23 @@ export function stripCssUrls(css, blobPrefix = null) {
     if (typeof css !== 'string' || !css) {
         return '';
     }
+    // CSS escapes could spell url( or @import in another way, also by escaping a backslash
+    // (`\5c 75rl(` is `\75rl(` is `url(`): unescape to a fixed point, then drop any
+    // backslash left (an escape that decodes to nothing printable)
     let out = css;
-    // CSS escapes could spell url( or @import in another way: refuse escaped text
-    // around those words by decoding hex escapes of letters first
-    out = out.replace(/\\([0-9a-fA-F]{1,6})\s?/g, (match, hex) => {
-        const code = parseInt(hex, 16);
-        return code > 0x20 && code < 0x7f ? String.fromCharCode(code) : match;
-    });
-    // ... and the other escapes, which only drop the backslash (`u\rl(` is `url(`)
-    out = out.replace(/\\([^0-9a-fA-F\r\n])/g, '$1');
+    for (let i = 0; i < 16; i++) {
+        const next = out
+            .replace(/\\([0-9a-fA-F]{1,6})\s?/g, (match, hex) => {
+                const code = parseInt(hex, 16);
+                return code > 0x20 && code < 0x7f ? String.fromCharCode(code) : match;
+            })
+            .replace(/\\([^0-9a-fA-F\r\n])/g, '$1');
+        if (next === out) {
+            break;
+        }
+        out = next;
+    }
+    out = out.replace(/\\/g, '');
     out = out.replace(/@import[^;]*;?/gi, '');
     out = out.replace(/(?:-webkit-)?image-set\s*\([^)]*\)/gi, 'none');
     out = out.replace(/url\s*\(\s*("[^"]*"|'[^']*'|[^)]*)\s*\)/gi,

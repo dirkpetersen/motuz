@@ -2,9 +2,9 @@
  * When the image viewer asks the server for a JPEG of a HEIC/HEIF image. The server
  * converts on request only (`convert: "jpeg"`, as the logged-in user; a child process,
  * api/utils/heic_convert.py) and only HEIC/HEIF: any other image comes back unchanged.
- * Safari shows HEIC itself, so the plain image is asked for first; the first HEIC/HEIF
- * image a browser cannot decode tells it to ask for the JPEG at once from then on, which
- * saves reading the file twice. Plain functions for node --test.
+ * Safari shows HEIC itself, so the plain image is asked for when a probe (utils/heicProbe.js:
+ * decoding a tiny HEIC picture) says the browser decodes HEIC; otherwise the JPEG is asked
+ * for at once, which saves reading the file twice. Plain functions for node --test.
  */
 
 export const HEIF_TYPES = ['image/heic', 'image/heif'];
@@ -19,8 +19,8 @@ export function isHeifType(type) {
 }
 
 /**
- * Ask for the JPEG straight away? `nativeHeic`: null = not known yet, true = this browser
- * decoded a HEIC/HEIF image, false = it could not
+ * Ask for the JPEG straight away? `nativeHeic`: the probe's answer (true = this browser
+ * decodes HEIC/HEIF itself, false = it cannot, null = unknown)
  */
 export function convertFirst(name, nativeHeic) {
     return nativeHeic === false && isHeifName(name);

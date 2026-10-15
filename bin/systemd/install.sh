@@ -147,25 +147,25 @@ fi
 # run as the logged-in user. The server's own Python (uv's, in the account's home) is not
 # readable by the users, so the converter runs with the distribution's python3 and
 # pi-heif + Pillow (libheif/libde265, LGPL-3.0, decode only) from a directory every user can
-# read. The pins are those of requirements.txt.
+# read, installed with the hashes of requirements-heic.txt (the versions of requirements.txt).
 if [ "$WORKER_ONLY" = 0 ]; then
-    heic_pins=$(grep -iE '^(pi-heif|pillow)==' "$REPO_DIR/requirements.txt" | sort)
-    [ "$(printf '%s\n' "$heic_pins" | wc -l)" = 2 ] || die "pi-heif and Pillow are not pinned in $REPO_DIR/requirements.txt"
-    if [ "$(cat /opt/motuz-heic/PINS 2>/dev/null)" != "$heic_pins" ] || [ ! -d /opt/motuz-heic/site ]; then
-        log "HEIC/HEIF converter: $(echo $heic_pins) for $(/usr/bin/python3 --version)"
-        printf '%s\n' "$heic_pins" > "$TMP/heic-requirements.txt"
+    # What is installed: the hashed requirements, the Python (ABI) and the architecture
+    heic_state=$(printf '%s\n%s\n' "$(sha256sum < "$REPO_DIR/requirements-heic.txt" | cut -d' ' -f1)" \
+        "$(/usr/bin/python3 -c 'import platform, sys; print(sys.implementation.cache_tag, platform.machine())')")
+    if [ "$(cat /opt/motuz-heic/STATE 2>/dev/null)" != "$heic_state" ] || [ ! -d /opt/motuz-heic/site ]; then
+        log "HEIC/HEIF converter: pi-heif and Pillow (requirements-heic.txt) for $(/usr/bin/python3 --version)"
         rm -rf /opt/motuz-heic.new
-        /usr/local/bin/uv pip install --quiet --python /usr/bin/python3 --no-deps --only-binary :all: \
-            --target /opt/motuz-heic.new/site -r "$TMP/heic-requirements.txt" \
+        /usr/local/bin/uv pip install --quiet --python /usr/bin/python3 --no-deps --only-binary :all: --require-hashes \
+            --target /opt/motuz-heic.new/site -r "$REPO_DIR/requirements-heic.txt" \
             || die "could not install pi-heif and Pillow for /usr/bin/python3"
-        printf '%s\n' "$heic_pins" > /opt/motuz-heic.new/PINS
+        printf '%s\n' "$heic_state" > /opt/motuz-heic.new/STATE
         chown -R root:root /opt/motuz-heic.new
         chmod -R a+rX,go-w /opt/motuz-heic.new
         rm -rf /opt/motuz-heic
         mv /opt/motuz-heic.new /opt/motuz-heic
-        /usr/bin/python3 -I -c "import sys; sys.path.insert(0, '/opt/motuz-heic/site'); import pi_heif, PIL" \
-            || die "pi-heif does not load with /usr/bin/python3"
     fi
+    /usr/bin/python3 -I -c "import sys; sys.path.insert(0, '/opt/motuz-heic/site'); import pi_heif, PIL" \
+        || die "pi-heif does not load with /usr/bin/python3"
 fi
 
 # ---------------------------------------------------------------- the account

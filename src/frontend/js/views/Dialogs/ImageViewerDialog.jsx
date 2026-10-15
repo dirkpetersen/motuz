@@ -4,7 +4,8 @@ import upath from 'upath';
 
 import formatBytes from 'utils/formatBytes.jsx'
 import { imageNeighbors, rowIndexOf } from 'utils/imageNeighbors.js'
-import { convertFirst, describeType, isHeifType, needsConversion } from 'utils/heifConvert.js'
+import { convertFirst, describeType, isHeifName, needsConversion } from 'utils/heifConvert.js'
+import { probeNativeHeic } from 'utils/heicProbe.js'
 
 // The types the server sends (utils/image_view.py detects them from the file's first
 // bytes); anything else is not shown, whatever the response says. AVIF is shown if the
@@ -20,9 +21,9 @@ export const IMAGE_TYPES = {
     'image/avif': 'AVIF',
 };
 
-// Whether this browser decoded a HEIC/HEIF image itself: null = not known yet. Safari
-// does; the others get a JPEG converted by the server (see utils/heifConvert.js).
-let nativeHeic = null;
+// Transient answers (busy, timed out) are not remembered: stepping back or "Try again"
+// asks the server again
+const TRANSIENT_STATUSES = [502, 503, 504];
 
 const LOAD_ERROR = 'The image could not be loaded. Please try again.';
 const DECODE_TIMEOUT_MS = 15000;
@@ -176,8 +177,9 @@ class ImageViewerDialog extends React.Component {
             return {error: LOAD_ERROR, status: null};
         }
         const name = this.list[index].name;
-        // HEIC/HEIF: the plain image first (Safari shows it), or the server's JPEG at once
-        // when this browser has already failed to decode one (utils/heifConvert.js)
+        // HEIC/HEIF: the plain image if this browser decodes HEIC itself (Safari; found out
+        // once with a tiny picture, utils/heicProbe.js), else the server's JPEG at once
+        const nativeHeic = isHeifName(name) ? await probeNativeHeic(decodeCheck) : null;
         let convert = convertFirst(name, nativeHeic);
         let entry = null;
         for (let attempt = 0; attempt < 2 && !entry; attempt++) {
@@ -201,9 +203,6 @@ class ImageViewerDialog extends React.Component {
             } else {
                 const outcome = await withTimeout(decodeCheck(result.blob), DECODE_TIMEOUT_MS);
                 const decoded = !!(outcome && !outcome.timedOut);
-                if (isHeifType(result.type)) {
-                    nativeHeic = decoded;
-                }
                 if (this.unmounted) {
                     break;
                 } else if (needsConversion(result.type, decoded) && !convert) {
@@ -217,7 +216,8 @@ class ImageViewerDialog extends React.Component {
                 }
             }
         }
-        if (entry && !this.unmounted) {
+        const transient = entry && (TRANSIENT_STATUSES.includes(entry.status) || entry.timedOut);
+        if (entry && !this.unmounted && !transient) {
             this.cache.set(path, entry);
         }
         return entry || {error: LOAD_ERROR, status: null};
@@ -456,6 +456,12 @@ class ImageViewerDialog extends React.Component {
         return (
             <div className='alert alert-warning file-viewer-error' role='alert'>
                 <div>{error}</div>
+                {TRANSIENT_STATUSES.includes(status) && (
+                    <div className='mt-2'>
+                        <Button size='sm' variant='outline-secondary' className='image-viewer-retry'
+                                onClick={() => this.showIndex(this.state.index)}>Try again</Button>
+                    </div>
+                )}
                 {status === 415 && (
                     <div className='small mt-1'>
                         The image viewer shows PNG, JPEG, GIF, WebP, HEIC/HEIF and AVIF images, recognized

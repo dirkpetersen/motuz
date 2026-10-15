@@ -161,6 +161,16 @@ export default class DocxView extends React.Component {
         this.urls.clear();
     }
 
+    /** Remembers the page's own blob: URLs found in the rendered `body` and `styles` */
+    collectUrls(body, styles) {
+        const prefix = blobPrefix();
+        for (const url of blobUrlsIn(body.innerHTML + styles.innerHTML)) {
+            if (url.startsWith(prefix)) {
+                this.urls.add(url);
+            }
+        }
+    }
+
     /**
      * Every picture URL docx-preview made carries the content type the document
      * declared. Re-typed from the bytes (or removed): see utils/docxPictures.js.
@@ -221,26 +231,21 @@ export default class DocxView extends React.Component {
             }
         }, RENDER_TIMEOUT_MS);
         try {
-            // Every blob: URL docx-preview makes is ours to revoke, also after a failure
-            const create = URL.createObjectURL;
-            URL.createObjectURL = (...args) => {
-                const url = create.apply(URL, args);
-                this.urls.add(url);
-                return url;
-            };
-            try {
-                await renderAsync(this.props.zip, body, styles, DOCX_OPTIONS);
-            } finally {
-                URL.createObjectURL = create;
-            }
+            await renderAsync(this.props.zip, body, styles, DOCX_OPTIONS);
         } catch (e) {
             clearTimeout(this.timer);
+            // What was built before the failure holds blob: URLs docx-preview made
+            this.collectUrls(body, styles);
             this.revokeAll();
             if (!this.unmounted) {
                 this.setState({status: 'error', error: `The document could not be rendered: ${e && e.message ? e.message : e}`});
             }
             return;
         }
+        // The pictures' blob: URLs are in the result (img src, VML/SVG image href, url() of
+        // the CSS); the global URL.createObjectURL is not touched (other parts of the app
+        // make blob URLs too)
+        this.collectUrls(body, styles);
         clearTimeout(this.timer);
         if (this.unmounted || this.state.status !== 'rendering') {
             this.revokeAll();

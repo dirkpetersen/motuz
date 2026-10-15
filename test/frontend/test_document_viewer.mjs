@@ -78,6 +78,12 @@ test('CSS from documents loses every url() except the page\'s own blob: URLs', (
     assert.equal(stripCssUrls('background: \\u\\r\\l(https://evil/x)', blob), 'background: none');
     assert.equal(stripCssUrls('@im\\port "https://evil/x.css"; p{}', blob), ' p{}');
     assert.equal(stripCssUrls('background: ur\\6c(https://evil/x)', blob), 'background: none');
+    // an escaped backslash must not make a new escape: \5c 75rl( is \75rl( is url(
+    assert.equal(stripCssUrls('background: \\5c 75rl(https://evil/x)', blob), 'background: none');
+    assert.equal(stripCssUrls('@\\5c 69mport "https://evil/x.css"; p{}', blob), ' p{}');
+    assert.equal(stripCssUrls('background: \\5c 5c 75rl(https://evil/x)', blob), 'background: none');
+    assert.ok(!stripCssUrls('a{b:\\\\\\\\75rl(https://evil/x)}', blob).includes('https://evil'));
+    assert.ok(!stripCssUrls('a{b:\\5c 5c 5c 5c 5c 75rl(https://evil/x)}', blob).includes('https://evil'));
     assert.equal(stripCssUrls('font-family: x; src: url(data:font/woff2;base64,AAAA)', null), 'font-family: x; src: none');
     assert.equal(stripCssUrls(null), '');
 });

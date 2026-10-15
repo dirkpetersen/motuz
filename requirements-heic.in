@@ -1,0 +1,6 @@
+# The HEIC/HEIF converter of the image viewer (api/utils/heic_convert.py): installed with hashes
+# into a directory every user can read, by the Dockerfile and bin/systemd/install.sh. Regenerate with
+#   uv pip compile requirements-heic.in -c requirements.txt --generate-hashes --python-version 3.12 -o requirements-heic.txt
+# (the versions are those of requirements.txt; hashes cover every wheel of them, e.g. cp312 and cp314)
+pi-heif
+Pillow

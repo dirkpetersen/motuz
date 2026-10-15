@@ -713,9 +713,12 @@ logged-in user (locally with their permissions, in the cloud with their connecti
   converted to JPEG". The converter is C code reading an untrusted file, so it runs in a
   separate process **as the logged-in user** (the same `sudo` rule as every file
   operation; never as root and never as the service account) with limits on memory
-  (2 GiB), CPU time, open files and no files written, and a 60 s time limit. It uses
+  (2 GiB), CPU time, open files and no files written (it decodes nothing if one of them
+  cannot be set), and a 60 s time limit; at most two conversions run at once
+  (`MOTUZ_HEIC_MAX_CONCURRENT`, further requests wait 5 s and are then answered "busy, try
+  again"). It uses
   [pi-heif](https://github.com/bigcat88/pillow_heif) (the decode-only build of
-  pillow-heif) and Pillow, pinned in `requirements.in`. Their wheels bundle **libheif and
+  pillow-heif) and Pillow, pinned in `requirements.in` and installed with hash checking from `requirements-heic.txt`. Their wheels bundle **libheif and
   libde265, licensed LGPL-3.0**, as separate shared libraries that Python loads at run
   time (`pi_heif.libs/` next to the package: replaceable, nothing is linked into Motuz's
   MIT-licensed code); no x265 or other GPL encoder is included. HEVC is covered by patent
