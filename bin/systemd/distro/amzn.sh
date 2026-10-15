@@ -16,8 +16,17 @@ REDIS_SERVER=/usr/bin/valkey-server
 REDIS_CLI=/usr/bin/valkey-cli
 # /etc/pam.d/motuz: authentication and account checks of the authselect stack
 PAM_TEMPLATE="$REPO_DIR/deployment/systemd/pam.d/motuz.amzn"
-# The packages' own services, masked: Motuz runs its own instances as user services
+# The packages' own services, masked: Motuz runs its own instances as user services.
+# The default here is the private cluster and the private Valkey; --system-postgres
+# uses the distribution's postgresql.service (postgresql-setup --initdb). There is no
+# system Valkey mode: valkey.conf has no include directory, so it would mean rewriting
+# the package's configuration (SYSTEM_REDIS_SOCKET stays empty: install.sh --system-redis refuses).
 DISTRO_SERVICES="postgresql.service valkey.service valkey-sentinel.service"
+DISTRO_PG_SERVICE=postgresql.service
+DISTRO_REDIS_SERVICE=valkey.service
+DEFAULT_POSTGRES=private
+DEFAULT_REDIS=private
+SYSTEM_REDIS_SOCKET=""
 # The venv's interpreter (bin/systemd/deploy.sh): AL2027's own Python 3.14 instead of uv's
 # 3.12 (versions.env). The backend unit tests and the e2e suites pass on it with the
 # pinned requirements.txt; it gets the distribution's security updates and SELinux's
@@ -40,18 +49,27 @@ distro_install_packages() {
     # The AMI has curl-minimal, which conflicts with the full curl package; either works
     command -v curl >/dev/null || pkgs+=(curl)
     dnf -y -q install "${pkgs[@]}"
-    local unit
-    for unit in $DISTRO_SERVICES; do
-        systemctl disable --now "$unit" >/dev/null 2>&1 || true
-        systemctl mask "$unit" >/dev/null
-    done
+    mask_private_services
     # Another nodejs package may own the `node` alternative
     if [ "$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null)" != 24 ]; then
         alternatives --set node /usr/bin/node-24
     fi
-    if [ -f /var/lib/pgsql/data/PG_VERSION ]; then
+    if [ "$POSTGRES_MODE" = private ] && [ -f /var/lib/pgsql/data/PG_VERSION ]; then
         warn "a PostgreSQL cluster exists in /var/lib/pgsql/data; it is stopped (postgresql.service masked) but kept"
     fi
+}
+
+# --system-postgres: the package's postgresql.service with the cluster in
+# /var/lib/pgsql/data, initialised if missing, enabled and running
+distro_system_postgres_prepare() {
+    systemctl unmask postgresql.service >/dev/null 2>&1 || true
+    if [ ! -f /var/lib/pgsql/data/PG_VERSION ]; then
+        log "postgresql-setup --initdb"
+        PGSETUP_INITDB_OPTIONS="-E UTF8 --locale=C.UTF-8" postgresql-setup --initdb >/dev/null             || die "postgresql-setup --initdb failed"
+    fi
+    systemctl enable postgresql.service >/dev/null 2>&1 || true
+    systemctl start postgresql.service || die "postgresql.service does not start (journalctl -u postgresql)"
+    SYSTEM_PG_UNIT=postgresql.service
 }
 
 # A remote worker (install.sh --worker-only): motuz_worker.py runs on the system python3

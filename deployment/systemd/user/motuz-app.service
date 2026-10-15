@@ -6,9 +6,6 @@
 [Unit]
 Description=Motuz app (uWSGI on 127.0.0.1:5000 and :5001)
 PartOf=motuz.target
-Requires=motuz-postgres.service
-Wants=motuz-redis.service
-After=motuz-postgres.service motuz-redis.service
 
 [Service]
 Type=notify

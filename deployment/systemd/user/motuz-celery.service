@@ -4,9 +4,7 @@
 [Unit]
 Description=Motuz Celery worker
 PartOf=motuz.target
-Requires=motuz-postgres.service
-Wants=motuz-redis.service
-After=motuz-postgres.service motuz-redis.service motuz-app.service
+After=motuz-app.service
 
 [Service]
 Type=simple

@@ -19,7 +19,10 @@
 #             ui-callback security (default: all; e2e and broker need a fresh database,
 #             i.e. a new VM)
 # Environment: MOTUZ_E2E_UI=auto|require|skip as for run.sh (chromium for playwright is
-# installed in the VM); vm.sh's MOTUZ_E2E_VM_* variables.
+# installed in the VM); vm.sh's MOTUZ_E2E_VM_* variables; MOTUZ_E2E_INSTALL_OPTS: more
+# options for install.sh, e.g. "--private-postgres --private-redis" (the default is the
+# distribution's: system services on Ubuntu, private ones on Amazon Linux) or
+# "--system-postgres" on Amazon Linux.
 #
 # Inside the machine (as root; used by the above, and usable on any test machine with
 # the systemd install; it creates the users alice and bob):
@@ -90,7 +93,7 @@ if [ "$MODE" = host ]; then
     log "copying the working tree to $SRC"
     "$VM" push "$REPO" "$SRC" || exit 1
     log "install.sh, users, deploy.sh (in the VM)"
-    "$VM" ssh "sudo MOTUZ_E2E_UI=$UI_MODE $SRC/test/e2e/run_systemd.sh --inside-setup" 2>&1 | tee "$LOGS/setup.log"
+    "$VM" ssh "sudo MOTUZ_E2E_UI=$UI_MODE MOTUZ_E2E_INSTALL_OPTS=\"${MOTUZ_E2E_INSTALL_OPTS:-}\" $SRC/test/e2e/run_systemd.sh --inside-setup" 2>&1 | tee "$LOGS/setup.log"
     [ "${PIPESTATUS[0]}" = 0 ] || { echo "ERROR: setup failed (see $LOGS/setup.log)" >&2; exit 1; }
     log "suites (in the VM)"
     "$VM" ssh "sudo MOTUZ_E2E_UI=$UI_MODE $SRC/test/e2e/run_systemd.sh --inside ${ARGS[*]:-}"
@@ -150,8 +153,9 @@ restart_motuz() { # units...
 }
 
 if [ "$MODE" = setup ]; then
-    log "install.sh --local-accounts"
-    "$REPO/bin/systemd/install.sh" --local-accounts > "$LOGS/install.log" 2>&1 \
+    log "install.sh --local-accounts ${MOTUZ_E2E_INSTALL_OPTS:-}"
+    # shellcheck disable=SC2086
+    "$REPO/bin/systemd/install.sh" --local-accounts ${MOTUZ_E2E_INSTALL_OPTS:-} > "$LOGS/install.log" 2>&1 \
         || { tail -30 "$LOGS/install.log"; die "install.sh failed (see $LOGS/install.log)"; }
     tail -5 "$LOGS/install.log"
     HOME_DIR=$(getent passwd "$ACCOUNT" | cut -d: -f6)
@@ -190,6 +194,7 @@ MOTUZ_ONEDRIVE_CLIENT_ID=
 MOTUZ_ONEDRIVE_REDIRECT_URI=
 MOTUZ_RCLONE_CHECKERS=16
 MOTUZ_RCLONE_MAX_TRANSFERS=48
+MOTUZ_VIEW_IMAGE_MAX_BYTES=2M
 EOF
     if [ ! -f "$HOME_DIR/data/certs/cert.crt" ]; then
         (umask 077 && openssl req -x509 -newkey rsa:2048 -nodes -days 7 -subj /CN=localhost \

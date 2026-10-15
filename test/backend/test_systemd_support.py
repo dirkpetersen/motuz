@@ -300,8 +300,10 @@ class TestDistroModules(unittest.TestCase):
     """Every bin/systemd/distro/<ID>.sh defines what install.sh, deploy.sh and uninstall.sh use"""
 
     MODULES = {'ubuntu': ('ubuntu', '26.04'), 'amzn': ('amzn', '2027')}
-    VARIABLES = ('DISTRO_NAME', 'PG_BINDIR', 'REDIS_SERVER', 'REDIS_CLI', 'PAM_TEMPLATE', 'DISTRO_SERVICES')
-    FUNCTIONS = ('distro_supported', 'distro_install_packages', 'distro_install_worker_packages', 'distro_firewall_hint')
+    VARIABLES = ('DISTRO_NAME', 'PG_BINDIR', 'REDIS_SERVER', 'REDIS_CLI', 'PAM_TEMPLATE', 'DISTRO_SERVICES',
+                 'DISTRO_PG_SERVICE', 'DISTRO_REDIS_SERVICE', 'DEFAULT_POSTGRES', 'DEFAULT_REDIS')
+    FUNCTIONS = ('distro_supported', 'distro_install_packages', 'distro_install_worker_packages', 'distro_firewall_hint',
+                 'distro_system_postgres_prepare')
 
     def module(self, name, os_id, version):
         script = ('REPO_DIR="$1"; source "$1/bin/systemd/distro/$2.sh"; ID="$3"; VERSION_ID="$4"; '
@@ -343,6 +345,211 @@ class TestDistroModules(unittest.TestCase):
         self.assertEqual(pam, [['auth', 'include', 'password-auth'], ['account', 'include', 'password-auth']])
         # Ubuntu keeps uv's Python 3.12 (versions.env)
         self.assertEqual(self.module('ubuntu', 'ubuntu', '26.04')['DISTRO_PYTHON'], '')
+
+    def test_defaults_per_distribution(self):
+        # Ubuntu uses the distribution's PostgreSQL and Redis services, Amazon Linux its private instances
+        ubuntu, amzn = self.module('ubuntu', 'ubuntu', '26.04'), self.module('amzn', 'amzn', '2027')
+        self.assertEqual((ubuntu['DEFAULT_POSTGRES'], ubuntu['DEFAULT_REDIS']), ('system', 'system'))
+        self.assertEqual((amzn['DEFAULT_POSTGRES'], amzn['DEFAULT_REDIS']), ('private', 'private'))
+        self.assertEqual(ubuntu['DISTRO_PG_SERVICE'], 'postgresql.service')
+        self.assertEqual(ubuntu['DISTRO_REDIS_SERVICE'], 'redis-server.service')
+
+
+def bash_lib(script, **env):
+    """Runs `script` with bin/systemd/_lib.sh and _system_services.sh sourced"""
+    code = 'set -euo pipefail; REPO_DIR=%s; source %s/bin/systemd/_lib.sh; source %s/bin/systemd/_system_services.sh; %s' % (
+        REPO, REPO, REPO, script)
+    return subprocess.run(['bash', '-c', code], capture_output=True, text=True, env=dict(os.environ, **env))
+
+
+class TestServiceModes(unittest.TestCase):
+    """Where PostgreSQL and the broker live: private (the account's), system (the distribution's), external"""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(subprocess.run, ['rm', '-rf', self.tmp])
+        self.settings = os.path.join(self.tmp, 'motuz.env')
+        self.pgdata = os.path.join(self.tmp, 'pg')
+
+    def write(self, text):
+        with open(self.settings, 'w') as f:
+            f.write(text)
+
+    def mode(self, function, *args):
+        out = bash_lib('%s %s' % (function, ' '.join(args)))
+        self.assertEqual(out.returncode, 0, out.stderr)
+        return out.stdout.strip()
+
+    def test_database_mode_explicit(self):
+        for mode in ('private', 'system', 'external'):
+            self.write('MOTUZ_DATABASE_MODE="%s"\nMOTUZ_DATABASE_HOST=127.0.0.1:5432\n' % mode)
+            self.assertEqual(self.mode('database_mode', self.settings, self.pgdata), mode)
+
+    def test_database_mode_inferred_for_installs_without_the_setting(self):
+        self.write('MOTUZ_DATABASE_HOST=127.0.0.1:5432\n')
+        self.assertEqual(self.mode('database_mode', self.settings, self.pgdata), 'unset')
+        os.makedirs(self.pgdata)
+        with open(os.path.join(self.pgdata, 'PG_VERSION'), 'w') as f:
+            f.write('18\n')
+        self.assertEqual(self.mode('database_mode', self.settings, self.pgdata), 'private')  # an existing install keeps its cluster
+        self.write('MOTUZ_DATABASE_HOST=db.example.org:5432\n')
+        self.assertEqual(self.mode('database_mode', self.settings, self.pgdata), 'external')
+
+    def test_invalid_mode_is_refused(self):
+        self.write('MOTUZ_DATABASE_MODE=docker\n')
+        out = bash_lib('database_mode %s %s' % (self.settings, self.pgdata))
+        self.assertNotEqual(out.returncode, 0)
+        self.assertIn('use private, system or external', out.stderr)
+
+    def test_broker_mode(self):
+        self.write('')
+        self.assertEqual(self.mode('broker_mode', self.settings, self.tmp), 'unset')
+        with open(os.path.join(self.tmp, 'redis.conf'), 'w') as f:
+            f.write('port 0\n')
+        self.assertEqual(self.mode('broker_mode', self.settings, self.tmp), 'private')
+        self.write('MOTUZ_BROKER_MODE=system\n')
+        self.assertEqual(self.mode('broker_mode', self.settings, self.tmp), 'system')
+
+    def test_existing_installs_never_switch_silently(self):
+        pick = lambda option, existing, default: bash_lib('pick_mode PostgreSQL MOTUZ_DATABASE_MODE "%s" %s %s' % (option, existing, default))
+        # no option: the existing mode wins over the distribution's default
+        self.assertEqual(pick('', 'private', 'system').stdout.strip(), 'private')
+        self.assertEqual(pick('', 'system', 'private').stdout.strip(), 'system')
+        self.assertEqual(pick('', 'external', 'system').stdout.strip(), 'external')
+        # a fresh install: the option, else the default
+        self.assertEqual(pick('', 'unset', 'system').stdout.strip(), 'system')
+        self.assertEqual(pick('private', 'unset', 'system').stdout.strip(), 'private')
+        # explicit private -> system is allowed; system -> private and anything for an external database are refused
+        self.assertEqual(pick('system', 'private', 'private').stdout.strip(), 'system')
+        refused = pick('private', 'system', 'system')
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertIn('already runs as a system service', refused.stderr)
+        self.assertNotEqual(pick('system', 'external', 'system').returncode, 0)
+
+    def test_units_depend_on_a_database_service_only_when_it_is_private(self):
+        def install(db, broker):
+            dest = tempfile.mkdtemp(dir=self.tmp)
+            out = bash_lib('PG_BINDIR=/usr/lib/postgresql/18/bin; REDIS_SERVER=/usr/bin/redis-server; install_units %s %s %s' % (dest, db, broker))
+            self.assertEqual(out.returncode, 0, out.stderr)
+            files = {}
+            for root, _, names in os.walk(dest):
+                for name in names:
+                    with open(os.path.join(root, name)) as f:
+                        files[os.path.relpath(os.path.join(root, name), dest)] = f.read()
+            return files
+
+        files = install('private', 'private')
+        self.assertIn('motuz-postgres.service', files)
+        self.assertIn('motuz-redis.service', files)
+        self.assertIn('Requires=motuz-postgres.service', files['motuz-app.service.d/10-postgres.conf'])
+        self.assertIn('Requires=motuz-postgres.service', files['motuz-celery.service.d/10-postgres.conf'])
+        self.assertIn('Wants=motuz-postgres.service', files['motuz.target.d/10-postgres.conf'])
+        self.assertIn('Wants=motuz-redis.service', files['motuz.target.d/10-redis.conf'])
+        self.assertIn('/usr/lib/postgresql/18/bin/postgres', files['motuz-postgres.service'])
+
+        files = install('system', 'system')  # also the external database: nothing local is wanted, required or started
+        self.assertEqual(sorted(files), ['motuz-app.service', 'motuz-celery.service', 'motuz-traefik.service', 'motuz.target'])
+        for name, text in files.items():
+            text = ''.join(line for line in text.splitlines(True) if not line.startswith('#'))
+            self.assertNotIn('motuz-postgres', text, name)
+            self.assertNotIn('motuz-redis', text, name)
+
+        files = install('system', 'private')
+        self.assertNotIn('motuz-postgres.service', files)
+        self.assertIn('motuz-redis.service', files)
+        self.assertNotIn('motuz-postgres.service.d', ' '.join(files))
+        self.assertNotIn('10-postgres.conf', ' '.join(files))
+
+    def test_units_in_the_repository_do_not_name_the_database_or_broker_services(self):
+        for name in ('motuz-app.service', 'motuz-celery.service', 'motuz.target'):
+            with open(os.path.join(REPO, 'deployment', 'systemd', 'user', name)) as f:
+                text = ''.join(line for line in f if not line.startswith('#'))
+            self.assertNotIn('motuz-postgres', text, name)
+            self.assertNotIn('motuz-redis', text, name)
+
+    def test_system_redis_acl_line(self):
+        # the generated config never contains the password, only its SHA-256, and denies the dangerous commands
+        with open(os.path.join(REPO, 'bin', 'systemd', '_system_services.sh')) as f:
+            text = f.read()
+        self.assertIn('user default off', text)
+        self.assertIn('port 0', text)
+        self.assertIn('unixsocketperm 770', text)
+        self.assertIn('-@admin -@dangerous -@scripting', text)
+
+
+@unittest.skipIf(os.geteuid() == 0, 'config.sh refuses to run as root')
+class TestAssistantSupport(unittest.TestCase):
+    """bin/systemd/config.sh and the files for a Claude Code deployment (README, "Deploy with an AI assistant")"""
+
+    def setUp(self):
+        self.home = tempfile.mkdtemp()
+        self.addCleanup(subprocess.run, ['rm', '-rf', self.home])
+        config = os.path.join(self.home, '.config', 'motuz')
+        os.makedirs(config)
+        with open(os.path.join(config, 'motuz.env'), 'w') as f:
+            f.write('MOTUZ_DATABASE_MODE="system"\nMOTUZ_OPERATOR_NAME="Lab"\n')
+        with open(os.path.join(config, 'secrets.env'), 'w') as f:
+            f.write('MOTUZ_FLASK_SECRET_KEY="topsecretvalue"\nMOTUZ_GDRIVE_CLIENT_SECRET=""\n')
+        self.config = config
+
+    def run_config(self, *args):
+        return subprocess.run([os.path.join(REPO, 'bin', 'systemd', 'config.sh'), *args], capture_output=True, text=True,
+                              env=dict(os.environ, HOME=self.home))
+
+    def test_show_never_prints_secrets(self):
+        out = self.run_config('show')
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertIn('MOTUZ_OPERATOR_NAME="Lab"', out.stdout)
+        self.assertIn('MOTUZ_FLASK_SECRET_KEY: set', out.stdout)
+        self.assertIn('MOTUZ_GDRIVE_CLIENT_SECRET: empty', out.stdout)
+        self.assertNotIn('topsecretvalue', out.stdout + out.stderr)
+
+    def test_set_writes_settings_only(self):
+        out = self.run_config('set', 'MOTUZ_CONTACT_EMAIL', 'admin@example.org')
+        self.assertEqual(out.returncode, 0, out.stderr)
+        with open(os.path.join(self.config, 'motuz.env')) as f:
+            self.assertIn('MOTUZ_CONTACT_EMAIL="admin@example.org"', f.read())
+        for key in ('MOTUZ_FLASK_SECRET_KEY', 'MOTUZ_SMTP_PASSWORD', 'MOTUZ_X_TOKEN'):  # secrets
+            self.assertNotEqual(self.run_config('set', key, 'x').returncode, 0, key)
+        for key in ('MOTUZ_DATABASE_MODE', 'MOTUZ_DATABASE_HOST', 'MOTUZ_AUTH_HELPER'):  # managed by install.sh/deploy.sh
+            self.assertNotEqual(self.run_config('set', key, 'x').returncode, 0, key)
+        self.assertNotEqual(self.run_config('set', 'PATH', '/x').returncode, 0)
+        with open(os.path.join(self.config, 'secrets.env')) as f:
+            self.assertNotIn('"x"', f.read())
+
+    def test_ask_secret_needs_a_terminal_and_a_known_name(self):
+        self.assertNotEqual(self.run_config('ask-secret', 'MOTUZ_FLASK_SECRET_KEY').returncode, 0)
+        out = self.run_config('ask-secret', 'MOTUZ_GDRIVE_CLIENT_SECRET')  # no tty in the test
+        self.assertNotEqual(out.returncode, 0)
+        with open(os.path.join(self.config, 'secrets.env')) as f:
+            self.assertIn('MOTUZ_GDRIVE_CLIENT_SECRET=""', f.read())
+
+    def test_guardrail_settings(self):
+        with open(os.path.join(REPO, 'deployment', 'systemd', 'claude', 'settings.json')) as f:
+            settings = json.load(f)
+        permissions = settings['permissions']
+        self.assertEqual(permissions['defaultMode'], 'default')
+        self.assertEqual(permissions['disableBypassPermissionsMode'], 'disable')
+        for rule in ('Bash(sudo:*)', 'Bash(su:*)', 'Read(~/.config/motuz/secrets.env)', 'Edit(~/.config/motuz/secrets.env)'):
+            self.assertIn(rule, permissions['deny'])
+        # nothing the playbook needs is denied, and nothing allowed can escalate or read secrets
+        for rule in permissions['allow']:
+            self.assertNotIn('sudo', rule)
+            self.assertNotIn('secrets.env', rule)
+        self.assertFalse(set(permissions['allow']) & set(permissions['deny']))
+
+    def test_playbook(self):
+        path = os.path.join(REPO, '.claude', 'skills', 'motuz-deploy', 'SKILL.md')
+        with open(path) as f:
+            text = f.read()
+        front = text.split('---')[1]
+        self.assertIn('name: motuz-deploy', front)
+        self.assertIn('description:', front)
+        self.assertIn('disable-model-invocation: true', front)
+        # every script it tells the agent to run exists
+        for script in ('bin/systemd/deploy.sh', 'bin/systemd/config.sh', 'bin/systemd/smoke_test.py'):
+            self.assertIn(script, text)
+            self.assertTrue(os.access(os.path.join(REPO, script), os.X_OK), script)
 
 
 if __name__ == '__main__':

@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 # Prepares a machine (a VM, an EC2 instance or a privileged LXC) with Ubuntu 26.04 LTS or
 # Amazon Linux 2027 (the modules in bin/systemd/distro) for Motuz without docker:
-# `systemd --user` services of one dedicated account (README, "Install without Docker
-# (Ubuntu 26.04)" and "Install on Amazon Linux 2027 (default on EC2)"). Run as root,
+# `systemd --user` services of one dedicated account (README, "Install (default: without Docker)"
+# and "Install on Amazon Linux 2027 (default on EC2)"). Run as root,
 # once; it is idempotent, so run it again after updates that change what it installs
 # (bin/systemd/deploy.sh warns about that). bin/systemd/uninstall.sh undoes it.
 #
 # Usage: sudo bin/systemd/install.sh [--local-accounts] [--sudo-group=GROUP] [--user=NAME] [--home=DIR]
+#                                    [--system-postgres|--private-postgres] [--system-redis|--private-redis]
 #        sudo bin/systemd/install.sh --worker-only [--central-url=URL] [--pool=NAME]
 #                                    [--credential-file=FILE] [--run-as=NAME] [--sudo-group=GROUP] [--user=NAME] [--home=DIR]
 #   --local-accounts    install the login helper (motuz-auth.socket), needed when users
@@ -14,6 +15,23 @@
 #   --sudo-group=GROUP  Motuz may act only as members of GROUP (default: any user but root)
 #   --user=NAME         the service account (default motuz)
 #   --home=DIR          its home directory, on local disk (default /var/lib/motuz)
+#   --system-postgres   use the distribution's own PostgreSQL 18 service (the default on
+#                       Ubuntu): its cluster (Ubuntu: 18/main, created with pg_createcluster
+#                       if missing; Amazon Linux: postgresql-setup --initdb), on localhost
+#                       only, with the role motuz_user (scram) and the database motuz
+#                       owned by it and pg_hba lines for that role on 127.0.0.1 and ::1.
+#   --private-postgres  the account's own cluster ~/data/pg, run as the user service
+#                       motuz-postgres with the distribution's binaries (the default on
+#                       Amazon Linux). An existing install keeps the mode it has; going
+#                       private -> system needs bin/systemd/migrate_postgres.sh.
+#   --system-redis      use the distribution's redis-server (the default on Ubuntu) on its
+#                       unix socket only (/run/redis/redis-server.sock, no TCP), through
+#                       /etc/redis/motuz.conf and a systemd drop-in, with the ACL user
+#                       motuz; the account joins the group redis. Not on Amazon Linux.
+#   --private-redis     the user service motuz-redis (Redis/Valkey on a socket in the
+#                       account's runtime directory; default on Amazon Linux)
+#                       The generated passwords go to ~/.config/motuz/handoff.env (mode 600,
+#                       the account's), which deploy.sh merges into secrets.env.
 #   --worker-only       a remote worker host (README, "Remote workers (HTTPS only)"); no
 #                       database, broker, web server or login helper:
 #                       python3, sudo, rclone, the account and its sudoers rule, and the
@@ -32,9 +50,9 @@
 #                       rule then allows only /usr/local/bin/rclone as NAME
 #
 # What it does:
-#   - packages (bin/systemd/distro/<ID>.sh): PostgreSQL 18 (the distribution's own
-#     cluster and service never run), Redis or Valkey (its service masked), Node.js/npm,
-#     build tools, git, curl, openssl (--worker-only: python3, sudo, curl, unzip)
+#   - packages (bin/systemd/distro/<ID>.sh): PostgreSQL 18, Redis or Valkey (their own
+#     services are used or masked, see the options), Node.js/npm, build tools, git, curl,
+#     openssl (--worker-only: python3, sudo, curl, unzip)
 #   - pinned rclone, Traefik and uv in /usr/local/bin, SHA256 checked (--worker-only: rclone)
 #   - the account, `loginctl enable-linger`, its sudoers rule (checked with visudo -c)
 #   - sysctl: net.ipv4.ip_unprivileged_port_start=80 (Traefik is a user service on
@@ -48,6 +66,7 @@
 
 set -euo pipefail
 source "$(dirname "$0")/_lib.sh"
+source "$(dirname "$0")/_system_services.sh"
 
 LOCAL_ACCOUNTS=0
 SUDO_GROUP=""
@@ -58,6 +77,8 @@ CENTRAL_URL=""
 POOL=""
 CREDENTIAL_FILE=""
 RUN_AS=""
+PG_OPTION=""
+REDIS_OPTION=""
 while [ $# -gt 0 ]; do
     opt="$1"; value=""
     case "$opt" in
@@ -69,6 +90,10 @@ while [ $# -gt 0 ]; do
         --sudo-group) SUDO_GROUP="$value" ;;
         --user) ACCOUNT="$value" ;;
         --home) HOME_DIR="$value" ;;
+        --system-postgres) PG_OPTION=system ;;
+        --private-postgres) PG_OPTION=private ;;
+        --system-redis) REDIS_OPTION=system ;;
+        --private-redis) REDIS_OPTION=private ;;
         --worker-only) WORKER_ONLY=1 ;;
         --central-url) CENTRAL_URL="$value" ;;
         --pool) POOL="$value" ;;
@@ -96,7 +121,14 @@ if [ "$WORKER_ONLY" = 1 ]; then
 elif [ -n "$CENTRAL_URL$POOL$CREDENTIAL_FILE$RUN_AS" ]; then
     die "--central-url, --pool, --credential-file and --run-as need --worker-only"
 fi
+[ "$WORKER_ONLY" = 0 ] || [ -z "$PG_OPTION$REDIS_OPTION" ] || die "--system-postgres, --private-postgres, --system-redis and --private-redis are for the server, not --worker-only"
 load_distro
+POSTGRES_MODE=private
+REDIS_MODE=private
+if [ "$WORKER_ONLY" = 0 ]; then
+    resolve_service_modes
+    echo "PostgreSQL: $POSTGRES_MODE, Redis: $REDIS_MODE (install.sh --help)"
+fi
 [ -d /run/systemd/system ] || die "systemd is not running (a container without systemd?)"
 
 load_versions
@@ -207,6 +239,21 @@ fi
 # (MOTUZ_SSO_CONFIG_DIR): traversable, not listable, owned by the account
 install -d -m 711 -o "$ACCOUNT" -g "$GROUP" /var/lib/motuz-aws-config
 
+# ---------------------------------------------------------------- system PostgreSQL, Redis
+if [ "$WORKER_ONLY" = 0 ]; then
+    [ "$POSTGRES_MODE" != system ] || setup_system_postgres
+    [ "$REDIS_MODE" != system ] || setup_system_redis
+    if [ "$POSTGRES_MODE" = system ] && [ "$EXISTING_PG" = private ]; then
+        warn "this install runs the private cluster ~/data/pg: its data is not moved. Move it with: sudo -iu $ACCOUNT ~/motuz/bin/systemd/migrate_postgres.sh"
+    fi
+    if [ "$POSTGRES_MODE" = private ] && [ "$DEFAULT_POSTGRES" = system ] && [ -z "$PG_OPTION" ]; then
+        echo "    PostgreSQL stays the private cluster ~/data/pg (this install has it); to use the distribution's service: install.sh --system-postgres, then migrate_postgres.sh (README)"
+    fi
+    if [ "$REDIS_MODE" = private ] && [ "$DEFAULT_REDIS" = system ] && [ -z "$REDIS_OPTION" ]; then
+        echo "    Redis stays the private motuz-redis service (this install has it); to use the distribution's: install.sh --system-redis, then deploy.sh"
+    fi
+fi
+
 # ---------------------------------------------------------------- login helper
 if [ "$LOCAL_ACCOUNTS" = 1 ]; then
     log "login helper (motuz-auth.socket)"
@@ -295,7 +342,7 @@ log "done"
 distro_firewall_hint
 cat <<EOF
 
-Next, as $ACCOUNT (sudo -iu $ACCOUNT):
+Next, as $ACCOUNT (sudo -iu $ACCOUNT, or sudo machinectl shell $ACCOUNT@):
     git clone https://github.com/FredHutch/motuz.git ~/motuz    # or your fork / branch
     ~/motuz/bin/systemd/deploy.sh
 EOF
