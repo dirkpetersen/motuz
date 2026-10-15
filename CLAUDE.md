@@ -48,7 +48,7 @@ Suites are plain scripts (`*_test.py`, `traefik_test.sh`, `ui/ui_test.mjs`, help
 
 `test/e2e/run.sh` and `run_systemd.sh` share `test/e2e/_suites.sh` (fake server, suite runner, summary); the suites reach the installation only through `common.py`'s `sh()`, `psql()`, `pg_dump()` and `service_logs()` (and `appShell()` in `ui/ui_test.mjs`), which switch on `MOTUZ_E2E_TARGET=docker|systemd`.
 
-CI: `.github/workflows/ci.yml` (push and pull_request) runs the backend unit tests, the frontend build and `test/e2e/run.sh` with `MOTUZ_E2E_UI=require`; no secrets are needed.
+CI: `.github/workflows/ci.yml` (push and pull_request) runs the backend unit tests, the frontend build, `test/e2e/run.sh` (Docker) and the systemd install twice, `test/e2e/run_systemd.sh --distro=al2027` (container, ~6 min; the job first unloads the runner's AppArmor profile of `unix_chkpwd`, which attaches by path inside containers and breaks PAM in `user@.service`) and `test/e2e/run_systemd.sh` (Ubuntu 26.04 VM with KVM from the udev rule step, image cached, ~9 min), all with `MOTUZ_E2E_UI=require`; no secrets are needed.
 
 Lint: `pylint` using `.pylintrc` (no npm lint script / eslint config).
 
