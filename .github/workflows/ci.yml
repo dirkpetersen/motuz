@@ -94,11 +94,11 @@ jobs:
       # AppArmor profiles attach to binaries by path, also inside containers: the runner's
       # profile for /usr/sbin/unix_chkpwd makes PAM fail in the container's user@.service
       # ("could not obtain user info"). The runner is thrown away afterwards.
-      - name: Unload AppArmor profiles
+      - name: Unload the unix_chkpwd AppArmor profile
         run: |
-          sudo systemctl stop apparmor || true
-          sudo aa-teardown || true
-          sudo aa-status || true
+          sudo aa-status | grep -i chkpwd || true
+          sudo apparmor_parser -R /etc/apparmor.d/unix-chkpwd || true
+          sudo aa-status | grep -ci chkpwd || true
       # install.sh, deploy.sh and all suites run inside a privileged container with systemd
       # as PID 1 and its own network namespace (test/e2e/systemd/container.sh); the private
       # PostgreSQL and Valkey, the default on Amazon Linux. The UI suites install chromium
