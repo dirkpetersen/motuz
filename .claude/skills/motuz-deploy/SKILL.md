@@ -112,12 +112,14 @@ again. Do not change units or scripts to make an error go away.
 5. Login and a small copy job through the API, with a test user the administrator names.
    You cannot create files as another user (no sudo): ask for a path that user can read and
    write, e.g. `/home/<user>/motuz-test-src` (a folder with a file; the administrator
-   creates it) and a destination `/home/<user>/motuz-test-dst`. The password is typed by the
-   administrator, hidden, into a file that you do not read: tell them to run
-   `! read -rs -p 'password: ' p; printf '%s' "$p" > ~/.motuz-test-pw; chmod 600 ~/.motuz-test-pw; unset p`.
-   Then run `bin/systemd/smoke_test.py <user> ~/.motuz-test-pw <src> <dst>` (login, copy job,
-   waits for SUCCESS; prints PASS/FAIL, never the password) and ask the administrator to
-   look at the copied files. Delete `~/.motuz-test-pw` afterwards (`rm ~/.motuz-test-pw`).
+   creates it) and a destination `/home/<user>/motuz-test-dst`. The administrator types the
+   user's password, hidden, with `! bin/systemd/config.sh ask-test-password` (it needs a
+   terminal and says so if there is none; then they run it in a terminal of the account
+   instead). Then run `bin/systemd/smoke_test.py <user> <src> <dst>` (it reads only
+   `~/.motuz-test-pw`, talks only to this host, copies with `copy_links`, waits for SUCCESS
+   and prints PASS/FAIL, never the password) and ask the administrator to look at the copied
+   files. Afterwards the administrator removes the password file: `! rm ~/.motuz-test-pw` (the
+   settings deny you that path).
 6. Logs without secrets: `systemctl --user status motuz-app motuz-celery --no-pager -n 30`
    shows no passwords, tokens or `RCLONE_CONFIG_` values. The system journal needs an
    administrator: ask them to run, as root,

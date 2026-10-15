@@ -52,6 +52,11 @@ distro_install_packages() {
 }
 
 # --system-postgres: the distribution's cluster 18/main, created if missing, enabled and
+# Moves the cluster to another port (pg_conftool, so pg_lsclusters and psql agree)
+distro_system_postgres_set_port() { # port
+    pg_conftool 18 main set port "$1" || die "pg_conftool could not set the port"
+}
+
 # running (install.sh does the rest: role, database, pg_hba, listen_addresses)
 distro_system_postgres_prepare() {
     systemctl unmask postgresql.service >/dev/null 2>&1 || true

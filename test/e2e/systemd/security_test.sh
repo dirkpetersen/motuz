@@ -40,7 +40,9 @@ check "the login helper only runs as root on demand (socket activated, no daemon
 RULE=$(sudo -l -U "$ACCOUNT" 2>/dev/null | sed -n '/may run the following commands/,$p' | tail -n +2 | sed 's/^ *//')
 echo "    sudo -l -U $ACCOUNT: $RULE"
 check "sudo -l -U $ACCOUNT shows exactly the one rule" \
-    bash -c "[ \"\$(printf '%s\n' \"$RULE\" | grep -c .)\" = 1 ] && printf '%s' \"$RULE\" | grep -qE '^\(ALL, !root\) (SETENV: NOPASSWD:|NOPASSWD: ?SETENV:) /usr/local/bin/rclone, /usr/bin/ls, /usr/bin/mkdir, /usr/bin/env$'"
+    bash -c "[ \"\$(printf '%s\n' \"$RULE\" | grep -c .)\" = 1 ] && printf '%s' \"$RULE\" | grep -qE '^\(ALL, !root, !postgres, !redis, !valkey\) (SETENV: NOPASSWD:|NOPASSWD: ?SETENV:) /usr/local/bin/rclone, /usr/bin/ls, /usr/bin/mkdir, /usr/bin/env$'"
+check "$ACCOUNT cannot sudo -u postgres, redis or valkey (the superusers of the system services)" \
+    bash -c "! runuser -u $ACCOUNT -- sudo -n -u postgres /usr/bin/env true && ! runuser -u $ACCOUNT -- sudo -n -u redis /usr/bin/env true && ! runuser -u $ACCOUNT -- sudo -n -u valkey /usr/bin/env true"
 check "$ACCOUNT cannot sudo -u root" bash -c "! runuser -u $ACCOUNT -- sudo -n -u root /usr/bin/ls /root"
 check "$ACCOUNT cannot sudo -u '#0'" bash -c "! runuser -u $ACCOUNT -- sudo -n -u '#0' /usr/bin/ls /root"
 check "$ACCOUNT cannot sudo -u '#-1' (CVE-2019-14287)" bash -c "! runuser -u $ACCOUNT -- sudo -n -u '#-1' /usr/bin/id"
@@ -53,6 +55,24 @@ check "$ACCOUNT runs the allowed commands as alice" \
 check "sudo never logged rclone's credentials (ENV=RCLONE_CONFIG_...)" \
     bash -c "! journalctl --no-pager -o cat _COMM=sudo | grep -q 'RCLONE_CONFIG_'"
 check "$ACCOUNT has no password (locked)" bash -c "passwd -S $ACCOUNT | awk '{print \$2}' | grep -qE '^(L|LK)$'"
+
+# --- root never follows symlinks the account controls (install.sh --worker-only makes the
+# account's worker files; the system PostgreSQL / Redis handoff is root's own file)
+SYM=/var/lib/motuz-symtest
+REPO_ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
+rm -rf "$SYM"; mkdir -m 755 "$SYM"
+mv "$HOME_M/.config" "$HOME_M/.config.real"
+ln -s "$SYM" "$HOME_M/.config"
+"$REPO_ROOT/bin/systemd/install.sh" --worker-only > /tmp/symlink-install.log 2>&1; rc=$?
+rm -f "$HOME_M/.config"; mv "$HOME_M/.config.real" "$HOME_M/.config"
+check "install.sh does not follow a symlinked ~/.config (the target stays root:root 755 and empty)" \
+    bash -c "[ \"\$(stat -c '%U:%G %a' $SYM)\" = 'root:root 755' ] && [ -z \"\$(ls -A $SYM)\" ] && [ $rc != 0 ]"
+rm -rf "$SYM"
+if [ -e /etc/motuz/handoff-$ACCOUNT.env ]; then
+    check "the handoff file is root's, group $ACCOUNT, mode 640" \
+        bash -c "[ \"\$(stat -c '%U:%G %a' /etc/motuz/handoff-$ACCOUNT.env)\" = 'root:$ACCOUNT 640' ]"
+    check "install.sh left no handoff file inside the account's home" bash -c "! ls $HOME_M/.config/motuz | grep -q handoff"
+fi
 
 # --- ports and files
 echo "    listening TCP sockets:"

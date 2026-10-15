@@ -30,8 +30,7 @@ OPTIONAL_SECRETS="MOTUZ_ONEDRIVE_CLIENT_SECRET MOTUZ_GDRIVE_CLIENT_SECRET"
 # Value of KEY in a systemd EnvironmentFile (the subset these scripts write: KEY=value,
 # KEY="..." with \" \\ escapes, KEY='...'); empty if missing. Never `source` these files:
 # bash would expand $ and backquotes in secrets.
-env_get() { # file key
-    python3 -I -S - "$1" "$2" <<'EOF'
+ENV_GET_PY=$(cat <<'EOF'
 import sys
 path, key = sys.argv[1], sys.argv[2]
 value = ''
@@ -59,7 +58,59 @@ for line in lines:
     value = v
 sys.stdout.write(value)
 EOF
+)
+env_get() { # file key
+    python3 -I -S -c "$ENV_GET_PY" "$1" "$2"
 }
+
+# What root does with the account's files (install.sh): everything inside the account's
+# tree is read and written AS THE ACCOUNT (runuser), never as root, because the account
+# controls the names there: a symlink in ~/.config/motuz must not make root chown, read
+# or overwrite a file elsewhere. The account's own privileges are all a symlink can reach.
+account_env_get() { # file key (ACCOUNT)
+    runuser -u "$ACCOUNT" -- python3 -I -S -c "$ENV_GET_PY" "$1" "$2"
+}
+ENV_SET_PY=$(cat <<'EOF'
+import os, sys, tempfile
+path, key, value = sys.argv[1:4]
+if '\n' in value or '\x00' in value:
+    sys.exit('newline in ' + key)
+line = key + '="' + value.replace('\\', '\\\\').replace('"', '\\"') + '"'
+try:
+    lines = open(path, encoding='utf-8').read().split('\n')
+    if lines and lines[-1] == '':
+        lines.pop()
+    mode = os.stat(path).st_mode & 0o777
+except FileNotFoundError:
+    lines, mode = [], 0o600
+for i, l in enumerate(lines):
+    if l.startswith(key + '='):
+        lines[i] = line
+        break
+else:
+    lines.append(line)
+fd, tmp = tempfile.mkstemp(dir=os.path.dirname(os.path.realpath(path)) or '.')
+with os.fdopen(fd, 'w', encoding='utf-8') as f:
+    f.write('\n'.join(lines) + '\n')
+os.chmod(tmp, mode)
+os.replace(tmp, os.path.realpath(path))
+EOF
+)
+account_env_set() { # file key value (ACCOUNT)
+    runuser -u "$ACCOUNT" -- python3 -I -S -c "$ENV_SET_PY" "$1" "$2" "$3"
+}
+account_mkdir() { # mode dir... (ACCOUNT)
+    local mode="$1"; shift
+    runuser -u "$ACCOUNT" -- mkdir -p -m "$mode" "$@"
+}
+account_write() { # mode file < content (ACCOUNT): written by the account, mode applied to a new file
+    runuser -u "$ACCOUNT" -- sh -c 'umask 077; cat > "$1" && chmod "$2" "$1"' _ "$2" "$1"
+}
+
+# A generated secret (openssl rand -hex 32) and a TCP port: the only shapes that may reach
+# a psql meta-command, a PGPORT or a Redis ACL line made by root
+valid_secret() { [[ "${1:-}" =~ ^[0-9a-f]{64}$ ]]; }
+valid_port() { [[ "${1:-}" =~ ^[0-9]{1,5}$ ]] && [ "$1" -ge 1 ] && [ "$1" -le 65535 ]; }
 
 # KEY="value" for a systemd EnvironmentFile (backslash and double quote escaped)
 env_line() { # key value

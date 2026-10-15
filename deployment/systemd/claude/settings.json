@@ -15,9 +15,7 @@
       "Bash(ss -ltnp:*)",
       "Bash(bin/systemd/smoke_test.py:*)",
       "Bash(curl -sk https://127.0.0.1/api/system/info/)",
-      "Bash(git status:*)",
-      "Bash(git log:*)",
-      "Bash(git diff:*)"
+      "Bash(git status:*)"
     ],
     "deny": [
       "Bash(sudo:*)",
@@ -29,7 +27,6 @@
       "Bash(visudo:*)",
       "Bash(*/etc/sudoers*)",
       "Bash(*/etc/pam.d*)",
-      "Bash(*secrets.env*)",
       "Bash(*broker.env*)",
       "Bash(*handoff.env*)",
       "Bash(*redis.conf*)",
@@ -49,7 +46,21 @@
       "Edit(~/.config/motuz/handoff.env)",
       "Edit(~/.config/motuz/redis.conf)",
       "Edit(~/.claude/**)",
-      "Edit(~/.ssh/**)"
+      "Edit(~/.ssh/**)",
+      "Bash(*--no-index*)",
+      "Bash(*--output*)",
+      "Bash(*secret*)",
+      "Bash(*cert.key*)",
+      "Bash(*acme.json*)",
+      "Bash(*credentials.json*)",
+      "Bash(*.motuz-test-pw*)",
+      "Bash(*/etc/motuz*)",
+      "Read(~/data/traefik/**)",
+      "Read(~/.motuz-test-pw)",
+      "Read(//etc/motuz/**)",
+      "Read(//etc/redis/**)",
+      "Read(~/.config/motuz/postgres-rollback.env)",
+      "Edit(~/.config/motuz/postgres-rollback.env)"
     ]
   }
 }

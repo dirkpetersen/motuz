@@ -2,15 +2,20 @@
 """A login and a small local copy job through the API of a Motuz install (README, "Deploy
 with an AI assistant (Claude Code)"; used by the playbook .claude/skills/motuz-deploy).
 
-    bin/systemd/smoke_test.py USER PASSWORD_FILE SRC_PATH DST_PATH [BASE_URL]
+    bin/systemd/smoke_test.py USER SRC_PATH DST_PATH [BASE_URL]
 
-Signs in as USER (the password is read from PASSWORD_FILE, never from the command line and
-never printed), copies the folder or file SRC_PATH to DST_PATH as that user (both local paths
-the user can access), waits for the job and prints PASS/FAIL lines. BASE_URL defaults to
-https://127.0.0.1 (the self-signed certificate is accepted: it only talks to this host).
-Exit status 0 when everything passed.
+Signs in as USER with the password in ~/.motuz-test-pw (the only file it reads; create it
+with `bin/systemd/config.sh ask-test-password`: typed hidden, mode 600, owned by the caller;
+the password never goes on a command line and is never printed), copies the folder or file
+SRC_PATH to DST_PATH as that user (both local paths the user can access), waits for the job
+and prints PASS/FAIL lines. BASE_URL must be this host: https://127.0.0.1[:port] or
+https://localhost[:port] (default https://127.0.0.1; the self-signed certificate is accepted
+because it only talks to this host). Exit status 0 when everything passed.
 """
 import json
+import os
+import re
+import stat
 import ssl
 import sys
 import time
@@ -18,18 +23,31 @@ import urllib.error
 import urllib.request
 
 
+PASSWORD_FILE = os.path.expanduser('~/.motuz-test-pw')
+LOCAL_URL = re.compile(r'^https://(127\.0\.0\.1|localhost)(:[0-9]{1,5})?$')
+
+
+def read_password():
+    """The password from ~/.motuz-test-pw, which must be a regular file of ours with mode 600"""
+    st = os.lstat(PASSWORD_FILE)
+    if not stat.S_ISREG(st.st_mode) or st.st_uid != os.getuid() or st.st_mode & 0o077:
+        raise SystemExit('%s must be a regular file of yours with mode 600' % PASSWORD_FILE)
+    with open(PASSWORD_FILE, encoding='utf-8') as f:
+        return f.read().rstrip('\n')
+
+
 def main(argv):
-    if len(argv) not in (5, 6):
+    if len(argv) not in (4, 5):
         print(__doc__)
         return 2
-    user, pw_file, src, dst = argv[1:5]
-    base = argv[5].rstrip('/') if len(argv) == 6 else 'https://127.0.0.1'
+    user, src, dst = argv[1:4]
+    base = argv[4].rstrip('/') if len(argv) == 5 else 'https://127.0.0.1'
+    if not LOCAL_URL.match(base):
+        raise SystemExit('BASE_URL must be https://127.0.0.1 or https://localhost (this host), not %s' % base)
     ctx = ssl.create_default_context()
-    if base.startswith('https://127.0.0.1') or base.startswith('https://localhost'):
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE
-    with open(pw_file, encoding='utf-8') as f:
-        password = f.read().rstrip('\n')
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    password = read_password()
     failures = 0
 
     def call(method, path, body=None, token=None):
@@ -61,7 +79,7 @@ def main(argv):
         return 1
     token = tokens['access']
     status, job = call('POST', '/api/copy-jobs/', {'description': 'deploy check', 'src_resource_path': src,
-                                                    'dst_resource_path': dst}, token)
+                                                    'dst_resource_path': dst, 'copy_links': True}, token)
     check('copy job created', status in (200, 201) and isinstance(job, dict) and 'id' in job, (status, job))
     if isinstance(job, dict) and 'id' in job:
         for _ in range(120):

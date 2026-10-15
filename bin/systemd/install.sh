@@ -30,8 +30,8 @@
 #                       motuz; the account joins the group redis. Not on Amazon Linux.
 #   --private-redis     the user service motuz-redis (Redis/Valkey on a socket in the
 #                       account's runtime directory; default on Amazon Linux)
-#                       The generated passwords go to ~/.config/motuz/handoff.env (mode 600,
-#                       the account's), which deploy.sh merges into secrets.env.
+#                       The generated passwords go to /etc/motuz/handoff-<account>.env (root:
+#                       the account's group, mode 640), which deploy.sh merges into secrets.env.
 #   --worker-only       a remote worker host (README, "Remote workers (HTTPS only)"); no
 #                       database, broker, web server or login helper:
 #                       python3, sudo, rclone, the account and its sudoers rule, and the
@@ -225,8 +225,10 @@ fi
 # SETENV: rclone gets the connection's credentials as RCLONE_CONFIG_* variables
 # (sudo --preserve-env=<names>). A worker uses the same rule (rclone as the job's owner).
 log "sudoers rule /etc/sudoers.d/motuz"
-RUNAS="ALL, !root"
-[ -z "$SUDO_GROUP" ] || RUNAS="%${SUDO_GROUP}, !root"
+# Never root, and never the accounts of the system PostgreSQL and Redis/Valkey (the superuser
+# of the whole cluster / server): with the system modes the account could otherwise become them
+RUNAS="ALL, !root, !postgres, !redis, !valkey"
+[ -z "$SUDO_GROUP" ] || RUNAS="%${SUDO_GROUP}, !root, !postgres, !redis, !valkey"
 if [ -n "$RUN_AS" ]; then
     # A cloud-to-cloud worker: rclone only, as one fixed account
     cat > "$TMP/sudoers" <<EOF
@@ -267,8 +269,10 @@ install -d -m 711 -o "$ACCOUNT" -g "$GROUP" /var/lib/motuz-aws-config
 
 # ---------------------------------------------------------------- system PostgreSQL, Redis
 if [ "$WORKER_ONLY" = 0 ]; then
+    handoff_init
     [ "$POSTGRES_MODE" != system ] || setup_system_postgres
     [ "$REDIS_MODE" != system ] || setup_system_redis
+    handoff_commit
     if [ "$POSTGRES_MODE" = system ] && [ "$EXISTING_PG" = private ]; then
         warn "this install runs the private cluster ~/data/pg: its data is not moved. Move it with: sudo -iu $ACCOUNT ~/motuz/bin/systemd/migrate_postgres.sh"
     fi
@@ -305,24 +309,26 @@ if [ "$WORKER_ONLY" = 1 ]; then
         || die "$ACCOUNT cannot read $REPO_DIR: clone the repository to a readable place, e.g. /opt/motuz"
     WORKER_DIR="$HOME_DIR/.config/motuz-worker"
     WORKER_ENV="$WORKER_DIR/worker.env"
-    install -d -m 755 -o "$ACCOUNT" -g "$GROUP" "$HOME_DIR/.config" "$HOME_DIR/.config/systemd" "$HOME_DIR/.config/systemd/user"
-    install -d -m 700 -o "$ACCOUNT" -g "$GROUP" "$WORKER_DIR"
-    if [ ! -f "$WORKER_ENV" ]; then
-        install -m 600 -o "$ACCOUNT" -g "$GROUP" "$REPO_DIR/src/worker/worker.env.example" "$WORKER_ENV"
+    # Everything inside the account's home is made BY the account (runuser), never by root
+    # (install -o / chown as root would follow a symlink the account put there)
+    account_mkdir 755 "$HOME_DIR/.config" "$HOME_DIR/.config/systemd" "$HOME_DIR/.config/systemd/user"
+    account_mkdir 700 "$WORKER_DIR"
+    if ! runuser -u "$ACCOUNT" -- test -f "$WORKER_ENV"; then
+        account_write 600 "$WORKER_ENV" < "$REPO_DIR/src/worker/worker.env.example"
         # No mounts are required unless configured (a cloud worker has none)
-        env_set "$WORKER_ENV" MOTUZ_REQUIRED_PATHS ""
+        account_env_set "$WORKER_ENV" MOTUZ_REQUIRED_PATHS ""
     fi
-    env_set "$WORKER_ENV" MOTUZ_HOME "$REPO_DIR"
-    env_set "$WORKER_ENV" MOTUZ_WORKER_CREDENTIAL_FILE "$WORKER_DIR/credential"
-    env_set "$WORKER_ENV" MOTUZ_SSO_CONFIG_DIR /var/lib/motuz-aws-config
-    [ -z "$CENTRAL_URL" ] || env_set "$WORKER_ENV" MOTUZ_CENTRAL_URL "$CENTRAL_URL"
-    [ -z "$POOL" ] || env_set "$WORKER_ENV" MOTUZ_WORKER_POOL "$POOL"
+    account_env_set "$WORKER_ENV" MOTUZ_HOME "$REPO_DIR"
+    account_env_set "$WORKER_ENV" MOTUZ_WORKER_CREDENTIAL_FILE "$WORKER_DIR/credential"
+    account_env_set "$WORKER_ENV" MOTUZ_SSO_CONFIG_DIR /var/lib/motuz-aws-config
+    [ -z "$CENTRAL_URL" ] || account_env_set "$WORKER_ENV" MOTUZ_CENTRAL_URL "$CENTRAL_URL"
+    [ -z "$POOL" ] || account_env_set "$WORKER_ENV" MOTUZ_WORKER_POOL "$POOL"
     # rclone as the jobs' owners, or with --run-as as that account (cloud-to-cloud only)
-    env_set "$WORKER_ENV" MOTUZ_WORKER_RUN_AS "$RUN_AS"
-    chown "$ACCOUNT:$GROUP" "$WORKER_ENV"
-    install -m 644 -o "$ACCOUNT" -g "$GROUP" "$REPO_DIR/src/worker/motuz-worker.service" "$HOME_DIR/.config/systemd/user/motuz-worker.service"
+    account_env_set "$WORKER_ENV" MOTUZ_WORKER_RUN_AS "$RUN_AS"
+    account_write 644 "$HOME_DIR/.config/systemd/user/motuz-worker.service" < "$REPO_DIR/src/worker/motuz-worker.service"
     if [ -n "$CREDENTIAL_FILE" ]; then
-        install -m 600 -o "$ACCOUNT" -g "$GROUP" "$CREDENTIAL_FILE" "$WORKER_DIR/credential"
+        # the secret travels through stdin, written by the account
+        account_write 600 "$WORKER_DIR/credential" < "$CREDENTIAL_FILE"
     fi
 fi
 
@@ -348,7 +354,7 @@ as_account_systemctl() {
 }
 if [ "$WORKER_ONLY" = 1 ]; then
     as_account_systemctl daemon-reload
-    if [ -f "$WORKER_DIR/credential" ] && [ -n "$(env_get "$WORKER_ENV" MOTUZ_CENTRAL_URL | grep -v example.org)" ]; then
+    if runuser -u "$ACCOUNT" -- test -f "$WORKER_DIR/credential" && [ -n "$(account_env_get "$WORKER_ENV" MOTUZ_CENTRAL_URL | grep -v example.org)" ]; then
         log "starting motuz-worker"
         as_account_systemctl enable --quiet motuz-worker.service
         as_account_systemctl restart motuz-worker.service

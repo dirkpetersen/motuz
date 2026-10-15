@@ -154,9 +154,14 @@ if it did not), the role `motuz_user` (scram-sha-256) and the database `motuz` o
 (PostgreSQL 15+ public-schema ownership; `CONNECT` revoked from `PUBLIC`), and lines at the
 top of `pg_hba.conf` (between `# BEGIN motuz` and `# END motuz`) that allow scram for
 `motuz_user` on `127.0.0.1` and `::1` and reject it from anywhere else. The password is
-generated, never on a command line, and left in `~motuz/.config/motuz/handoff.env` (mode
-600, owned by the account) with the mode and address; `deploy.sh` merges it into
-`motuz.env`/`secrets.env` and deletes the file.
+generated, never on a command line, and left in `/etc/motuz/handoff-motuz.env` (root-owned,
+group `motuz`, mode 640) with the mode and address; `deploy.sh` merges it into
+`motuz.env`/`secrets.env`. Root never writes inside the account's home (a symlink there
+could point anywhere): the file is root's, and everything `install.sh` does in the home, for
+the worker, it does as the account. It refuses to take over a PostgreSQL or Redis that
+something else seems to use (other databases, a listen address beyond localhost; keys,
+clients, authentication or another port in Redis) unless `--system-postgres` /
+`--system-redis` is given explicitly, and never rewrites a service silently.
 
 **System Redis** (`--system-redis`, Ubuntu). `/etc/redis/motuz.conf` includes the package's
 `redis.conf` and overrides it: `port 0` (no TCP), the unix socket
@@ -238,12 +243,12 @@ loginctl enable-linger motuz
 systemctl start user@$(id -u motuz).service
 ```
 
-**4. The sudoers rule** (`--sudo-group=GROUP`: `(%GROUP, !root)` instead of `(ALL, !root)`):
+**4. The sudoers rule** (`--sudo-group=GROUP`: `(%GROUP, !root, !postgres, !redis, !valkey)` instead of `(ALL, !root, !postgres, !redis, !valkey)`):
 
 ```bash
 cat > /tmp/motuz.sudoers <<'EOF'
 # Motuz (bin/systemd/install.sh): file and rclone operations as the logged-in user
-motuz ALL=(ALL, !root) NOPASSWD:SETENV: /usr/local/bin/rclone, /usr/bin/ls, /usr/bin/mkdir, /usr/bin/env
+motuz ALL=(ALL, !root, !postgres, !redis, !valkey) NOPASSWD:SETENV: /usr/local/bin/rclone, /usr/bin/ls, /usr/bin/mkdir, /usr/bin/env
 EOF
 # the classic sudo (Amazon Linux; not Ubuntu's sudo-rs, `sudo -V | head -1` says "Sudo version" for it) would log
 # rclone's credentials with every allowed command:
@@ -284,26 +289,40 @@ systemctl enable --now postgresql@18-main.service
 #   [ -f /var/lib/pgsql/data/PG_VERSION ] || PGSETUP_INITDB_OPTIONS="-E UTF8 --locale=C.UTF-8" postgresql-setup --initdb
 #   systemctl enable --now postgresql.service
 
-# role and database (the password in a variable of your shell, not on a command line), on localhost only
+# Is it used by something else? (other databases, listen addresses beyond localhost: then stop here)
+sudo -u postgres psql -tAc "SELECT datname FROM pg_database WHERE datname NOT IN ('postgres','template0','template1','motuz')"
 sudo -u postgres psql -tAc 'SHOW listen_addresses'            # must be localhost (else ALTER SYSTEM SET listen_addresses='localhost' and restart)
+sudo -u postgres psql -tAc 'SHOW port'
+
+# role and database, idempotent (the password, 64 hex digits, goes in through stdin, not on a command line)
 PW=$(openssl rand -hex 32)
-sudo -u postgres psql -v ON_ERROR_STOP=1 <<EOF
-CREATE ROLE motuz_user LOGIN PASSWORD '$PW';
-CREATE DATABASE motuz OWNER motuz_user;
-REVOKE CONNECT ON DATABASE motuz FROM PUBLIC;
-EOF
-# pg_hba.conf (SHOW hba_file): these lines at the top, then
-sudo -u postgres psql -c 'SELECT pg_reload_conf()'
+{ printf '\\set pw %s\n' "'$PW'"; cat <<'EOSQL'
+SELECT format('CREATE ROLE %I LOGIN', :'user') WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname = :'user') \gexec
+ALTER ROLE :"user" WITH LOGIN PASSWORD :'pw';
+SELECT format('CREATE DATABASE %I OWNER %I', :'db', :'user') WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = :'db') \gexec
+ALTER DATABASE :"db" OWNER TO :"user";
+REVOKE CONNECT ON DATABASE :"db" FROM PUBLIC;
+EOSQL
+} | sudo -u postgres psql -X -q -v ON_ERROR_STOP=1 -d postgres -v db=motuz -v user=motuz_user
+# pg_hba.conf (sudo -u postgres psql -tAc 'SHOW hba_file'): put these lines at the top, then reload
 #   host motuz motuz_user 127.0.0.1/32 scram-sha-256
 #   host motuz motuz_user ::1/128 scram-sha-256
 #   host all motuz_user 0.0.0.0/0 reject
 #   host all motuz_user ::/0 reject
+sudo -u postgres psql -c 'SELECT pg_reload_conf()'
 ```
 
-Then, as `motuz`, in `~/.config/motuz/motuz.env`: `MOTUZ_DATABASE_MODE=system` and
-`MOTUZ_DATABASE_HOST=127.0.0.1:5432` (the port of `SHOW port`), and `MOTUZ_DATABASE_PASSWORD="$PW"`
-in `secrets.env` (mode 600) before the first `deploy.sh` (it keeps what is there). That
-replaces the `handoff.env` file, which is only `install.sh`'s way to pass the values.
+Hand the values to the account the way `install.sh` does, as the file
+`/etc/motuz/handoff-motuz.env` (root-owned, group `motuz`, mode 640), which `deploy.sh`
+merges into `motuz.env` and `secrets.env` on its first run (so `motuz.env` still comes from
+`motuz.env.example` and has all its other settings); use the port of `SHOW port`:
+
+```bash
+install -d -m 755 /etc/motuz
+( umask 027; { echo 'MOTUZ_DATABASE_MODE="system"'; echo 'MOTUZ_DATABASE_HOST="127.0.0.1:5432"'
+  echo "MOTUZ_DATABASE_PASSWORD=\"$PW\""; } > /etc/motuz/handoff-motuz.env )
+chown root:motuz /etc/motuz/handoff-motuz.env
+```
 
 **8. System Redis** (Ubuntu):
 
@@ -327,8 +346,15 @@ usermod -aG redis motuz; systemctl restart user@$(id -u motuz).service    # the 
 REDISCLI_AUTH="$PW" redis-cli --user motuz -s /run/redis/redis-server.sock ping    # PONG
 ```
 
-As `motuz`: `MOTUZ_BROKER_MODE=system` and `MOTUZ_REDIS_SOCKET=/run/redis/redis-server.sock` in
-`motuz.env`, `MOTUZ_REDIS_PASSWORD="$PW"` in `secrets.env`.
+Check first that nothing else uses this Redis (`redis-cli dbsize`, `redis-cli client list`, the
+`requirepass`/`bind`/`port` lines of `/etc/redis/redis.conf`): the configuration above turns TCP
+off and the default user off. Then add to the handoff file (append, same permissions):
+
+```bash
+( umask 027; { echo 'MOTUZ_BROKER_MODE="system"'; echo 'MOTUZ_REDIS_SOCKET="/run/redis/redis-server.sock"'
+  echo "MOTUZ_REDIS_PASSWORD=\"$PW\""; } >> /etc/motuz/handoff-motuz.env )
+chown root:motuz /etc/motuz/handoff-motuz.env
+```
 
 **9. SELinux (Amazon Linux, enforcing)**: default labels for what was written, no booleans or
 modules:
@@ -424,7 +450,7 @@ still has to do. **Read the safety notes below first.**
 >   login/copy test (the app needs it to run jobs, `deploy.sh` does not).
 > - Secrets: the assistant never sees them. It asks you to run `! bin/systemd/config.sh
 >   ask-secret MOTUZ_ONEDRIVE_CLIENT_SECRET` (the value is typed hidden). Do not paste secrets
->   into the chat. The playbook's test login uses a password file you create the same way.
+>   into the chat. The playbook's test login uses a password file you create the same way (`! bin/systemd/config.sh ask-test-password`).
 > - The sign-in (or API key) is yours, kept only in `~motuz/.claude` (mode 600). Afterwards run
 >   `claude logout` or delete `~motuz/.claude` and `~motuz/.claude.json` if your organization
 >   prefers, and remove `~motuz/.local/bin/claude`.
@@ -486,9 +512,16 @@ To move an existing private cluster to the system service run `sudo bin/systemd/
 
 It stops the app and worker, dumps the private cluster, restores it into the system
 database as `motuz_user`, **compares the row count of every table**, only then switches
-the settings, stops `motuz-postgres` and runs `deploy.sh`. `~/data/pg` stays as a fallback
-until you delete it. Redis can be switched with `install.sh --system-redis` and `deploy.sh`
-(the queue is transient; stop running jobs first). An external database is `MOTUZ_DATABASE_MODE=external`
+the settings, stops `motuz-postgres` and runs `deploy.sh`. It refuses while copy or
+integrity-check jobs run (`--force` stops the app anyway; those jobs fail), starts the app
+again if anything fails before the switch, and keeps the old settings:
+`migrate_postgres.sh --rollback` returns to the private cluster (changes made in the system
+database since are not carried back). `~/data/pg` stays as a fallback until you delete it.
+While the private cluster holds port 5432 the system PostgreSQL runs on 5433 (on Ubuntu set
+with `pg_conftool 18 main set port 5433`, so `pg_lsclusters` shows it); run `sudo
+bin/systemd/install.sh` again after the migration and it moves back to 5432 and updates the
+address for `deploy.sh`. Redis can be switched with `install.sh --system-redis` and `deploy.sh`
+(the queue is transient; `install.sh` refuses while rclone processes run, because joining the group `redis` restarts the account's user manager). An external database is `MOTUZ_DATABASE_MODE=external`
 (see above); `uninstall.sh` never drops a system or external cluster (with `--purge` it drops
 only the database `motuz` and the role `motuz_user` of the system service, after printing
 what it does).
@@ -530,13 +563,15 @@ checks the permissions (in Docker, Motuz runs as root for this). Without Docker,
 account `motuz` gets exactly one rule, `/etc/sudoers.d/motuz`, checked with `visudo -c`:
 
 ```
-motuz ALL=(ALL, !root) NOPASSWD:SETENV: /usr/local/bin/rclone, /usr/bin/ls, /usr/bin/mkdir, /usr/bin/env
+motuz ALL=(ALL, !root, !postgres, !redis, !valkey) NOPASSWD:SETENV: /usr/local/bin/rclone, /usr/bin/ls, /usr/bin/mkdir, /usr/bin/env
 ```
 
 - `rclone` copies, lists and reads cloud storage; `ls` and `mkdir` browse the local
   filesystem; `env` starts the small Python readers of the file viewer and of the
   credentials in the home directory (`python3 -I -S -c ...`).
-- `!root`: never as root. `SETENV`: rclone gets a connection's credentials as
+- `!root`: never as root; `!postgres`, `!redis`, `!valkey`: never as the superuser of the
+  distribution's PostgreSQL or Redis/Valkey either (with the system modes `motuz` could
+  otherwise run `rclone` or `env` as `postgres` and own the whole cluster). `SETENV`: rclone gets a connection's credentials as
   `RCLONE_CONFIG_*` variables, passed with `sudo --preserve-env=<names>` (Ubuntu 26.04's
   default `sudo` is sudo-rs, which ignores `-E`; the classic `sudo` works as well).
 - With the classic `sudo` (Amazon Linux, or Ubuntu's `sudo.ws`) the file also gets
@@ -545,7 +580,7 @@ motuz ALL=(ALL, !root) NOPASSWD:SETENV: /usr/local/bin/rclone, /usr/bin/ls, /usr
   the connections' secrets into the journal. Refused commands are still logged; Motuz
   logs the commands it runs itself, with the credentials masked.
 - `install.sh --sudo-group=GROUP` allows only the members of a group
-  (`(%GROUP, !root)`).
+  (`(%GROUP, !root, !postgres, !redis, !valkey)`).
 - Motuz refuses logins as root and as the account it runs as.
 
 This rule lets `motuz` act as any other user, as the root of the Docker install does, so
@@ -1247,9 +1282,9 @@ sudo git clone https://github.com/dirkpetersen/motuz /opt/motuz   # check out th
 # (rclone as the job's owner, like the server's containers do); SETENV: rclone gets its
 # configuration, proxy and CA bundle as variables (sudo --preserve-env=<names>).
 # On Ubuntu 26.04, `sudo bin/systemd/install.sh --worker-only` does this and the rclone
-# download (README, "Install without Docker").
+# download (README, "Install (default: without Docker)").
 sudo useradd --system --create-home --home-dir /var/lib/motuz --shell /usr/sbin/nologin motuz
-echo 'motuz ALL=(ALL, !root) NOPASSWD:SETENV: /usr/local/bin/rclone, /usr/bin/ls, /usr/bin/mkdir, /usr/bin/env' \
+echo 'motuz ALL=(ALL, !root, !postgres, !redis, !valkey) NOPASSWD:SETENV: /usr/local/bin/rclone, /usr/bin/ls, /usr/bin/mkdir, /usr/bin/env' \
     | sudo tee /etc/sudoers.d/motuz-worker
 sudo chmod 440 /etc/sudoers.d/motuz-worker
 sudo visudo -c

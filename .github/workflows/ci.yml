@@ -129,11 +129,17 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
           ls -l /dev/kvm
+      # vm.sh checks the image against Canonical's SHA256SUMS and downloads a newer one, so
+      # the cache only saves time; the month in the key refreshes it when the image is rebuilt
+      - name: Month for the cache key
+        id: month
+        run: echo "month=$(date -u +%Y-%m)" >> "$GITHUB_OUTPUT"
       - name: Cache the Ubuntu 26.04 cloud image
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cache/motuz-e2e
-          key: ubuntu-2604-cloudimg-${{ hashFiles('test/e2e/systemd/vm.sh') }}
+          key: ubuntu-2604-cloudimg-${{ steps.month.outputs.month }}-${{ hashFiles('test/e2e/systemd/vm.sh') }}
+          restore-keys: ubuntu-2604-cloudimg-
       # The default on Ubuntu: the distribution's PostgreSQL 18 and Redis services
       - name: test/e2e/run_systemd.sh
         env:

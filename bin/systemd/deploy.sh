@@ -14,7 +14,8 @@
 # service prepared by install.sh, or an external server: MOTUZ_DATABASE_MODE), the units
 # in ~/.config/systemd/user, a restart of motuz.target and a health check. The passwords
 # of the system PostgreSQL / Redis that install.sh generated arrive in
-# ~/.config/motuz/handoff.env, which is merged into motuz.env / secrets.env and deleted.
+# /etc/motuz/handoff-<account>.env (root's, readable by the account), which is merged into
+# motuz.env / secrets.env.
 
 set -euo pipefail
 source "$(dirname "$0")/_lib.sh"
@@ -119,11 +120,11 @@ chmod 600 "$SECRETS"
 # install.sh's handoff file carries the system services' mode, address and password.
 DB_MODE=$(database_mode "$SETTINGS" "$PGDATA_DIR")
 BROKER_MODE=$(broker_mode "$SETTINGS" "$CONFIG_DIR")
-HANDOFF="$CONFIG_DIR/handoff.env"
+HANDOFF="/etc/motuz/handoff-$(id -un).env"   # root's, group-readable; written fresh by every install.sh run
 if [ -f "$HANDOFF" ]; then
     if [ "$(env_get "$HANDOFF" MOTUZ_DATABASE_MODE)" = system ]; then
         if [ "$DB_MODE" = private ]; then
-            warn "install.sh prepared the system PostgreSQL, but this install still runs the private cluster $PGDATA_DIR: run bin/systemd/migrate_postgres.sh to move the data (the handoff stays until then)"
+            warn "install.sh prepared the system PostgreSQL, but this install still runs the private cluster $PGDATA_DIR: run bin/systemd/migrate_postgres.sh to move the data"
         else
             for key in MOTUZ_DATABASE_MODE MOTUZ_DATABASE_HOST; do env_set "$SETTINGS" "$key" "$(env_get "$HANDOFF" "$key")"; done
             env_set "$SECRETS" MOTUZ_DATABASE_PASSWORD "$(env_get "$HANDOFF" MOTUZ_DATABASE_PASSWORD)"
@@ -135,17 +136,12 @@ if [ -f "$HANDOFF" ]; then
         env_set "$SECRETS" MOTUZ_REDIS_PASSWORD "$(env_get "$HANDOFF" MOTUZ_REDIS_PASSWORD)"
         BROKER_MODE=system
     fi
-    # kept while the PostgreSQL part waits for the migration
-    [ "$DB_MODE" != private ] || [ "$(env_get "$HANDOFF" MOTUZ_DATABASE_MODE)" != system ] || keep_handoff=1
-    if [ "${keep_handoff:-0}" = 1 ]; then
-        env_set "$HANDOFF" MOTUZ_BROKER_MODE ""
-    else
-        rm -f "$HANDOFF"
-    fi
 fi
 [ "$DB_MODE" != unset ] || DB_MODE=private
 [ "$BROKER_MODE" != unset ] || BROKER_MODE=private
 env_set "$SETTINGS" MOTUZ_DATABASE_MODE "$DB_MODE"
+# the private cluster is always 127.0.0.1:5432 (also after a rollback from the system mode)
+[ "$DB_MODE" != private ] || env_set "$SETTINGS" MOTUZ_DATABASE_HOST 127.0.0.1:5432
 env_set "$SETTINGS" MOTUZ_BROKER_MODE "$BROKER_MODE"
 echo "    database: $DB_MODE, broker: $BROKER_MODE"
 if [ "$DB_MODE" = private ]; then

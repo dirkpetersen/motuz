@@ -72,6 +72,10 @@ distro_system_postgres_prepare() {
     SYSTEM_PG_UNIT=postgresql.service
 }
 
+distro_system_postgres_set_port() { # port
+    (cd / && runuser -u postgres -- psql -X -q -d postgres -c "ALTER SYSTEM SET port = $1") || die "could not set the port"
+}
+
 # A remote worker (install.sh --worker-only): motuz_worker.py runs on the system python3
 # with the standard library only; rclone is the pinned one
 distro_install_worker_packages() {
