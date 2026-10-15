@@ -68,8 +68,10 @@ service_password() { # key, current mode of that service
     printf '%s' "$pw"
 }
 
+# SYSTEM_PG_PORT: the cluster's port when it is not the default (the unix socket is named after it)
+SYSTEM_PG_PORT=""
 as_postgres() { # command... (the postgres superuser of the system cluster, peer login)
-    (cd / && runuser -u postgres -- "$@")
+    (cd / && runuser -u postgres -- env ${SYSTEM_PG_PORT:+PGPORT=$SYSTEM_PG_PORT} "$@")
 }
 
 # ---------------------------------------------------------------- PostgreSQL
@@ -80,12 +82,26 @@ setup_system_postgres() {
     local db=motuz dbuser=motuz_user port listen hba password
     log "PostgreSQL: the distribution's service (system mode)"
     distro_system_postgres_prepare
+    # the port of an earlier run (the service moves from 5432 while the private cluster exists)
+    SYSTEM_PG_PORT=$(env_get "$HOME_DIR/.config/motuz/handoff.env" MOTUZ_DATABASE_HOST)
+    [ "$EXISTING_PG" != system ] || SYSTEM_PG_PORT=$(env_get "$HOME_DIR/.config/motuz/motuz.env" MOTUZ_DATABASE_HOST)
+    SYSTEM_PG_PORT="${SYSTEM_PG_PORT##*:}"
+    [ "$SYSTEM_PG_PORT" != 5432 ] || SYSTEM_PG_PORT=""
     for _ in $(seq 60); do
         as_postgres psql -X -q -d postgres -tAc 'SELECT 1' >/dev/null 2>&1 && break
         sleep 1
     done
     as_postgres psql -X -q -d postgres -tAc 'SELECT 1' >/dev/null 2>&1 || die "cannot connect to the system PostgreSQL as postgres"
     port=$(as_postgres psql -X -d postgres -tAc 'SHOW port')
+    if [ "$EXISTING_PG" = private ] && [ "$port" = 5432 ]; then
+        # the private cluster holds 127.0.0.1:5432 until migrate_postgres.sh has moved its data
+        warn "the private cluster of $ACCOUNT uses 127.0.0.1:5432: the system PostgreSQL moves to port 5433"
+        as_postgres psql -X -q -d postgres -c "ALTER SYSTEM SET port = 5433"
+        systemctl restart "$SYSTEM_PG_UNIT"
+        port=5433
+        SYSTEM_PG_PORT=5433
+        for _ in $(seq 60); do as_postgres psql -X -q -d postgres -tAc 'SELECT 1' >/dev/null 2>&1 && break; sleep 1; done
+    fi
     listen=$(as_postgres psql -X -d postgres -tAc 'SHOW listen_addresses')
     if printf '%s' "$listen" | tr ',' '\n' | sed 's/ //g' | grep -qvE "^('?localhost'?|127\.0\.0\.1|::1)$"; then
         warn "listen_addresses = '$listen': setting it to 'localhost' (ALTER SYSTEM)"
