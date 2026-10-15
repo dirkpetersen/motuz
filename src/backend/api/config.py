@@ -1,7 +1,7 @@
 import datetime
 import os
 
-from .utils import ec2_config, image_view, rclone_tuning
+from .utils import document_view, ec2_config, image_view, rclone_tuning
 
 basedir = os.path.abspath(os.path.dirname(__file__))
 
@@ -35,6 +35,14 @@ RCLONE_TUNING = rclone_tuning.settings()
 # Largest image the file viewer shows (MOTUZ_VIEW_IMAGE_MAX_BYTES, default 25 MiB;
 # utils/image_view.py); an invalid value stops the app here
 VIEW_IMAGE_MAX_BYTES = image_view.max_bytes()
+# HEIC/HEIF conversions at once (MOTUZ_HEIC_MAX_CONCURRENT, default 2; heic_convert.py
+# reads it too); an invalid value stops the app here
+HEIC_MAX_CONCURRENT = image_view.heic_concurrency()
+
+# Largest document the viewer reads whole (MOTUZ_VIEW_DOCUMENT_MAX_BYTES, default 50 MiB;
+# utils/document_view.py; PDFs are read in ranges and have no limit); an invalid value
+# stops the app here
+VIEW_DOCUMENT_MAX_BYTES = document_view.max_bytes()
 
 
 class Config:
@@ -69,6 +77,7 @@ class Config:
 
     # Largest image the file viewer shows (utils/image_view.py)
     VIEW_IMAGE_MAX_BYTES = VIEW_IMAGE_MAX_BYTES
+    VIEW_DOCUMENT_MAX_BYTES = VIEW_DOCUMENT_MAX_BYTES
 
     DATABASE_PARAMS = ''
     if MOTUZ_DATABASE_REQUIRE_SSL.lower() in ('true', 't'):

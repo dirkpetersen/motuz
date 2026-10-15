@@ -38,9 +38,10 @@ const initialState = {
     },
 
     displayFileViewerDialog: false,
-    // {host, connectionId, path, name, requestId, kind: 'text' | 'image' | 'markdown',
-    // mode: 'rendered' | 'source' (Markdown), switched: the mode was changed}; the
-    // viewers load the file themselves
+    // {host, connectionId, path, name, requestId, kind: 'text' | 'image' | 'markdown' |
+    // 'document', mode: 'rendered' | 'source' (Markdown), switched: the mode was
+    // changed, side, folder, index: the pane/folder/index the image viewer steps
+    // Previous/Next over (utils/imageNeighbors.js)}; the viewers load the file themselves
     fileViewerDialogData: {},
 
     displaySettingsDialog: false,

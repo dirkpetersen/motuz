@@ -21,6 +21,8 @@ if (SHOTS) mkdirSync(SHOTS, { recursive: true });
 
 // Fixtures of the image and Markdown viewer (run as alice with `python3 - <folder>`)
 const VIEWER_FIXTURES = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'viewer_fixtures.py'), 'utf8');
+// Fixtures of the document viewer (PDF, DOCX, XLSX, PPTX)
+const DOCUMENT_FIXTURES = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'document_fixtures.py'), 'utf8');
 
 const results = [];
 function check(name, ok, detail = '') {
@@ -1170,10 +1172,64 @@ os.utime(os.path.join(d, 'dirB'), (now - 86400,) * 2)
             await closeViewer();
         }
 
-        await row('fake.png').dblclick();
+        // AVIF (AV1, royalty-free): decodes natively in Chromium, shown like any other image
+        await row('photo.avif').dblclick();
+        await imageLoaded();
+        img = await imageState();
+        check('image: photo.avif decodes natively and is shown (64 x 48, AVIF)', img.natural === '64x48'
+            && img.info.startsWith('AVIF · 64 × 48 px') && img.src.startsWith('blob:'), img);
+        await shot('viewer-image-avif');
+        await closeViewer();
+
+        // HEIC (HEVC): Chromium cannot decode it (a probe with a tiny HEIC picture says so), so
+        // the JPEG the server makes of it (a child process as alice) is asked for at once.
+        const imageBodies = [];
+        const onImageRequest = r => { if (r.url().endsWith('/api/system/files/view/image/')) imageBodies.push(JSON.parse(r.postData() || '{}')); };
+        page.on('request', onImageRequest);
+        await row('photo.heic').dblclick();
+        await imageLoaded();
+        img = await imageState();
+        check('image: photo.heic is shown as the server\'s JPEG (48 x 64, "HEIC, converted to JPEG")',
+            img.natural === '48x64' && img.src.startsWith('blob:') && img.info.startsWith('HEIC, converted to JPEG · 48 × 64 px'), img);
+        check('image: photo.heic was fetched with convert=jpeg at once (the probe found that Chromium cannot decode HEIC), never plain',
+            imageBodies.some(b => b.convert === 'jpeg' && b.path.endsWith('/photo.heic'))
+            && !imageBodies.some(b => !b.convert && b.path.endsWith('/photo.heic')), imageBodies);
+        check('image: no message about an unsupported browser', await page.locator('.image-viewer-decode-error').count() === 0);
+        await shot('viewer-image-heic');
+        await closeViewer();
+
+        // A phone photo with a rotation (irot): upright, i.e. 64 x 48 with the red bar on the left
+        imageBodies.length = 0;
+        await row('rotated.heic').dblclick();
+        await imageLoaded();
+        img = await imageState();
+        const bar = await page.evaluate(() => {
+            const i = document.querySelector('.image-viewer-image');
+            const c = document.createElement('canvas');
+            c.width = i.naturalWidth; c.height = i.naturalHeight;
+            const g = c.getContext('2d');
+            g.drawImage(i, 0, 0);
+            const px = (x, y) => [...g.getImageData(x, y, 1, 1).data].slice(0, 3);
+            return { left: px(3, 24), topMiddle: px(32, 3) };
+        });
+        check('image: rotated.heic is upright (portrait photo turned: 64 x 48, the bar on the left edge)',
+            img.natural === '64x48' && bar.left[0] > 200 && bar.left[1] < 80 && bar.topMiddle[0] < 200, { img, bar });
+        check('image: the next HEIC image asks for the JPEG at once (this browser cannot decode HEIC)',
+            imageBodies.length >= 1 && imageBodies[0].convert === 'jpeg' && imageBodies[0].path.endsWith('/rotated.heic'), imageBodies);
+        page.off('request', onImageRequest);
+        await closeViewer();
+
+        await row('fake.heic').dblclick();
         await page.waitForSelector('.file-viewer-error', { timeout: 20000 });
         let error = await page.locator('.file-viewer-error').textContent();
-        check('image: a .png that is text: a message, not the text pager', error.includes('not a PNG, JPEG, GIF or WebP image')
+        check('image: fake.heic (text, not really HEIC): refused by content, not by name',
+            error.includes('not a PNG, JPEG, GIF, WebP, HEIC/HEIF or AVIF image'), error);
+        await closeViewer();
+
+        await row('fake.png').dblclick();
+        await page.waitForSelector('.file-viewer-error', { timeout: 20000 });
+        error = await page.locator('.file-viewer-error').textContent();
+        check('image: a .png that is text: a message, not the text pager', error.includes('not a PNG, JPEG, GIF, WebP, HEIC/HEIF or AVIF image')
             && await page.locator('.file-viewer-content, .image-viewer-image').count() === 0, error);
         await shot('viewer-image-not-an-image');
         await closeViewer();
@@ -1188,6 +1244,149 @@ os.utime(os.path.join(d, 'dirB'), (now - 86400,) * 2)
         check('SVG opens in the text pager, as text', svgText.includes('<svg xmlns') && await page.locator('.modal-content svg').count() === 0
             && await page.evaluate(() => window.__svgXss === undefined), svgText.slice(0, 80));
         await closeViewer();
+
+        // ------------------------------------------------ image viewer: Previous / Next
+        // A folder with 3 images and one non-image file (utils/imageNeighbors.js: pane
+        // order, images only, no folders)
+        appShell(`sudo -u alice mkdir -p ${VIEWER_DIR}/nav && sudo -u alice cp ${VIEWER_DIR}/pic.jpg ${VIEWER_DIR}/nav/a.jpg `
+            + `&& sudo -u alice cp ${VIEWER_DIR}/pic.gif ${VIEWER_DIR}/nav/b.gif && sudo -u alice cp ${VIEWER_DIR}/pic.webp ${VIEWER_DIR}/nav/c.webp `
+            + `&& sudo -u alice sh -c 'echo notes > ${VIEWER_DIR}/nav/notes.txt'`);
+        await paneGo('left', null, `${VIEWER_DIR}/nav`);
+        await leftPane.getByText('a.jpg', { exact: true }).waitFor({ timeout: 20000 });
+
+        const navState = () => page.evaluate(() => {
+            const prevBtn = document.querySelector('button[aria-label="Previous image"]');
+            const nextBtn = document.querySelector('button[aria-label="Next image"]');
+            return {
+                position: (document.querySelector('.image-viewer-position') || {}).textContent || '',
+                prevDisabled: prevBtn ? prevBtn.disabled : null,
+                nextDisabled: nextBtn ? nextBtn.disabled : null,
+                name: (document.querySelector('.file-viewer-name') || {}).textContent || '',
+            };
+        });
+        const imageRequests = () => requests.filter(u => u.endsWith('/api/system/files/view/image/'));
+
+        const beforeOpen = imageRequests().length;
+        await row('a.jpg').dblclick();
+        await imageLoaded();
+        let nav = await navState();
+        check('image nav: position 1 / 3, name a.jpg, Previous disabled at the start', nav.position === '1 / 3'
+            && nav.prevDisabled === true && nav.nextDisabled === false && nav.name === 'a.jpg', nav);
+        await page.waitForTimeout(500); // the next image (b.gif) is preloaded in the background
+        check('image nav: the next image was preloaded before Next was clicked',
+            imageRequests().length >= beforeOpen + 2, imageRequests().length - beforeOpen);
+        img = await imageState();
+        const urlA = img.src;
+
+        await page.click('button[aria-label="Next image"]');
+        await imageLoaded();
+        nav = await navState();
+        check('image nav: the Next button moves to b.gif (2 / 3)', nav.position === '2 / 3' && nav.name === 'b.gif'
+            && nav.prevDisabled === false && nav.nextDisabled === false, nav);
+        check('image nav: stepping past a.jpg revokes its blob: URL',
+            await page.evaluate(src => fetch(src).then(() => false, () => true), urlA));
+        img = await imageState();
+        const urlB = img.src;
+
+        await page.keyboard.press('ArrowRight');
+        await imageLoaded();
+        nav = await navState();
+        check('image nav: ArrowRight moves to c.webp (3 / 3), Next disabled at the end (no wrap)',
+            nav.position === '3 / 3' && nav.name === 'c.webp' && nav.nextDisabled === true && nav.prevDisabled === false, nav);
+        check('image nav: stepping past b.gif revokes its blob: URL too',
+            await page.evaluate(src => fetch(src).then(() => false, () => true), urlB));
+        await shot('viewer-image-nav');
+
+        await page.keyboard.press('ArrowLeft');
+        await imageLoaded();
+        nav = await navState();
+        check('image nav: ArrowLeft moves back to b.gif', nav.position === '2 / 3' && nav.name === 'b.gif', nav);
+        await page.keyboard.press('PageUp');
+        await imageLoaded();
+        nav = await navState();
+        check('image nav: PageUp moves back to a.jpg (1 / 3), Previous disabled', nav.position === '1 / 3'
+            && nav.name === 'a.jpg' && nav.prevDisabled === true, nav);
+        await page.keyboard.press('PageUp'); // already at the start: no wrap-around, no error
+        await page.waitForTimeout(300);
+        nav = await navState();
+        check('image nav: no wrap-around at the start', nav.position === '1 / 3' && nav.name === 'a.jpg', nav);
+
+        // The fit/100% choice is kept across a step
+        await page.click('.image-viewer-image');
+        img = await imageState();
+        check('image nav: switched to 100% before stepping', !img.fit, img);
+        await page.click('button[aria-label="Next image"]');
+        await imageLoaded();
+        img = await imageState();
+        check('image nav: the 100% choice is kept after stepping to b.gif', !img.fit, img);
+        check('image nav: the pane selection follows the shown file (so closing leaves the cursor there)',
+            await page.evaluate(() => {
+                const active = document.querySelector('#zone-left-pane .grid-file-name.active');
+                return active && active.textContent.trim() === 'b.gif';
+            }));
+        await closeViewer();
+
+        // Fast stepping with a slow network: the display must end on the last requested
+        // image, never an earlier, now-stale one (a fresh dialog: nothing cached yet)
+        let routeCount = 0;
+        await page.route('**/api/system/files/view/image/', async (route) => {
+            routeCount++;
+            await new Promise(r => setTimeout(r, routeCount === 1 ? 1200 : 150));
+            await route.continue();
+        });
+        await row('a.jpg').dblclick();
+        await page.waitForTimeout(100);
+        await page.click('button[aria-label="Next image"]'); // -> b.gif, still loading
+        await page.waitForTimeout(80);
+        await page.click('button[aria-label="Next image"]'); // -> c.webp, requested after
+        await imageLoaded();
+        await page.waitForTimeout(1500); // let the slower, now-stale a.jpg/b.gif fetches finish too
+        nav = await navState();
+        img = await imageState();
+        check('image nav: fast stepping past a still-loading image ends on the last one requested (c.webp)',
+            nav.position === '3 / 3' && nav.name === 'c.webp' && img.natural === '64x48', nav);
+        await page.unroute('**/api/system/files/view/image/');
+        await closeViewer();
+
+        // Previous/Next across a HEIC image (converted) and other images
+        appShell(`sudo -u alice mkdir -p ${VIEWER_DIR}/nav2 && sudo -u alice cp ${VIEWER_DIR}/small.png ${VIEWER_DIR}/nav2/a.png `
+            + `&& sudo -u alice cp ${VIEWER_DIR}/rotated.heic ${VIEWER_DIR}/nav2/b.heic && sudo -u alice cp ${VIEWER_DIR}/pic.jpg ${VIEWER_DIR}/nav2/c.jpg`);
+        await paneGo('left', null, `${VIEWER_DIR}/nav2`);
+        await leftPane.getByText('b.heic', { exact: true }).waitFor({ timeout: 20000 });
+        await row('a.png').dblclick();
+        await imageLoaded();
+        await page.keyboard.press('ArrowRight');
+        await page.waitForFunction(() => ((document.querySelector('.image-viewer-info') || {}).textContent || '').startsWith('HEIC, converted'),
+            null, { timeout: 30000 });
+        nav = await navState();
+        img = await imageState();
+        check('image nav: Next from a PNG to a HEIC image shows its JPEG (2 / 3, 64 x 48)', nav.position === '2 / 3' && nav.name === 'b.heic'
+            && img.natural === '64x48', { nav, img });
+        await page.keyboard.press('ArrowRight');
+        await page.waitForFunction(() => ((document.querySelector('.image-viewer-info') || {}).textContent || '').startsWith('JPEG'), null, { timeout: 30000 });
+        nav = await navState();
+        check('image nav: ... and on to the JPEG after it (3 / 3, Next disabled)', nav.position === '3 / 3' && nav.nextDisabled === true, nav);
+        await page.keyboard.press('ArrowLeft');
+        await page.waitForFunction(() => ((document.querySelector('.image-viewer-info') || {}).textContent || '').startsWith('HEIC, converted'),
+            null, { timeout: 30000 });
+        check('image nav: ... and back to the HEIC image', (await navState()).position === '2 / 3');
+        await closeViewer();
+
+        // The server busy (503): the message, "Try again", and nothing remembered meanwhile
+        await page.route('**/api/system/files/view/image/', route => route.fulfill({
+            status: 503, contentType: 'application/json',
+            body: JSON.stringify({ message: 'The server is converting other images; try again in a moment' }) }));
+        await row('b.heic').dblclick();
+        await page.waitForSelector('.image-viewer-retry', { timeout: 20000 });
+        const busy = await page.locator('.file-viewer-error').textContent();
+        check('image: the server busy converting (503): its message and a "Try again" button', busy.includes('try again in a moment'), busy);
+        await page.unroute('**/api/system/files/view/image/');
+        await page.click('.image-viewer-retry');
+        await page.waitForFunction(() => ((document.querySelector('.image-viewer-info') || {}).textContent || '').startsWith('HEIC, converted'),
+            null, { timeout: 30000 });
+        check('image: "Try again" fetches it again and the converted image is shown', await page.locator('.image-viewer-retry').count() === 0);
+        await closeViewer();
+        await paneGo('left', null, VIEWER_DIR); // back out of the nav/ subfolder
 
         // Markdown: rendered, no raw HTML, safe links, no remote images
         await row('README.md').dblclick();
@@ -1264,6 +1463,306 @@ os.utime(os.path.join(d, 'dirB'), (now - 86400,) * 2)
         await closeViewer();
         page.off('request', onRequest);
         check('viewer: no page errors', pageErrors.length === 0, pageErrors);
+    });
+
+    // ------------------------------------------------ document viewer (PDF, DOCX, XLSX, PPTX)
+    // Fixtures from ../document_fixtures.py, in /home/alice/ui-docs and on Azurite
+    const DOCS_DIR = '/home/alice/ui-docs';
+    const docError = async () => {
+        await page.waitForSelector('.document-viewer-error, .document-viewer-unsupported', { timeout: 30000 });
+        return page.locator('.document-viewer-error, .document-viewer-unsupported').first().textContent();
+    };
+    const pdfState = () => page.evaluate(() => {
+        const c = document.querySelector('.pdf-viewer-canvas');
+        const stage = document.querySelector('.pdf-viewer-page');
+        if (!c || !stage || stage.hidden || !c.width) return null;
+        const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+        let dark = 0;
+        for (let i = 0; i < d.length; i += 4 * 101) if (d[i] < 128) dark++;
+        return {
+            width: c.width, cssWidth: Math.round(c.getBoundingClientRect().width), dark,
+            count: (document.querySelector('.pdf-viewer-page-count') || {}).textContent,
+            page: (document.querySelector('.pdf-viewer-page-input') || {}).value,
+            text: (document.querySelector('.pdf-viewer .textLayer') || {}).textContent || '',
+            links: [...document.querySelectorAll('.pdf-viewer-link')].map(a => ({ href: a.getAttribute('href'), rel: a.rel, target: a.target,
+                internal: a.classList.contains('internal') })),
+            highlights: document.querySelectorAll('.pdf-viewer .textLayer .highlight').length,
+            info: (document.querySelector('.document-viewer-info') || {}).textContent || '',
+            js: window.__motuzPdfJs === undefined ? null : window.__motuzPdfJs,
+        };
+    });
+    const pdfRendered = (text) => page.waitForFunction((text) => {
+        const t = document.querySelector('.pdf-viewer .textLayer');
+        const p = document.querySelector('.pdf-viewer-page');
+        return p && !p.hidden && t && t.textContent.includes(text);
+    }, text, { timeout: 30000 });
+    const docxState = () => page.evaluate(() => {
+        const host = document.querySelector('.docx-viewer-host');
+        const root = host && host.shadowRoot;
+        if (!root) return null;
+        return {
+            text: root.textContent,
+            heading: [...root.querySelectorAll('p')].map(p => p.textContent).find(t => t.includes('Quarterly Report')) || null,
+            cells: [...root.querySelectorAll('td')].map(td => td.textContent.trim()),
+            images: [...root.querySelectorAll('img')].map(i => ({ blob: i.src.startsWith('blob:'), width: i.naturalWidth })),
+            hrefs: [...root.querySelectorAll('a[href]')].map(a => ({ href: a.getAttribute('href'), rel: a.rel || null, target: a.target || null })),
+            removed: root.querySelectorAll('.docx-link-removed').length,
+            iframes: document.querySelectorAll('.modal-content iframe').length + root.querySelectorAll('iframe').length,
+            scripts: root.querySelectorAll('script').length,
+            handlers: [...root.querySelectorAll('*')].filter(e => [...e.attributes].some(a => /^on/i.test(a.name))).length,
+            notice: (document.querySelector('.docx-viewer .document-viewer-notice') || {}).textContent || '',
+            js: window.__motuzDocx === undefined ? null : window.__motuzDocx,
+        };
+    });
+    const sheetState = () => page.evaluate(() => {
+        const cell = ref => (document.querySelector(`.sheet-viewer-cell[data-cell="${ref}"]`) || {}).textContent;
+        return {
+            tabs: [...document.querySelectorAll('.sheet-viewer-tab')].map(t => t.textContent),
+            active: (document.querySelector('.sheet-viewer-tab.active') || {}).textContent,
+            hiddenTabs: [...document.querySelectorAll('.sheet-viewer-tab.hidden-sheet')].map(t => t.textContent),
+            a1: cell('A1'), a2: cell('A2'), b2: cell('B2'), c2: cell('C2'), b4: cell('B4'),
+            colHeads: [...document.querySelectorAll('.sheet-viewer-colhead')].slice(0, 3).map(h => h.textContent),
+            rendered: document.querySelectorAll('.sheet-viewer-cell').length,
+            notice: (document.querySelector('.sheet-viewer-truncated') || {}).textContent || '',
+            info: (document.querySelector('.document-viewer-info') || {}).textContent || '',
+        };
+    });
+    const pptxState = () => page.evaluate(() => ({
+        slides: document.querySelectorAll('.pptx-viewer-slide').length,
+        titles: [...document.querySelectorAll('.pptx-viewer-slide-title')].map(h => h.textContent),
+        list: [...document.querySelectorAll('.pptx-viewer-list-title')].map(t => t.textContent),
+        bullets: [...document.querySelectorAll('.pptx-viewer-text li')].map(li => [li.textContent, li.style.marginLeft]),
+        cells: [...document.querySelectorAll('.pptx-viewer-table td')].map(td => td.textContent),
+        images: [...document.querySelectorAll('.pptx-viewer-picture img')].map(i => ({ blob: i.src.startsWith('blob:'), width: i.naturalWidth })),
+        unsupported: [...document.querySelectorAll('.pptx-viewer-unsupported')].map(u => u.textContent),
+        notes: [...document.querySelectorAll('.pptx-viewer-notes p')].map(p => p.textContent),
+    }));
+
+    await flow('document-viewer', async () => {
+        appShell(`sudo -u alice python3 - ${DOCS_DIR}`, DOCUMENT_FIXTURES);
+        const requests = [];
+        const documentReads = [];
+        const onRequest = r => {
+            requests.push(r.url());
+            if (r.url().endsWith('/api/system/files/view/document/')) {
+                documentReads.push(JSON.parse(r.postData() || '{}'));
+            }
+        };
+        page.on('request', onRequest);
+        await page.goto(BASE + '/', { waitUntil: 'domcontentloaded' });
+        await leftPane.getByText('ui-docs', { exact: true }).waitFor({ timeout: 20000 });
+        await leftPane.getByText('ui-docs', { exact: true }).dblclick();
+        await leftPane.getByText('report.pdf', { exact: true }).waitFor({ timeout: 20000 });
+        const scriptsAtStart = requests.filter(u => /\/js\/.*\.js$/.test(u));
+        check('documents: no viewer code in the initial bundle (lazy)', scriptsAtStart.length === 1
+            && /\/js\/app-[0-9a-f]+\.bundle\.js$/.test(scriptsAtStart[0]), scriptsAtStart);
+        const csp = (await api.get('/')).headers()['content-security-policy'] || '';
+        check('documents: the app page allows resources only from Motuz (CSP)', csp.includes("img-src 'self' blob: data:")
+            && csp.includes("connect-src 'self'") && csp.includes("frame-src 'none'"), csp);
+
+        // PDF: canvas, page count, text layer, safe links only, no PDF JavaScript
+        await row('report.pdf').dblclick();
+        await pdfRendered('Page 1 of 5');
+        await page.waitForTimeout(1500); // time for PDF JavaScript to run, if anything ran it
+        let pdf = await pdfState();
+        check('PDF: page 1 drawn on a canvas, "/ 5" pages', pdf && pdf.dark > 20 && pdf.count.includes('5') && pdf.page === '1'
+            && pdf.info.startsWith('PDF · 5 pages'), pdf);
+        check('PDF: only the https link and the internal link are links (javascript:, JS and Launch actions are not)',
+            pdf.links.length === 2 && pdf.links[0].href === 'https://example.org/motuz-pdf' && pdf.links[0].target === '_blank'
+            && pdf.links[0].rel === 'noopener noreferrer' && pdf.links[1].internal, pdf.links);
+        check('PDF: its JavaScript (OpenAction, link actions) never ran', pdf.js === null
+            && await page.locator('.modal-content a[href^="javascript"]').count() === 0, pdf.js);
+        await shot('viewer-pdf');
+        await page.click('button[aria-label="Next page"]');
+        await pdfRendered('Page 2 of 5');
+        pdf = await pdfState();
+        check('PDF: Next page shows page 2', pdf.page === '2' && pdf.text.includes('motuz-needle'), pdf.page);
+        await page.click('button[aria-label="Previous page"]');
+        await pdfRendered('Page 1 of 5');
+        await page.click('.pdf-viewer-link.internal');
+        await pdfRendered('Page 3 of 5');
+        check('PDF: the internal link goes to page 3', (await pdfState()).page === '3');
+        await page.locator('.pdf-viewer-stage').focus();
+        await page.keyboard.press('Control+f');
+        await page.keyboard.type('motuz-needle');
+        await page.keyboard.press('Enter');
+        await pdfRendered('Page 2 of 5');
+        await page.waitForFunction(() => document.querySelectorAll('.pdf-viewer .textLayer .highlight').length > 0, null, { timeout: 20000 });
+        const findStatus = await page.locator('.document-viewer-find-status').textContent();
+        check('PDF: Ctrl+F finds the word on page 2 and highlights it', findStatus === '1 of 1'
+            && (await pdfState()).highlights > 0, findStatus);
+        await shot('viewer-pdf-find');
+        await page.keyboard.press('Escape');
+        check('PDF: Esc closes the find bar, not the dialog', await page.locator('.document-viewer-find').count() === 0
+            && await page.locator('.pdf-viewer').count() === 1);
+        const widthFit = (await pdfState()).cssWidth;
+        await page.selectOption('.pdf-viewer-zoom select', '2');
+        await page.waitForFunction(w => {
+            const c = document.querySelector('.pdf-viewer-canvas');
+            return c && Math.round(c.getBoundingClientRect().width) !== w;
+        }, widthFit, { timeout: 20000 });
+        pdf = await pdfState();
+        check('PDF: zoom 200% draws the page at 1632 px (612 pt x 96/72 x 2)', pdf.cssWidth === 1632, pdf.cssWidth);
+        await closeViewer();
+
+        // A PDF above the whole-file cap opens after a few range reads
+        documentReads.length = 0;
+        await row('big.pdf').dblclick();
+        await pdfRendered('Page 1 of 40');
+        pdf = await pdfState();
+        const bytesRead = documentReads.reduce((sum, r) => sum + (r.length || 0), 0);
+        check('PDF: a 6 MiB PDF (above the 4 MiB cap) opens with range reads, not read whole',
+            pdf.count.includes('40') && documentReads.length >= 1 && documentReads.every(r => Number.isInteger(r.offset) && r.length > 0)
+            && bytesRead < 3 * 1024 * 1024, { reads: documentReads.length, bytesRead });
+        await closeViewer();
+
+        // DOCX: heading, table, picture; unsafe links removed; no altChunk, no remote picture
+        await row('letter.docx').dblclick();
+        await page.waitForFunction(() => {
+            const h = document.querySelector('.docx-viewer-host');
+            return h && h.shadowRoot && h.shadowRoot.textContent.includes('Quarterly Report');
+        }, null, { timeout: 30000 });
+        await page.waitForTimeout(1000);
+        const docx = await docxState();
+        check('DOCX: heading, text and table rendered', docx.heading && docx.text.includes('nothing leaves Motuz')
+            && docx.cells.includes('Region') && docx.cells.includes('3,400'), docx);
+        check('DOCX: the picture from the file is shown (blob:)', docx.images.some(i => i.blob && i.width === 64), docx.images);
+        check('DOCX: links: https (new tab, noopener noreferrer) and the bookmark only; the javascript: link is removed',
+            docx.hrefs.length === 2 && docx.hrefs.some(h => h.href === 'https://example.org/motuz-docx' && h.target === '_blank'
+                && h.rel === 'noopener noreferrer') && docx.hrefs.some(h => h.href === '#results') && docx.removed >= 1
+            && docx.notice.includes('removed'), docx);
+        check('DOCX: no altChunk iframe, no scripts, no event handlers, nothing ran', docx.iframes === 0 && docx.scripts === 0
+            && docx.handlers === 0 && docx.js === null && !docx.text.includes('altChunk HTML'), docx);
+        check('DOCX: the linked (external) picture was never requested', !requests.some(u => u.includes('tracker.invalid')),
+            requests.filter(u => u.includes('tracker.invalid')));
+        await shot('viewer-docx');
+        await closeViewer();
+
+        // DOCX pictures are typed by their bytes: this one declares text/html for a PNG/HTML
+        // polyglot and for a page that is no picture at all
+        await row('polyglot.docx').dblclick();
+        await page.waitForFunction(() => {
+            const h = document.querySelector('.docx-viewer-host');
+            return h && h.shadowRoot && h.shadowRoot.textContent.includes('Polyglot test');
+        }, null, { timeout: 30000 });
+        await page.waitForTimeout(500);
+        const poly = await page.evaluate(async () => {
+            const root = document.querySelector('.docx-viewer-host').shadowRoot;
+            const imgs = [...root.querySelectorAll('img')];
+            const withSrc = imgs.filter(i => i.getAttribute('src'));
+            const types = [];
+            for (const i of withSrc) {
+                const blob = await (await fetch(i.src)).blob();
+                types.push({ blob: i.src.startsWith('blob:'), type: blob.type, src: i.src });
+            }
+            return { total: imgs.length, types, removed: root.querySelectorAll('img.docx-image-removed').length };
+        });
+        check('DOCX polyglot: the picture is typed image/png from its bytes, not text/html from the document',
+            poly.types.length === 1 && poly.types[0].blob && poly.types[0].type === 'image/png', poly);
+        check('DOCX polyglot: the HTML that is no picture is not shown ("not loaded")', poly.total === 2 && poly.removed === 1, poly);
+        const opened = await page.context().newPage();
+        try {
+            await opened.goto(poly.types[0].src);
+            const kind = await opened.evaluate(() => ({ type: document.contentType, ran: window.__motuzPolyglot === undefined }));
+            check('DOCX polyglot: "open image in a new tab" is an image, nothing runs', kind.type === 'image/png' && kind.ran, kind);
+        } catch (e) {
+            check('DOCX polyglot: "open image in a new tab" is an image, nothing runs', false, String(e).slice(0, 200));
+        }
+        await opened.close();
+        await closeViewer();
+
+        // XLSX: sheet tabs, formatted values, cached formula result, truncation notice
+        await row('numbers.xlsx').dblclick();
+        await page.waitForSelector('.sheet-viewer-cell[data-cell="A2"]', { timeout: 30000 });
+        let sheet = await sheetState();
+        check('XLSX: sheet tabs (the hidden one marked) and formatted values', JSON.stringify(sheet.tabs) === '["Summary","Data","Secret"]'
+            && sheet.active === 'Summary' && JSON.stringify(sheet.hiddenTabs) === '["Secret"]' && sheet.a2 === 'alpha'
+            && sheet.b2 === '1,234.50' && sheet.c2 === '2023-03-15' && JSON.stringify(sheet.colHeads) === '["A","B","C"]', sheet);
+        check('XLSX: a formula shows its stored value, never evaluated', sheet.b4 === '42', sheet.b4);
+        await shot('viewer-xlsx');
+        await page.click('.sheet-viewer-tab:has-text("Data")');
+        await page.waitForSelector('.sheet-viewer-cell[data-cell="B2"]', { timeout: 20000 });
+        sheet = await sheetState();
+        check('XLSX: a large sheet: a notice, and only the cells in view are rendered',
+            sheet.notice.includes('first 5,000 of 6,000 rows') && sheet.notice.includes('first 200 of 230 columns')
+            && sheet.rendered > 50 && sheet.rendered < 3000, sheet);
+        await page.locator('.sheet-viewer-body').evaluate(b => { b.scrollTop = b.scrollHeight; });
+        await page.waitForSelector('.sheet-viewer-cell[data-cell="A5000"]', { timeout: 20000 });
+        check('XLSX: scrolled to the end: row 5,000', (await page.locator('.sheet-viewer-cell[data-cell="A5000"]').textContent()) === '5000');
+        await shot('viewer-xlsx-large');
+        await closeViewer();
+
+        // PPTX: the outline with titles, text levels, a table, the picture and notes
+        await row('slides.pptx').dblclick();
+        await page.waitForSelector('.pptx-viewer-slide', { timeout: 30000 });
+        await page.waitForFunction(() => {
+            const i = document.querySelector('.pptx-viewer-picture img');
+            return i && i.complete && i.naturalWidth > 0;
+        }, null, { timeout: 20000 });
+        const pptx = await pptxState();
+        check('PPTX: slide titles in the list and on the cards', pptx.slides === 2 && JSON.stringify(pptx.titles) === '["Motuz Slides","Results & Plans"]'
+            && JSON.stringify(pptx.list) === '["Motuz Slides","Results & Plans"]', pptx);
+        check('PPTX: text with levels, a table and the notes', pptx.bullets.some(([t, m]) => t === 'Detail of the first point' && m === '1.5em')
+            && pptx.cells.includes('1,024') && pptx.notes.includes('Speaker note: mention the chart'), pptx);
+        check('PPTX: the picture from the file (blob:), the linked one not fetched', pptx.images.length === 1 && pptx.images[0].blob
+            && pptx.images[0].width === 64 && pptx.unsupported.some(u => u.includes('Linked picture'))
+            && !requests.some(u => u.includes('tracker.invalid')), pptx);
+        await shot('viewer-pptx');
+        await closeViewer();
+
+        // Refused files: messages, never a renderer
+        for (const [name, expected, what] of [
+            ['bomb.docx', /more than 200 MiB uncompressed|250 MiB uncompressed/, 'a zip bomb (250 MiB of zeros)'],
+            ['many.xlsx', /10003 entries; at most 10000/, 'a ZIP with too many entries'],
+            ['slides-named.docx', /PowerPoint presentation, not a Word document/, 'a PPTX named .docx'],
+            ['notreally.docx', /not a PDF, Office or OpenDocument file/, 'a .docx that is text'],
+            ['huge.xlsx', /documents up to 4\.0 MiB/, 'a file above the size cap'],
+            ['legacy.doc', /No preview for this file type/, 'an old binary .doc'],
+        ]) {
+            documentReads.length = 0;
+            await row(name).dblclick();
+            const text = await docError();
+            check(`documents: ${what}: a message`, expected.test(text)
+                && await page.locator('.docx-viewer-host, .sheet-viewer-grid, .pptx-viewer-slide').count() === 0, text);
+            if (name === 'bomb.docx') await shot('viewer-docx-zip-bomb');
+            if (name === 'legacy.doc') {
+                check('documents: .doc is not even read', documentReads.length === 0, documentReads);
+                await shot('viewer-legacy-doc');
+            }
+            await closeViewer();
+        }
+
+        // The same on Azure (rclone as alice with the connection's credentials)
+        const out = appShell(`sudo -u alice /usr/local/bin/rclone --config /home/alice/.config/rclone/rclone.conf copy ${DOCS_DIR} azurite:motuztest/ui-docs && echo uploaded`);
+        check('Azure: document fixtures uploaded', out.includes('uploaded'), out);
+        await paneGo('left', 'ui-azurite', '/motuztest/ui-docs');
+        await leftPane.getByText('report.pdf', { exact: true }).waitFor({ timeout: 30000 });
+        await row('report.pdf').dblclick();
+        await pdfRendered('Page 1 of 5');
+        pdf = await pdfState();
+        check('Azure: PDF drawn, 5 pages', pdf.dark > 20 && pdf.count.includes('5')
+            && (await page.locator('.file-viewer-path').textContent()).startsWith('ui-azurite: /motuztest/ui-docs/report.pdf'), pdf);
+        await shot('viewer-pdf-azure');
+        await closeViewer();
+        await row('letter.docx').dblclick();
+        await page.waitForFunction(() => {
+            const h = document.querySelector('.docx-viewer-host');
+            return h && h.shadowRoot && h.shadowRoot.textContent.includes('Quarterly Report');
+        }, null, { timeout: 30000 });
+        check('Azure: DOCX rendered', (await docxState()).cells.includes('Revenue'));
+        await closeViewer();
+        await row('numbers.xlsx').dblclick();
+        await page.waitForSelector('.sheet-viewer-cell[data-cell="A2"]', { timeout: 30000 });
+        check('Azure: XLSX values', (await sheetState()).b2 === '1,234.50');
+        await closeViewer();
+        await row('slides.pptx').dblclick();
+        await page.waitForSelector('.pptx-viewer-slide-title', { timeout: 30000 });
+        check('Azure: PPTX outline', (await pptxState()).titles.includes('Results & Plans'));
+        await closeViewer();
+        page.off('request', onRequest);
+        const elsewhere = requests.filter(u => !u.startsWith(BASE) && !u.startsWith('blob:') && !u.startsWith('data:'));
+        check('documents: nothing requested from other sites', elsewhere.length === 0, elsewhere);
+        check('documents: no page errors', pageErrors.length === 0, pageErrors);
     });
 } else {
     // Callback mode: Microsoft (fake_ms.py) sends the sign-in tab back to Motuz, which

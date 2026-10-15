@@ -1,14 +1,21 @@
 """
-Image viewer: POST /api/system/files/view/image/ returns the bytes of a PNG, JPEG, GIF
-or WebP image, read as the logged-in user like the text viewer (file_view.py):
-LocalConnection.view_image / RcloneConnection.view_image.
+Image viewer: POST /api/system/files/view/image/ returns the bytes of a PNG, JPEG, GIF,
+WebP, HEIC/HEIF or AVIF image, read as the logged-in user like the text viewer
+(file_view.py): LocalConnection.view_image / RcloneConnection.view_image.
 
-The type is decided on the file's first bytes (magic numbers), never on its name or
-on what a cloud reports. Anything else is refused with 415, SVG in particular: an SVG
-document can carry scripts, and one opened from a blob: URL would run in the app's
-origin. The size is checked before reading (stat) and again on what was read, against
-MOTUZ_VIEW_IMAGE_MAX_BYTES (413 above it). The response headers keep a browser from
-treating the bytes as anything but the detected image. Image contents are never logged.
+The type is decided on the file's first bytes (magic numbers; HEIC/HEIF/AVIF from the
+ISO-BMFF 'ftyp' box's brands), never on its name or on what a cloud reports. Anything
+else is refused with 415, SVG in particular: an SVG document can carry scripts, and one
+opened from a blob: URL would run in the app's origin. The size is checked before
+reading (stat) and again on what was read, against MOTUZ_VIEW_IMAGE_MAX_BYTES (413
+above it). The response headers keep a browser from treating the bytes as anything but
+the detected image. Image contents are never logged.
+
+Motuz sends the bytes as detected and the browser decodes them; AVIF (AV1) decodes in every
+current major browser, HEIC/HEIF (HEVC) only in Safari. For the others the request may
+carry `convert: "jpeg"`: system_manager.view_image then returns a HEIC/HEIF image as a
+JPEG made by heic_convert.py (a child process run as the logged-in user, never in the
+server process), any other image unchanged.
 """
 import os
 import re
@@ -24,13 +31,19 @@ MIN_MAX_BYTES = 1024
 MAX_MAX_BYTES = 256 * MiB # the whole image is held in memory by an app worker
 ENV_MAX_BYTES = 'MOTUZ_VIEW_IMAGE_MAX_BYTES'
 
-# The only types the viewer shows: raster formats a browser decodes in an <img>
+# The types the viewer shows: raster formats a browser can decode in an <img>. PNG,
+# JPEG, GIF and WebP decode everywhere, AVIF (AV1) in every current major browser, HEIC/
+# HEIF (Apple's photo format, HEVC coded) only in Safari; heic_convert.py makes a JPEG of
+# a HEIC/HEIF image for the others.
 PNG = 'image/png'
 JPEG = 'image/jpeg'
 GIF = 'image/gif'
 WEBP = 'image/webp'
-TYPES = (PNG, JPEG, GIF, WEBP)
-SNIFF_BYTES = 16
+HEIC = 'image/heic'
+HEIF = 'image/heif'
+AVIF = 'image/avif'
+TYPES = (PNG, JPEG, GIF, WEBP, HEIC, HEIF, AVIF)
+SNIFF_BYTES = 64 # enough for an ISO-BMFF 'ftyp' box's major and compatible brands
 
 # Sent with every image: the type is the detected one and must not be sniffed, the
 # bytes can never run anything (a sandboxed, empty policy even if opened as a page),
@@ -52,7 +65,7 @@ class TooLargeError(file_view.ViewError):
 
 
 class NotAnImageError(file_view.ViewError):
-    """Not PNG, JPEG, GIF or WebP (SVG included)"""
+    """Not PNG, JPEG, GIF, WebP, HEIC/HEIF or AVIF (SVG included)"""
     status = 415
 
 
@@ -60,23 +73,58 @@ _SIZE_RE = re.compile(r'([0-9]{1,12})\s*([KMG]i?B?|B)?', re.IGNORECASE)
 _UNITS = {'': 1, 'B': 1, 'K': 1024, 'M': MiB, 'G': 1024 * MiB}
 
 
+def parse_size_setting(value, env, default, minimum, maximum, error=ImageConfigError):
+    """
+    A size setting from the environment (`env`, for the messages): bytes, or with a
+    binary unit (25M, 25MiB, 512K). Unset or empty: `default`. Raises `error` for a
+    value that is not a size or not between `minimum` and `maximum`.
+    """
+    value = (value or '').strip()
+    if not value:
+        return default
+    match = _SIZE_RE.fullmatch(value)
+    if not match:
+        raise error('{} must be a size in bytes, e.g. {} or {}, not {!r}'.format(
+            env, default, describe_size(default).replace(' MiB', 'M').replace('.0', ''), value))
+    number, unit = match.groups()
+    size = int(number) * _UNITS[(unit or '')[:1].upper()]
+    if not minimum <= size <= maximum:
+        raise error('{} must be between {} and {} bytes ({}), not {}'.format(
+            env, minimum, maximum, describe_size(maximum).replace(' MiB', 'M').replace('.0', ''), value))
+    return size
+
+
 def parse_max_bytes(value):
     """
     The image size cap from MOTUZ_VIEW_IMAGE_MAX_BYTES: bytes, or with a binary unit
     (25M, 25MiB, 512K). Unset or empty: DEFAULT_MAX_BYTES. Raises ImageConfigError.
     """
+    return parse_size_setting(value, ENV_MAX_BYTES, DEFAULT_MAX_BYTES, MIN_MAX_BYTES, MAX_MAX_BYTES)
+
+
+ENV_HEIC_CONCURRENT = 'MOTUZ_HEIC_MAX_CONCURRENT'
+DEFAULT_HEIC_CONCURRENT = 2
+MAX_HEIC_CONCURRENT = 16
+
+
+def parse_heic_concurrency(value):
+    """
+    How many HEIC/HEIF conversions (heic_convert.py, each a child process using up to
+    2 GiB of address space) run at once, from MOTUZ_HEIC_MAX_CONCURRENT: 1 to 16, default
+    2. Raises ImageConfigError.
+    """
     value = (value or '').strip()
     if not value:
-        return DEFAULT_MAX_BYTES
-    match = _SIZE_RE.fullmatch(value)
-    if not match:
-        raise ImageConfigError('{} must be a size in bytes, e.g. 26214400 or 25M, not {!r}'.format(ENV_MAX_BYTES, value))
-    number, unit = match.groups()
-    size = int(number) * _UNITS[(unit or '')[:1].upper()]
-    if not MIN_MAX_BYTES <= size <= MAX_MAX_BYTES:
-        raise ImageConfigError('{} must be between {} and {} bytes (256M), not {}'.format(
-            ENV_MAX_BYTES, MIN_MAX_BYTES, MAX_MAX_BYTES, value))
-    return size
+        return DEFAULT_HEIC_CONCURRENT
+    if not value.isdigit() or not 1 <= int(value) <= MAX_HEIC_CONCURRENT:
+        raise ImageConfigError('{} must be a number from 1 to {}, not {!r}'.format(
+            ENV_HEIC_CONCURRENT, MAX_HEIC_CONCURRENT, value))
+    return int(value)
+
+
+def heic_concurrency(environ=None):
+    environ = os.environ if environ is None else environ
+    return parse_heic_concurrency(environ.get(ENV_HEIC_CONCURRENT))
 
 
 def max_bytes(environ=None):
@@ -85,7 +133,7 @@ def max_bytes(environ=None):
 
 
 def detect_type(data):
-    """The image type of `data` by its magic number (PNG, JPEG, GIF, WebP), or None"""
+    """The image type of `data` by its magic number (PNG, JPEG, GIF, WebP, HEIC/HEIF, AVIF), or None"""
     if data.startswith(b'\x89PNG\r\n\x1a\n'):
         return PNG
     if data.startswith(b'\xff\xd8\xff'):
@@ -94,6 +142,45 @@ def detect_type(data):
         return GIF
     if len(data) >= 16 and data[:4] == b'RIFF' and data[8:12] == b'WEBP' and data[12:16] in (b'VP8 ', b'VP8L', b'VP8X'):
         return WEBP
+    return _isobmff_type(data)
+
+
+# ISO-BMFF ('ftyp' box) brand codes that identify a HEIC/HEIF/AVIF file (ISO/IEC
+# 14496-12 + 23008-12 for HEIF, and the AVIF spec). Checked against the major brand and
+# every compatible brand, never the file's name: an HEIC file's major brand is often
+# the generic 'mif1'/'msf1' with 'heic' only listed as a compatible brand.
+_HEIC_BRANDS = frozenset((b'heic', b'heix', b'heim', b'heis', b'hevc', b'hevx'))
+_HEIF_BRANDS = frozenset((b'mif1', b'msf1'))
+_AVIF_BRANDS = frozenset((b'avif', b'avis'))
+
+
+def _isobmff_brands(data):
+    """(major_brand, [compatible_brands]) of a leading ISO-BMFF 'ftyp' box, or (None, [])"""
+    if len(data) < 12 or data[4:8] != b'ftyp':
+        return None, []
+    major = bytes(data[8:12])
+    box_size = int.from_bytes(data[0:4], 'big')
+    # Compatible brands are 4-byte codes after the major brand + minor version (from
+    # offset 16), up to the box's declared size or what we have, whichever is smaller;
+    # a size that looks wrong (0, the 64-bit-extended marker 1, or past what we read)
+    # is ignored in favor of scanning everything we were given.
+    end = box_size if 16 <= box_size <= len(data) else len(data)
+    compatible = [bytes(data[i:i + 4]) for i in range(16, end - 3, 4)]
+    return major, compatible
+
+
+def _isobmff_type(data):
+    """'image/heic', 'image/heif', 'image/avif' or None, from the ftyp box's brands"""
+    major, compatible = _isobmff_brands(data)
+    if major is None:
+        return None
+    brands = {major, *compatible}
+    if brands & _AVIF_BRANDS:
+        return AVIF
+    if brands & _HEIC_BRANDS:
+        return HEIC
+    if brands & _HEIF_BRANDS:
+        return HEIF
     return None
 
 
@@ -110,22 +197,22 @@ def describe_size(size):
     return '{} bytes'.format(size)
 
 
-def too_large(name, size, cap):
-    return TooLargeError("'{}' is {}; the viewer shows images up to {}".format(
-        name, describe_size(size), describe_size(cap)))
+def too_large(name, size, cap, what='images'):
+    return TooLargeError("'{}' is {}; the viewer shows {} up to {}".format(
+        name, describe_size(size), what, describe_size(cap)))
 
 
-def check_size(name, size, cap):
+def check_size(name, size, cap, what='images'):
     """Raises TooLargeError (413) when a file of `size` bytes (None: unknown) exceeds the cap"""
     if size is not None and size > cap:
-        raise too_large(name, size, cap)
+        raise too_large(name, size, cap, what)
 
 
 def image_result(name, data, size, cap):
     """
     (bytes, type) of an image read with a limit of cap + 1 bytes. Raises TooLargeError
     when more than `cap` bytes arrived (the file grew since the stat) and
-    NotAnImageError (415) for anything but PNG, JPEG, GIF and WebP.
+    NotAnImageError (415) for anything but PNG, JPEG, GIF, WebP, HEIC/HEIF or AVIF.
     """
     if len(data) > cap:
         raise too_large(name, max(len(data), size or 0), cap)
@@ -133,7 +220,7 @@ def image_result(name, data, size, cap):
     if mime is None:
         if _looks_like_svg(data):
             raise NotAnImageError("'{}' is an SVG image; SVG is shown as text, not as an image".format(name))
-        raise NotAnImageError("'{}' is not a PNG, JPEG, GIF or WebP image".format(name))
+        raise NotAnImageError("'{}' is not a PNG, JPEG, GIF, WebP, HEIC/HEIF or AVIF image".format(name))
     return data, mime
 
 

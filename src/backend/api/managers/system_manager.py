@@ -17,6 +17,8 @@ from ..utils.local_connection import LocalConnection
 from ..utils.abstract_connection import RcloneException
 from ..utils import file_view
 from ..utils import image_view
+from ..utils import document_view
+from ..utils import heic_convert
 
 
 @token_required
@@ -142,22 +144,61 @@ def view_chunk(data):
 @token_required
 def view_image(data):
     """
-    A PNG, JPEG, GIF or WebP image for the viewer, read as the logged-in user:
-    (bytes, type detected from the magic number, path). Anything else is 415 (SVG
-    too), a file larger than VIEW_IMAGE_MAX_BYTES 413. Contents are never logged.
+    A PNG, JPEG, GIF, WebP, HEIC/HEIF or AVIF image for the viewer, read as the logged-in user:
+    (bytes, type detected from the magic number, path, converted_from). Anything else is
+    415 (SVG too), a file larger than VIEW_IMAGE_MAX_BYTES 413. With `convert: "jpeg"` a
+    HEIC/HEIF image is returned as a JPEG (type image/jpeg, converted_from its own type),
+    converted by a child process run as the user (heic_convert); any other image is
+    returned as it is (converted_from None). Contents are never logged.
     """
     path = data.get('path')
     if not isinstance(path, str) or not path:
         raise HTTP_400_BAD_REQUEST('Invalid path')
+    convert = data.get('convert')
+    if convert not in (None, 'jpeg'):
+        raise HTTP_400_BAD_REQUEST("'convert' must be \"jpeg\"")
     max_bytes = current_app.config.get('VIEW_IMAGE_MAX_BYTES') or image_view.DEFAULT_MAX_BYTES
     cloud_connection, connection = _view_connection(data['connection_id'])
+    converted_from = None
     try:
         content, mime = connection.view_image(data=cloud_connection, path=path, max_bytes=max_bytes)
+        if convert and heic_convert.is_convertible(mime):
+            content = heic_convert.convert(content, cloud_connection.owner)
+            converted_from, mime = mime, heic_convert.CONVERTED_TYPE
     except file_view.ViewError as e:
         raise _VIEW_EXCEPTIONS.get(e.status, HTTP_400_BAD_REQUEST)(str(e))
     except RcloneException as e:
         raise HTTP_400_BAD_REQUEST(str(e))
-    return content, mime, path
+    return content, mime, path, converted_from
+
+
+@token_required
+def view_document(data):
+    """
+    A PDF, Office Open XML / OpenDocument or legacy Office file for the document
+    viewer, read as the logged-in user: (bytes, container, file size, start, path).
+    Without `offset`/`length` the whole file (413 above VIEW_DOCUMENT_MAX_BYTES), with
+    them a range of a PDF (at most document_view.RANGE_MAX_BYTES). The container
+    ('pdf', 'zip', 'cfb') is detected from the file's first bytes; anything else is
+    415. Contents are never logged.
+    """
+    path = data.get('path')
+    if not isinstance(path, str) or not path:
+        raise HTTP_400_BAD_REQUEST('Invalid path')
+    try:
+        request_ = document_view.parse_document_request(data)
+    except file_view.ViewError as e:
+        raise HTTP_400_BAD_REQUEST(str(e))
+    max_bytes = current_app.config.get('VIEW_DOCUMENT_MAX_BYTES') or document_view.DEFAULT_MAX_BYTES
+    cloud_connection, connection = _view_connection(data['connection_id'])
+    try:
+        content, container, size, start = connection.view_document(
+            data=cloud_connection, path=path, max_bytes=max_bytes, request=request_)
+    except file_view.ViewError as e:
+        raise _VIEW_EXCEPTIONS.get(e.status, HTTP_400_BAD_REQUEST)(str(e))
+    except RcloneException as e:
+        raise HTTP_400_BAD_REQUEST(str(e))
+    return content, container, size, start, path
 
 
 def _view_connection(connection_id):
@@ -181,6 +222,8 @@ _VIEW_EXCEPTIONS = {
     404: HTTP_404_NOT_FOUND,
     413: HTTP_413_PAYLOAD_TOO_LARGE,
     415: HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+    500: HTTP_500_INTERNAL_SERVER_ERROR,
+    503: HTTP_503_SERVICE_UNAVAILABLE,
     504: HTTP_504_GATEWAY_TIMEOUT,
 }
 

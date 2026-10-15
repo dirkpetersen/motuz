@@ -13,7 +13,8 @@ import {
 } from '../../src/frontend/js/utils/viewerKind.js';
 
 test('the viewer is chosen by extension, case-insensitive', () => {
-    for (const name of ['a.png', 'A.PNG', 'photo.jpg', 'photo.JPeG', 'x.gif', 'y.webp', 'dir.v2/scan.Jpg']) {
+    for (const name of ['a.png', 'A.PNG', 'photo.jpg', 'photo.JPeG', 'x.gif', 'y.webp', 'dir.v2/scan.Jpg',
+                        'IMG_0001.heic', 'IMG_0001.HEIC', 'scan.heif', 'photo.avif', 'photo.AVIF']) {
         assert.equal(viewerKind(name), 'image', name);
     }
     for (const name of ['README.md', 'notes.MD', 'doc.markdown', 'Doc.MarkDown']) {
@@ -22,6 +23,9 @@ test('the viewer is chosen by extension, case-insensitive', () => {
     for (const name of ['logo.svg', 'LOGO.SVG', 'a.txt', 'Makefile', '.md', '.png', 'png', 'a.png.txt',
                         'a.md.bak', 'a.', '', 'image.tif', 'page.html', 'archive.mdx']) {
         assert.equal(viewerKind(name), 'text', name);
+    }
+    for (const name of ['report.PDF', 'a.docx', 'b.xlsx', 'old.xls', 'c.ods', 'talk.pptx', 'legacy.doc', 'legacy.ppt']) {
+        assert.equal(viewerKind(name), 'document', name);
     }
     assert.equal(viewerKind(undefined), 'text');
     assert.equal(viewerKind(null), 'text');
@@ -43,7 +47,8 @@ test('only http, https and mailto links are links', () => {
                        'data:text/html,<script>alert(1)</script>', 'vbscript:msgbox(1)', 'file:///etc/passwd',
                        'ftp://example.org/', 'blob:https://x/1', 'other.md', './other.md', '/abs/path', '#section',
                        '//evil.example.org/x', 'https:', 'https://', 'mailto:', '', null, undefined, 42,
-                       'https://example.org/\u0000', 'https://exa mple.org/', 'https://example.org/\u2028']) {
+                       'https://example.org/\u0000', 'https://exa mple.org/', 'https://example.org/\u2028',
+                       'https://user:pass@example.org/', 'https://trusted.example@evil.example/']) {
         assert.equal(safeLinkUrl(url), null, String(url));
     }
 });

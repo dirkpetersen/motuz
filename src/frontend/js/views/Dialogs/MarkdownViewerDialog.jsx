@@ -137,7 +137,9 @@ class MarkdownViewerDialog extends React.Component {
         }
         let action;
         try {
-            action = await this.props.fetchImage({connection_id: this.props.data.connectionId, path});
+            // convert: a HEIC/HEIF picture comes back as a JPEG (the server converts it; any other
+            // image unchanged), whatever the browser decodes: no per-browser logic here
+            action = await this.props.fetchImage({connection_id: this.props.data.connectionId, path, convert: 'jpeg'});
         } catch (e) {
             action = {error: true, payload: e};
         }
@@ -146,7 +148,7 @@ class MarkdownViewerDialog extends React.Component {
             return {error: imageErrorOf(action && action.payload).error};
         }
         if (!IMAGE_TYPES[result.type]) {
-            return {error: 'Not a PNG, JPEG, GIF or WebP image.'};
+            return {error: 'Not a PNG, JPEG, GIF, WebP, HEIC/HEIF or AVIF image.'};
         }
         if (this.unmounted) {
             return {error: 'closed'};

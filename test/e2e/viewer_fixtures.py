@@ -3,7 +3,9 @@ Fixtures of the image and Markdown viewer, written into the folder given as argv
 as the user, e.g. `sudo -u alice python3 - /home/alice/viewer < viewer_fixtures.py`);
 used by e2e_test.py (local files), cred_test.py (uploaded to Azurite) and ui/ui_test.mjs.
 Stdlib only (the app image has no PIL): the PNG is generated, the small JPEG, GIF and
-WebP were made once with PIL (64 x 48).
+WebP were made once with PIL (64 x 48); the HEIC and AVIF fixtures (48 x 64 portrait,
+a red bar along the visual top edge) were made once with pillow-heif/pillow-avif-plugin
+in a throwaway venv (never a runtime dependency of Motuz).
 """
 import base64
 import os
@@ -35,6 +37,51 @@ WEBP = base64.b64decode(
     'wAFlwOBO1vVE91roLMqPySZguao9mbzdG8FQ37AAAP7Kzn+wL9OW9Q6WYmeQoUBAFwqU8LxsKf5L50+v/IP1ruwcysX8wO1/U83hiZz/Bx2QPZjBCcd4YKm1'
     'ED8wgMLTS+RSCFPaLiacS7H454adFs4iI8kNEBduhPnNYNjj5OFbZyqzGx1a52UlWIM9+n0Vv+hYjBTJQIOVA42vtVJp+dVzj9ncj+dBYyDp+EDoxv3zAGdA'
     'udb0Nhgei+pDiQou7AjjHN0L5n7mnI3T3cAvEVCthowgpil19Dv1C2H9xqhj31O3Z8a62Lvhq3OhENJNCDxNRd4Om0TfU52S6t6lYX42T61n+7AA')
+# HEIC (heic major brand, HEVC coded) and AVIF (avif major brand, AV1 coded): 48 x 64
+# portrait, a red bar along the top so a missing rotation transform is visible. Neither
+# is expected to decode in every browser (see image_view.py / ImageViewerDialog.jsx):
+# Chromium (used by the UI suite) decodes AVIF natively and cannot decode HEIC at all.
+HEIC = base64.b64decode(
+    'AAAAHGZ0eXBoZWljAAAAAG1pZjFoZWljbWlhZgAAAX1tZXRhAAAAAAAAACFoZGxyAAAAAAAAAABwaWN0AAAAAAAAAAAAAAAAAAAAACJpbG9jAAAAAERA'
+    'AAEAAQAAAAABoQABAAAAAAAAAIYAAAAjaWluZgAAAAAAAQAAABVpbmZlAgAAAAABAABodmMxAAAAAA5waXRtAAAAAAABAAAA/WlwcnAAAADdaXBjbwAA'
+    'AHZodmNDAQNwAAAAAAAAAAAAHvAA/P34+AAADwNgAAEAGEABDAH//wNwAAADAJAAAAMAAAMAHroCQGEAAQAqQgEBA3AAAAMAkAAAAwAAAwAeoCCBBZbq'
+    '5Ka5uAhoMCAAAAMDIAAAAwAhYgABAAZEAcFzwIkAAAATY29scm5jbHgAAQANAAaAAAAAFGlzcGUAAAAAAAAAQAAAAEAAAAAoY2xhcAAAADAAAAABAAAA'
+    'QAAAAAH////wAAAAAgAAAAAAAAACAAAAEHBpeGkAAAAAAwgICAAAABhpcG1hAAAAAAAAAAEAAQWBAgMFhAAAAI5tZGF0AAAAgigBrxOA5U3NOntUtvy4'
+    'iRzFHT/mYfl1Sr66+0UNvp+AfnfNclikXJ9zC8Q/FI1HZtKBIKUn0dFcQs2+v3QKkyECTV7uP+neb+giYr1XmN2538nYVfOlcoTi2FecJhLLEUT1NhHw'
+    'BAZClldzn+DHAi+tQREoBxdcXtKTZaOEYXfxdsA=')
+# The same picture with an 'irot' property (rotated 90 degrees counter-clockwise, made by
+# patching the boxes of HEIC): shown 64 x 48, the red bar on the left. Decoders must apply it.
+ROTATED_HEIC = base64.b64decode(
+    'AAAAHGZ0eXBoZWljAAAAAG1pZjFoZWljbWlhZgAAAYdtZXRhAAAAAAAAACFoZGxyAAAAAAAAAABwaWN0AAAAAAAAAAAAAAAAAAAAACJpbG9jAAAAAERA'
+    'AAEAAQAAAAABqwABAAAAAAAAAIYAAAAjaWluZgAAAAAAAQAAABVpbmZlAgAAAAABAABodmMxAAAAAA5waXRtAAAAAAABAAABB2lwcnAAAADmaXBjbwAA'
+    'AHZodmNDAQNwAAAAAAAAAAAAHvAA/P34+AAADwNgAAEAGEABDAH//wNwAAADAJAAAAMAAAMAHroCQGEAAQAqQgEBA3AAAAMAkAAAAwAAAwAeoCCBBZbq'
+    '5Ka5uAhoMCAAAAMDIAAAAwAhYgABAAZEAcFzwIkAAAATY29scm5jbHgAAQANAAaAAAAAFGlzcGUAAAAAAAAAQAAAAEAAAAAoY2xhcAAAADAAAAABAAAA'
+    'QAAAAAH////wAAAAAgAAAAAAAAACAAAAEHBpeGkAAAAAAwgICAAAAAlpcm90AQAAABlpcG1hAAAAAAAAAAEAAQaBAgMFhIYAAACObWRhdAAAAIIoAa8T'
+    'gOVNzTp7VLb8uIkcxR0/5mH5dUq+uvtFDb6fgH53zXJYpFyfcwvEPxSNR2bSgSClJ9HRXELNvr90CpMhAk1e7j/p3m/oImK9V5jdud/J2FXzpXKE4thX'
+    'nCYSyxFE9TYR8AQGQpZXc5/gxwIvrUERKAcXXF7Sk2WjhGF38XbA')
+# 32 x 24 HEIC carrying EXIF (Make, Model, GPS) and XMP (a creator): the converted JPEG must
+# have none of it (unit tests only, test/backend/test_heic_convert.py)
+METADATA_HEIC = base64.b64decode(
+    'AAAAHGZ0eXBoZWljAAAAAG1pZjFoZWljbWlhZgAAAgdtZXRhAAAAAAAAACFoZGxyAAAAAAAAAABwaWN0AAAAAAAAAAAAAAAAAAAAAEZpbG9jAAAA'
+    'AERAAAMAAQAAAAACKwABAAAAAAAAACsAAgAAAAACVgABAAAAAAAAALwAAwAAAAADEgABAAAAAAAAATcAAABiaWluZgAAAAAAAwAAABVpbmZlAgAA'
+    'AAABAABodmMxAAAAABVpbmZlAgAAAQACAABFeGlmAAAAACppbmZlAgAAAQADAABtaW1lAGFwcGxpY2F0aW9uL3JkZit4bWwAAAAAAA5waXRtAAAA'
+    'AAABAAAA/GlwcnAAAADcaXBjbwAAAHVodmNDAQNwAAAAkAAAAAAAHvAA/P34+AAADwNgAAEAGEABDAH//wNwAAADAJAAAAMAAAMAHroCQGEAAQAp'
+    'QgEBA3AAAAMAkAAAAwAAAwAeoCCBBZbqrprm4CGgwIAAAAyAAAADAIRiAAEABkQBwXPBiQAAABNjb2xybmNseAABAA0ABoAAAAAUaXNwZQAAAAAA'
+    'AABAAAAAQAAAAChjbGFwAAAAIAAAAAEAAAAYAAAAAf///+AAAAAC////2AAAAAIAAAAQcGl4aQAAAAADCAgIAAAAGGlwbWEAAAAAAAAAAQABBYEC'
+    'AwWEAAAAKGlyZWYAAAAAAAAADmNkc2MAAgABAAEAAAAOY2RzYwADAAEAAQAAAiZtZGF0AAAAJygBr1IWBSTm/Oq//1mvI9Uk/+te0yJUeqRKWy2q'
+    'gJZabqtQi0tsswAAAAZFeGlmAABNTQAqAAAACAADAQ8AAgAAAAwAAAAyARAAAgAAAA0AAAA+iCUABAAAAAEAAABMAAAAAFNlY3JldE1ha2VyAFNl'
+    'Y3JldENhbWVyYQAAAAQAAQACAAAAAk4AAAAAAgAFAAAAAwAAAIIAAwACAAAAAlcAAAAABAAFAAAAAwAAAJoAAAAAAAAALwAAAAEAAAAkAAAAAQAA'
+    'AAwAAAABAAAAegAAAAEAAAAUAAAAAQAAAAEAAAABPD94cGFja2V0IGJlZ2luPSIiIGlkPSJXNU0wTXBDZWhpSHpyZVN6TlRjemtjOWQiPz48eDp4'
+    'bXBtZXRhIHhtbG5zOng9ImFkb2JlOm5zOm1ldGEvIj48cmRmOlJERiB4bWxuczpyZGY9Imh0dHA6Ly93d3cudzMub3JnLzE5OTkvMDIvMjItcmRm'
+    'LXN5bnRheC1ucyMiPjxyZGY6RGVzY3JpcHRpb24geG1sbnM6ZGM9Imh0dHA6Ly9wdXJsLm9yZy9kYy9lbGVtZW50cy8xLjEvIj48ZGM6Y3JlYXRv'
+    'cj5TZWNyZXRYbXBBdXRob3I8L2RjOmNyZWF0b3I+PC9yZGY6RGVzY3JpcHRpb24+PC9yZGY6UkRGPjwveDp4bXBtZXRhPjw/eHBhY2tldCBlbmQ9'
+    'InciPz4=')
+AVIF = base64.b64decode(
+    'AAAAIGZ0eXBhdmlmAAAAAGF2aWZtaWYxbWlhZk1BMUIAAADrbWV0YQAAAAAAAAAhaGRscgAAAAAAAAAAcGljdAAAAAAAAAAAAAAAAAAAAAAOcGl0bQAA'
+    'AAAAAQAAAB5pbG9jAAAAAEQAAAEAAQAAAAEAAAETAAAAhgAAAChpaW5mAAAAAAABAAAAGmluZmUCAAAAAAEAAGF2MDFDb2xvcgAAAABqaXBycAAAAEtp'
+    'cGNvAAAAFGlzcGUAAAAAAAAAQAAAADAAAAAQcGl4aQAAAAADCAgIAAAADGF2MUOBAAwAAAAAE2NvbHJuY2x4AAEADQAGgAAAABdpcG1hAAAAAAAAAAEA'
+    'AQQBAoMEAAAAjm1kYXQSAAoJGBV/vaICGg0IMncZR4eGIYeeeeaFVQDcX5Xd9Y36dnviR/6F/1NMeYTdo+YV51134JGjuxSafGZ72fk2eSAcyTh7UHG/'
+    'paDaIBLMskruKheG6VxCXH7ImnId+bIh2PV4sV6jKeIFTPlO3JrQb/Y5jeocUylIFdCEPduLo8Enl018QA==')
 
 SVG = (b'<?xml version="1.0"?>\n<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10">'
        b'<script>window.__svgXss = 1</script><rect width="10" height="10"/></svg>\n')
@@ -102,7 +149,11 @@ def fixtures():
         'PIC2.JPEG': JPEG,
         'pic.gif': GIF,
         'pic.webp': WEBP,
+        'photo.heic': HEIC,
+        'rotated.heic': ROTATED_HEIC,
+        'photo.avif': AVIF,
         'fake.png': b'this is text, not a PNG\n',
+        'fake.heic': b'this is text, not a HEIC\n',
         'logo.svg': SVG,
         'svg-named.png': SVG,
         # 3 MiB, above the e2e stack's MOTUZ_VIEW_IMAGE_MAX_BYTES=2M

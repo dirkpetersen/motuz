@@ -86,9 +86,9 @@ if [ "$PURGE" = 1 ]; then
         # userdel only removes the home if it is owned by the account
         case "$HOME_DIR" in /|/home|/var|/var/lib|/usr*|/etc*|/root) ;; *) rm -rf "$HOME_DIR" ;; esac
     fi
-    rm -rf /var/lib/motuz-aws-config /var/lib/motuz-auth
+    rm -rf /var/lib/motuz-aws-config /var/lib/motuz-auth /opt/motuz-heic /opt/motuz-heic.new
     rm -f /usr/local/bin/rclone /usr/local/bin/traefik /usr/local/bin/uv
 else
-    [ -z "$HOME_DIR" ] || echo "    kept: the account $ACCOUNT and $HOME_DIR (checkout, ~/.config/motuz, ~/data), /usr/local/bin/{rclone,traefik,uv}"
+    [ -z "$HOME_DIR" ] || echo "    kept: the account $ACCOUNT and $HOME_DIR (checkout, ~/.config/motuz, ~/data), /usr/local/bin/{rclone,traefik,uv}, /opt/motuz-heic (the HEIC converter's packages)"
 fi
 log "done"

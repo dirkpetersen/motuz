@@ -96,6 +96,20 @@ if [ ! -f "$SETTINGS" ]; then
     fi
     echo "    created $SETTINGS (edit it, then run deploy.sh again)"
 fi
+# The HEIC/HEIF converter (api/utils/heic_convert.py) runs as the logged-in user with the
+# distribution's python3 and the packages install.sh put in /opt/motuz-heic. The settings are
+# always set: without them the server would use its own Python, which only motuz can run.
+[ -n "$(env_get "$SETTINGS" MOTUZ_HEIC_PYTHON)" ] || env_set "$SETTINGS" MOTUZ_HEIC_PYTHON /usr/bin/python3
+[ -n "$(env_get "$SETTINGS" MOTUZ_HEIC_SITE)" ] || env_set "$SETTINGS" MOTUZ_HEIC_SITE /opt/motuz-heic/site
+HEIC_PYTHON=$(env_get "$SETTINGS" MOTUZ_HEIC_PYTHON); HEIC_SITE=$(env_get "$SETTINGS" MOTUZ_HEIC_SITE)
+if "$HEIC_PYTHON" -I -c "import sys; sys.path.insert(0, sys.argv[1]); import pi_heif, PIL" "$HEIC_SITE" 2>/dev/null; then
+    HEIC_STATE=$(printf '%s\n%s\n' "$(sha256sum < "$CHECKOUT/requirements-heic.txt" | cut -d' ' -f1)" \
+        "$("$HEIC_PYTHON" -c 'import platform, sys; print(sys.implementation.cache_tag, platform.machine())')")
+    [ "$(cat /opt/motuz-heic/STATE 2>/dev/null)" = "$HEIC_STATE" ] \
+        || warn "the HEIC converter in /opt/motuz-heic differs from requirements-heic.txt or this Python: run sudo bin/systemd/install.sh again"
+else
+    warn "HEIC/HEIF images will not be converted: pi-heif and Pillow do not load with $HEIC_PYTHON from $HEIC_SITE (run sudo bin/systemd/install.sh)"
+fi
 [ -f "$SECRETS" ] || (umask 077 && : > "$SECRETS")
 chmod 600 "$SECRETS"
 for key in $REQUIRED_SECRETS; do # generated once (also when an update adds one)

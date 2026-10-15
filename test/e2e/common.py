@@ -160,6 +160,18 @@ with open(os.path.join(HERE, 'viewer_fixtures.py')) as _f:
     VIEWER_FIXTURES_CODE = _f.read()
 VIEW_IMAGE_MAX = 2 * 1024 * 1024 # MOTUZ_VIEW_IMAGE_MAX_BYTES in compose.yml
 
+# Document viewer fixtures (document_fixtures.py), used the same way
+with open(os.path.join(HERE, 'document_fixtures.py')) as _f:
+    DOCUMENT_FIXTURES_CODE = _f.read()
+VIEW_DOCUMENT_MAX = 4 * 1024 * 1024 # MOTUZ_VIEW_DOCUMENT_MAX_BYTES in compose.yml
+DOCUMENT_RANGE_MAX = 4 * 1024 * 1024 # document_view.RANGE_MAX_BYTES
+
+
+def document_fixtures():
+    namespace = {'__name__': 'document_fixtures'}
+    exec(DOCUMENT_FIXTURES_CODE, namespace)
+    return namespace['fixtures']()
+
 
 def viewer_fixtures():
     namespace = {'__name__': 'viewer_fixtures'}
@@ -188,6 +200,19 @@ def api_request(method, path, token=None, body=None):
             return e.code, raw, e.headers
 
 
+def jpeg_size(data):
+    """(width, height) from the first start-of-frame marker of a JPEG, or None"""
+    i = 2
+    while i + 9 < len(data):
+        if data[i] != 0xff:
+            return None
+        marker = data[i + 1]
+        if 0xc0 <= marker <= 0xcf and marker not in (0xc4, 0xc8, 0xcc):
+            return int.from_bytes(data[i + 7:i + 9], 'big'), int.from_bytes(data[i + 5:i + 7], 'big')
+        i += 2 + int.from_bytes(data[i + 2:i + 4], 'big')
+    return None
+
+
 def check_image_view(token, other_token, folder, connection_id, label, other_status):
     """
     POST /api/system/files/view/image/ on the viewer fixtures in `folder`: the images
@@ -196,15 +221,16 @@ def check_image_view(token, other_token, folder, connection_id, label, other_sta
     """
     files = viewer_fixtures()
 
-    def image(name, tok=token, path=None):
+    def image(name, tok=token, path=None, **extra):
         return api_request('POST', '/api/system/files/view/image/', tok,
-                   {'connection_id': connection_id, 'path': path or f'{folder}/{name}'})
+                   {'connection_id': connection_id, 'path': path or f'{folder}/{name}', **extra})
 
     def message(body):
         return body.get('message', '') if isinstance(body, dict) else str(body)
 
     for name, mime in (('pic.png', 'image/png'), ('small.png', 'image/png'), ('pic.jpg', 'image/jpeg'),
-                       ('PIC2.JPEG', 'image/jpeg'), ('pic.gif', 'image/gif'), ('pic.webp', 'image/webp')):
+                       ('PIC2.JPEG', 'image/jpeg'), ('pic.gif', 'image/gif'), ('pic.webp', 'image/webp'),
+                       ('photo.heic', 'image/heic'), ('rotated.heic', 'image/heic'), ('photo.avif', 'image/avif')):
         status, body, headers = image(name)
         check(f'{label}: {name} served as {mime}', status == 200 and body == files[name]
               and headers.get('Content-Type') == mime and headers.get('Content-Length') == str(len(files[name])),
@@ -216,7 +242,32 @@ def check_image_view(token, other_token, folder, connection_id, label, other_sta
           and headers.get('Cache-Control') == 'no-store'
           and headers.get('Content-Disposition') == 'inline; filename="pic.png"; filename*=UTF-8\'\'pic.png', dict(headers))
     status, body, _ = image('fake.png')
-    check(f'{label}: a .png that is text is refused (415)', status == 415 and 'not a PNG, JPEG, GIF or WebP' in message(body), (status, body))
+    check(f'{label}: a .png that is text is refused (415)', status == 415 and 'not a PNG, JPEG, GIF, WebP, HEIC/HEIF or AVIF' in message(body), (status, body))
+    # HEIC/HEIF converted to JPEG on the server (convert=jpeg): a child process run as the user
+    for name, size in (('photo.heic', (48, 64)), ('rotated.heic', (64, 48))):
+        status, body, headers = image(name, convert='jpeg')
+        check(f'{label}: {name} with convert=jpeg is a JPEG of {size[0]} x {size[1]} (upright, orientation applied)',
+              status == 200 and isinstance(body, bytes) and body[:3] == b'\xff\xd8\xff' and jpeg_size(body) == size
+              and headers.get('Content-Type') == 'image/jpeg' and headers.get('X-Motuz-Converted-From') == 'image/heic'
+              and headers.get('Content-Length') == str(len(body)), (status, jpeg_size(body) if isinstance(body, bytes) else body, dict(headers)))
+    check(f'{label}: the converted JPEG has the same safe headers and no metadata',
+          headers.get('X-Content-Type-Options') == 'nosniff' and headers.get('Content-Security-Policy') == "default-src 'none'; sandbox"
+          and headers.get('Cache-Control') == 'no-store' and b'Exif' not in body and b'ns.adobe.com' not in body, dict(headers))
+    status, body, headers = image('pic.png', convert='jpeg')
+    check(f'{label}: convert=jpeg leaves a PNG alone', status == 200 and body == files['pic.png']
+          and headers.get('Content-Type') == 'image/png' and 'X-Motuz-Converted-From' not in headers, (status, dict(headers)))
+    status, body, headers = image('photo.avif', convert='jpeg')
+    check(f'{label}: ... and an AVIF (the browser decodes it)', status == 200 and body == files['photo.avif']
+          and headers.get('Content-Type') == 'image/avif', (status, dict(headers)))
+    status, body, _ = image('fake.heic', convert='jpeg')
+    check(f'{label}: a .heic that is text is still 415 with convert=jpeg', status == 415, (status, body))
+    status, body, _ = image('photo.heic', convert='png')
+    check(f'{label}: convert accepts only jpeg (400)', status == 400, (status, body))
+    status, body, _ = image('photo.heic', tok=other_token, convert='jpeg')
+    check(f'{label}: another user cannot convert it either ({other_status})', status == other_status and not isinstance(body, bytes), (status, body))
+    status, body, _ = image('fake.heic')
+    check(f'{label}: a .heic that is text is refused (415), detected by content not name', status == 415
+          and 'not a PNG, JPEG, GIF, WebP, HEIC/HEIF or AVIF' in message(body), (status, body))
     for name in ('logo.svg', 'svg-named.png'):
         status, body, _ = image(name)
         check(f'{label}: SVG refused ({name}, 415)', status == 415 and 'SVG' in message(body), (status, body))
@@ -232,6 +283,74 @@ def check_image_view(token, other_token, folder, connection_id, label, other_sta
     status, body, _ = image('pic.png', tok=other_token)
     check(f'{label}: another user gets {other_status}', status == other_status and not isinstance(body, bytes), (status, body))
     status, body, _ = image('pic.png', tok=None)
+    check(f'{label}: needs a token (401)', status == 401, status)
+
+
+def check_document_view(token, other_token, folder, connection_id, label, other_status):
+    """
+    POST /api/system/files/view/document/ on the document fixtures in `folder`: whole
+    files with their container type and the security headers, PDF ranges (also of a PDF
+    above the whole-file cap), everything else refused. `other_token` (another user)
+    gets `other_status`.
+    """
+    files = document_fixtures()
+
+    def document(name, tok=token, path=None, **params):
+        return api_request('POST', '/api/system/files/view/document/', tok,
+                           dict(connection_id=connection_id, path=path or f'{folder}/{name}', **params))
+
+    def message(body):
+        return body.get('message', '') if isinstance(body, dict) else str(body)[:300]
+
+    for name, container, mime in (('letter.docx', 'zip', 'application/zip'), ('numbers.xlsx', 'zip', 'application/zip'),
+                                  ('slides.pptx', 'zip', 'application/zip'), ('legacy.doc', 'cfb', 'application/x-cfb'),
+                                  ('report.pdf', 'pdf', 'application/pdf')):
+        status, body, headers = document(name)
+        check(f'{label}: {name} read whole as {container}', status == 200 and body == files[name]
+              and headers.get('Content-Type') == mime and headers.get('X-Motuz-Document-Type') == container
+              and headers.get('X-Motuz-File-Size') == str(len(files[name])) and headers.get('X-Motuz-Range-Start') == '0',
+              (status, dict(headers), len(body) if isinstance(body, bytes) else body))
+    status, body, headers = document('letter.docx')
+    check(f'{label}: security headers (nosniff, sandbox CSP, no-store, attachment)',
+          headers.get('X-Content-Type-Options') == 'nosniff'
+          and headers.get('Content-Security-Policy') == "default-src 'none'; sandbox"
+          and headers.get('Cache-Control') == 'no-store'
+          and headers.get('Content-Disposition', '').startswith('attachment; filename="letter.docx"'), dict(headers))
+
+    pdf = files['report.pdf']
+    status, body, headers = document('report.pdf', offset=0, length=100)
+    check(f'{label}: PDF range from the start', status == 200 and body == pdf[:100]
+          and headers.get('X-Motuz-File-Size') == str(len(pdf)) and headers.get('X-Motuz-Range-Start') == '0', (status, headers))
+    status, body, headers = document('report.pdf', offset=1500, length=64)
+    check(f'{label}: PDF range further in (type checked on the first bytes)', status == 200 and body == pdf[1500:1564]
+          and headers.get('X-Motuz-Range-Start') == '1500', (status, body if not isinstance(body, bytes) else len(body)))
+    big = files['big.pdf']
+    status, body, _ = document('big.pdf')
+    check(f'{label}: a PDF above MOTUZ_VIEW_DOCUMENT_MAX_BYTES is not read whole (413)', status == 413
+          and 'documents up to 4.0 MiB' in message(body), (status, body))
+    status, body, headers = document('big.pdf', offset=len(big) - 5000, length=DOCUMENT_RANGE_MAX)
+    check(f'{label}: ... but in ranges; the last range ends at the end of the file', status == 200 and body == big[-5000:]
+          and headers.get('X-Motuz-File-Size') == str(len(big)), (status, len(body) if isinstance(body, bytes) else body))
+    status, body, _ = document('report.pdf', offset=len(pdf), length=10)
+    check(f'{label}: a range beyond the end is refused (400)', status == 400 and 'beyond the end' in message(body), (status, body))
+    for params in ({'offset': 0}, {'length': 10}, {'offset': 0, 'length': DOCUMENT_RANGE_MAX + 1}, {'offset': -1, 'length': 1},
+                   {'offset': 0, 'length': 0}):
+        status, body, _ = document('report.pdf', **params)
+        check(f'{label}: invalid range {params} refused (400)', status == 400, (status, body))
+    status, body, _ = document('letter.docx', offset=10, length=10)
+    check(f'{label}: only PDFs are read in ranges (415)', status == 415 and 'only PDFs' in message(body), (status, body))
+    status, body, _ = document('notreally.docx')
+    check(f'{label}: a .docx that is text is refused (415)', status == 415 and 'not a PDF, Office' in message(body), (status, body))
+    status, body, _ = document('huge.xlsx')
+    check(f'{label}: above MOTUZ_VIEW_DOCUMENT_MAX_BYTES refused (413)', status == 413
+          and 'documents up to 4.0 MiB' in message(body) and '5.0 MiB' in message(body), (status, body))
+    status, body, _ = document(None, path=folder)
+    check(f'{label}: a folder is refused (400)', status == 400 and 'folder' in message(body), (status, body))
+    status, body, _ = document('missing.pdf', offset=0, length=10)
+    check(f'{label}: a missing file is refused', status in (400, 404) and 'does not exist' in message(body), (status, body))
+    status, body, _ = document('report.pdf', tok=other_token, offset=0, length=10)
+    check(f'{label}: another user gets {other_status}', status == other_status and not isinstance(body, bytes), (status, body))
+    status, body, _ = document('report.pdf', tok=None)
     check(f'{label}: needs a token (401)', status == 401, status)
 
 

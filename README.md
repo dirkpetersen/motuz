@@ -699,15 +699,56 @@ celery log (credentials stay masked).
 A double-click on a file in a pane opens a read-only viewer; the file is read as the
 logged-in user (locally with their permissions, in the cloud with their connection):
 
-- `.png`, `.jpg`/`.jpeg`, `.gif`, `.webp`: the image, fit to the window (a click shows
-  100%). The server decides the type from the file's first bytes, not its name, and
-  shows only PNG, JPEG, GIF and WebP; SVG files open as text (an SVG can contain
-  scripts). Images above `MOTUZ_VIEW_IMAGE_MAX_BYTES` (default `25M`, at most `256M`,
-  set in `.env`) are refused before they are read.
+- `.png`, `.jpg`/`.jpeg`, `.gif`, `.webp`, `.heic`/`.heif`, `.avif`: the image, fit to
+  the window (a click shows 100%), with Previous/Next buttons (also `←`/`→`, PageUp/
+  PageDown) to step through the other images in the same folder, in the order shown,
+  without wrapping at the ends. The server decides the type from the file's first
+  bytes, not its name (an ISO-BMFF `ftyp` box for HEIC/HEIF/AVIF); SVG files open as
+  text instead (an SVG can contain scripts). Images above `MOTUZ_VIEW_IMAGE_MAX_BYTES`
+  (default `25M`, at most `256M`, set in `.env`) are refused before they are read.
+  AVIF (the AV1 codec) decodes in every current major browser. HEIC/HEIF (what iPhones
+  take, HEVC coded) is shown by Safari itself; for Chrome, Firefox and Edge the server
+  converts it to a JPEG (quality 85, the primary image only, upright, without EXIF/GPS/XMP;
+  at most 100 megapixels, the long side capped at 8192 px) and the viewer says "HEIC,
+  converted to JPEG". The converter is C code reading an untrusted file, so it runs in a
+  separate process **as the logged-in user** (the same `sudo` rule as every file
+  operation; never as root and never as the service account) with limits on memory
+  (2 GiB), CPU time, open files and no files written (it decodes nothing if one of them
+  cannot be set), and a 60 s time limit; at most two conversions run at once
+  (`MOTUZ_HEIC_MAX_CONCURRENT`, further requests wait 5 s and are then answered "busy, try
+  again"). It uses
+  [pi-heif](https://github.com/bigcat88/pillow_heif) (the decode-only build of
+  pillow-heif) and Pillow, pinned in `requirements.in` and installed with hash checking from `requirements-heic.txt`. Their wheels bundle **libheif and
+  libde265, licensed LGPL-3.0**, as separate shared libraries that Python loads at run
+  time (`pi_heif.libs/` next to the package: replaceable, nothing is linked into Motuz's
+  MIT-licensed code); no x265 or other GPL encoder is included. HEVC is covered by patent
+  pools (MPEG-LA, Access Advance, Velos Media): decoding happens on your server, so if
+  that matters to your organization decide before you leave this on; delete
+  `/opt/motuz-heic` (systemd) or build the image without the `--target` install and
+  HEIC/HEIF files then answer "not installed" instead. The docker image installs the
+  packages into `/opt/motuz-heic/site`; `install.sh` of the systemd install does the same
+  for the distribution's `python3` (`MOTUZ_HEIC_PYTHON`, `MOTUZ_HEIC_SITE`, set by
+  `deploy.sh`). A HEIC file with several images (bursts, live photos) shows its primary
+  image only. Markdown files show relative `.heic` pictures the same way (converted).
 - `.md`, `.markdown`: rendered in the browser from the first 1 MiB, without raw HTML
   (shown as text). Links open in a new tab and only for http, https and mailto;
   remote images are never loaded, images next to the file (relative paths) are.
   *Source* shows the text.
+- `.pdf`; `.docx`/`.dotx`/`.docm`/`.dotm`; `.xlsx`/`.xlsm`/`.xltx`/`.xltm`/`.xlsb`/`.xls`/
+  `.ods`; `.pptx`/`.pptm`/`.ppsx`/`.ppsm`/`.potx`/`.potm`: a read-only preview, rendered
+  entirely in the browser (pdf.js, docx-preview, SheetJS, a Motuz-written PPTX outline
+  reader) — there is no LibreOffice or other server-side conversion, and files are never
+  sent to an external viewer service. PDFs open a page at a time with find, page
+  navigation, zoom and safe (http/https/mailto only) links; PDF JavaScript never runs.
+  Word documents keep headings, text, tables and pictures; unsafe links (`javascript:`,
+  etc.) are shown struck through instead of working, and remote pictures are never
+  fetched. Spreadsheets show sheet tabs and formatted values only — formulas keep their
+  last calculated value and are never recalculated, and a sheet is capped at 5,000 rows
+  by 200 columns with a notice when cut off. PowerPoint files show an outline (titles,
+  text, tables, pictures, speaker notes) rather than rendered slides. Files above
+  `MOTUZ_VIEW_DOCUMENT_MAX_BYTES` (default `50M`) are refused, except PDFs, which are
+  read in small ranges regardless of size. Old binary Office files (`.doc`, `.ppt`, ...)
+  and other formats without a browser renderer show "No preview for this file type".
 - anything else: a text pager like `less`, with *Follow* (like `tail -f`).
 
 ### Using a custom database

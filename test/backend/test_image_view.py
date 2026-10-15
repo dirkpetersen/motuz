@@ -10,7 +10,7 @@ import unittest
 from unittest import mock
 
 from api.utils import file_view, image_view
-from api.utils.image_view import GIF, JPEG, PNG, WEBP, detect_type, image_result, parse_max_bytes
+from api.utils.image_view import AVIF, GIF, HEIC, HEIF, JPEG, PNG, WEBP, detect_type, image_result, parse_max_bytes
 from api.utils.local_connection import LocalConnection
 from api.utils.rclone_connection import RcloneConnection
 
@@ -22,6 +22,15 @@ JPEG_HEAD = b'\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x
 GIF_HEAD = b'GIF89a\x01\x00\x01\x00\x80\x00\x00'
 WEBP_HEAD = b'RIFF\x24\x00\x00\x00WEBPVP8 \x18\x00\x00\x00'
 SVG = b'<?xml version="1.0"?>\n<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>'
+
+# Minimal ISO-BMFF 'ftyp' boxes: size(4) + 'ftyp' + major brand(4) + minor version(4)
+# + compatible brands(4 each)
+HEIC_HEAD = b'\x00\x00\x00\x18ftypheic\x00\x00\x00\x00mif1heic' # major brand is the HEIC one
+HEIF_GENERIC_HEAD = b'\x00\x00\x00\x18ftypmif1\x00\x00\x00\x00mif1heic' # generic major, HEIC only compatible
+HEIF_ONLY_HEAD = b'\x00\x00\x00\x14ftypmif1\x00\x00\x00\x00mif1' # no HEIC/AVIF brand at all
+AVIF_HEAD = b'\x00\x00\x00\x18ftypavif\x00\x00\x00\x00avifmif1'
+AVIF_GENERIC_HEAD = b'\x00\x00\x00\x18ftypmif1\x00\x00\x00\x00mif1avif' # generic major, AVIF only compatible
+MP4_HEAD = b'\x00\x00\x00\x20ftypisom\x00\x00\x02\x00isomiso2mp41avc1' # an ordinary MP4, not an image
 
 CAP = 4096
 
@@ -38,11 +47,26 @@ class TestDetectType(unittest.TestCase):
         self.assertEqual(detect_type(b'RIFF\x00\x00\x00\x00WEBPVP8L'), WEBP)
         self.assertEqual(detect_type(b'RIFF\x00\x00\x00\x00WEBPVP8X'), WEBP)
 
+    def test_heic_heif_avif(self):
+        # HEIC: major brand is one of the HEIC ones, or only a compatible brand is
+        self.assertEqual(detect_type(HEIC_HEAD), HEIC)
+        self.assertEqual(detect_type(HEIF_GENERIC_HEAD), HEIC)
+        # A generic HEIF container with no HEIC/AVIF brand at all
+        self.assertEqual(detect_type(HEIF_ONLY_HEAD), HEIF)
+        # AVIF: major brand or only a compatible brand
+        self.assertEqual(detect_type(AVIF_HEAD), AVIF)
+        self.assertEqual(detect_type(AVIF_GENERIC_HEAD), AVIF)
+        # Never by the file's name or by truncated/garbage ftyp boxes
+        self.assertIsNone(detect_type(MP4_HEAD)) # an ordinary MP4 video, not an image
+        self.assertIsNone(detect_type(b'\x00\x00\x00\x18ftyp'))
+        self.assertIsNone(detect_type(b'ftypheic'))
+        self.assertIsNone(detect_type(b''))
+
     def test_everything_else(self):
         for data in (b'', b'\x89PNG', b'\x89PNG\r\n\x1a', b'hello', SVG, b'<svg>', b'%PDF-1.7',
                      b'RIFF\x00\x00\x00\x00WAVEfmt ', b'RIFF\x00\x00\x00\x00WEBPXXXX', b'GIF90a',
                      b'\xff\xd8', b'BM\x00\x00', b'\x00\x00\x01\x00', b'II*\x00', b'<html><img src=x onerror=alert(1)>',
-                     b' \x89PNG\r\n\x1a\n'):
+                     b' \x89PNG\r\n\x1a\n', MP4_HEAD):
             self.assertIsNone(detect_type(data), data)
 
     def test_svg_is_refused_with_its_own_message(self):
@@ -50,9 +74,16 @@ class TestDetectType(unittest.TestCase):
                      b'<!-- comment -->\n<svg/>', b'<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN"><svg/>'):
             with self.assertRaisesRegex(image_view.NotAnImageError, 'SVG', msg=data):
                 image_result('x.svg', data, len(data), CAP)
-        with self.assertRaisesRegex(image_view.NotAnImageError, "'fake.png' is not a PNG, JPEG, GIF or WebP image"):
+        with self.assertRaisesRegex(image_view.NotAnImageError,
+                                    "'fake.png' is not a PNG, JPEG, GIF, WebP, HEIC/HEIF or AVIF image"):
             image_result('fake.png', b'just text\n', 10, CAP)
         self.assertEqual(image_view.NotAnImageError.status, 415)
+
+    def test_heic_and_avif_are_served_as_detected(self):
+        self.assertEqual(image_result('IMG_0001.heic', HEIC_HEAD, len(HEIC_HEAD), CAP), (HEIC_HEAD, HEIC))
+        self.assertEqual(image_result('photo.avif', AVIF_HEAD, len(AVIF_HEAD), CAP), (AVIF_HEAD, AVIF))
+        headers = image_view.response_headers('/x/IMG_0001.heic', HEIC)
+        self.assertEqual(headers['Content-Type'], HEIC)
 
     def test_image_result(self):
         self.assertEqual(image_result('a.png', PNG_1x1, len(PNG_1x1), CAP), (PNG_1x1, PNG))
@@ -281,7 +312,7 @@ class TestEndpoint(unittest.TestCase):
 
     def test_headers(self):
         from api.managers import system_manager
-        with mock.patch.object(system_manager, 'view_image', return_value=(PNG_1x1, PNG, '/home/alice/a b.png')):
+        with mock.patch.object(system_manager, 'view_image', return_value=(PNG_1x1, PNG, '/home/alice/a b.png', None)):
             response = self.client.post('/api/system/files/view/image/', json={'connection_id': 0, 'path': '/home/alice/a b.png'})
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data, PNG_1x1)
@@ -332,7 +363,7 @@ class TestManager(unittest.TestCase):
     def test_local(self):
         with mock.patch.object(LocalConnection, 'view_image', return_value=(PNG_1x1, PNG)) as view:
             self.assertEqual(self.view_image({'connection_id': 0, 'path': '/home/alice/a.png'}),
-                             (PNG_1x1, PNG, '/home/alice/a.png'))
+                             (PNG_1x1, PNG, '/home/alice/a.png', None))
         self.assertEqual(view.call_args.kwargs['max_bytes'], 12345)
         self.assertEqual(view.call_args.kwargs['data'].owner, 'alice')
 

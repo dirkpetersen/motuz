@@ -28,8 +28,17 @@ RUN set -x \
     && rm -rf /var/lib/apt/lists/*
 
 ENV PATH=/root/.local/bin:$PATH
-COPY ./requirements.txt /code/requirements.txt
+COPY ./requirements.txt ./requirements-heic.txt /code/
 RUN pip install --no-cache-dir --user -r /code/requirements.txt
+
+# The HEIC/HEIF -> JPEG converter of the image viewer (api/utils/heic_convert.py) runs in a
+# child process as the logged-in user, never as root: its packages (pi-heif with
+# libheif/libde265, LGPL-3.0, decode only; Pillow) go where every user can read them, not
+# into /root/.local. Installed with the hashes of requirements-heic.txt (the versions of
+# requirements.txt).
+RUN pip install --no-cache-dir --require-hashes --no-deps --only-binary=:all: \
+        --target /opt/motuz-heic/site -r /code/requirements-heic.txt \
+    && chmod -R a+rX /opt/motuz-heic
 
 
 
@@ -40,6 +49,10 @@ FROM python:3.12-slim-bookworm
 
 COPY --from=build-image /root/.local /root/.local
 ENV PATH=/root/.local/bin:$PATH
+COPY --from=build-image /opt/motuz-heic /opt/motuz-heic
+# The interpreter and packages of the HEIC converter (utils/heic_convert.py)
+ENV MOTUZ_HEIC_PYTHON=/usr/local/bin/python3
+ENV MOTUZ_HEIC_SITE=/opt/motuz-heic/site
 
 ENV DEBIAN_FRONTEND=noninteractive
 
