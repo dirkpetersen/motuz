@@ -10,8 +10,8 @@
 #   --repo=URL      the repository the account clones (default https://github.com/FredHutch/motuz.git),
 #                   or the absolute path of a local clone or mirror the account can read
 #   --branch=NAME   its branch (default: the remote's default branch)
-#   other options (--local-accounts, --sudo-group=GROUP, --user=NAME, --home=DIR) go to
-#   install.sh
+#   other options (--local-accounts, --sudo-group=GROUP, --user=NAME, --home=DIR,
+#   --system-postgres/--private-postgres, --system-redis/--private-redis) go to install.sh
 
 set -euo pipefail
 source "$(dirname "$0")/_lib.sh"

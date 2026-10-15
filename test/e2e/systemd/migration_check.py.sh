@@ -37,10 +37,14 @@ status, page = call('GET', '/api/copy-jobs/?page=1&page_size=100', token=token)
 settings = open('/var/lib/motuz/.config/motuz/motuz.env').read()
 privacy = urllib.request.urlopen('https://localhost/privacy', context=ctx).read().decode()
 check('settings moved (operator on /privacy)', 'E2E Lab &lt;R&amp;D&gt;' in privacy, settings[-500:])
-check('the database is owned by motuz_user',
-      subprocess.run(['runuser', '-u', 'motuz', '--', 'psql', '-h', '/run/user/%d/motuz-postgres' % int(subprocess.check_output(['id', '-u', 'motuz'])),
-                      '-d', 'postgres', '-tAc', "SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname='motuz'"],
-                     capture_output=True, text=True).stdout.strip() == 'motuz_user')
+import re
+secrets = open('/var/lib/motuz/.config/motuz/secrets.env').read()
+host = re.search(r'^MOTUZ_DATABASE_HOST="?([^"\n]+)', settings, re.M)
+password = re.search(r'^MOTUZ_DATABASE_PASSWORD="?([^"\n]+)', secrets, re.M).group(1)
+# whichever database mode is configured: over TCP as motuz_user, as the app does
+owner = subprocess.run(['psql', 'postgresql://motuz_user:%s@%s/motuz' % (password, host.group(1) if host else '127.0.0.1:5432'), '-tAc',
+                        "SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname='motuz'"], capture_output=True, text=True).stdout.strip()
+check('the database is owned by motuz_user', owner == 'motuz_user', owner)
 
 subprocess.run(['runuser', '-u', 'alice', '--', 'sh', '-c',
                 'rm -rf /home/alice/migsrc /home/alice/migdst; mkdir -p /home/alice/migsrc/sub; echo one > /home/alice/migsrc/a.txt; echo two > /home/alice/migsrc/sub/b.txt'],

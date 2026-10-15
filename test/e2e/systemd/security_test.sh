@@ -13,6 +13,13 @@ ACCOUNT=motuz
 UID_M=$(id -u "$ACCOUNT")
 HOME_M=$(getent passwd "$ACCOUNT" | cut -d: -f6)
 as_motuz() { runuser -u "$ACCOUNT" -- "$@"; }
+# a value of motuz.env / secrets.env (KEY="value" or KEY=value)
+envval() { sed -n "s/^$2=\"\{0,1\}\([^\"]*\)\"\{0,1\}\$/\1/p" "$HOME_M/.config/motuz/$1" | tail -1; }
+DB_MODE=$(envval motuz.env MOTUZ_DATABASE_MODE); BROKER_MODE=$(envval motuz.env MOTUZ_BROKER_MODE)
+DB_PORT=$(envval motuz.env MOTUZ_DATABASE_HOST); DB_PORT=${DB_PORT##*:}
+REDIS_SOCK=$(envval motuz.env MOTUZ_REDIS_SOCKET)
+export DB_PW=$(envval secrets.env MOTUZ_DATABASE_PASSWORD) REDIS_PW=$(envval secrets.env MOTUZ_REDIS_PASSWORD) DB_PORT REDIS_SOCK
+echo "    database: $DB_MODE, broker: $BROKER_MODE"
 
 # --- processes
 echo "    root processes outside system services (informational):"
@@ -20,10 +27,12 @@ ps -eo uid=,pid=,comm=,cgroup= | awk '$1 == 0 && $4 !~ /(system\.slice|init\.sco
 check "no root process in $ACCOUNT's user manager (user@$UID_M.service)" \
     bash -c "! ps -eo uid=,cgroup= | awk '\$1 == 0' | grep -q 'user@$UID_M.service'"
 check "the Motuz services run as $ACCOUNT" bash -c "
-    for c in traefik '(redis|valkey)-server' postgres uwsgi celery; do
+    for c in traefik uwsgi celery; do
         ps -eo user=,args= | grep -v grep | grep -qE \"^$ACCOUNT .*\$c\" || exit 1
-        ! ps -eo user=,args= | grep -v grep | grep -E '^root ' | grep -qE \"(/usr/local/bin/traefik|(redis|valkey)-server|postgres -D|uwsgi|celery)\" || exit 1
-    done"
+    done
+    [ $DB_MODE != private ] || ps -eo user=,args= | grep -v grep | grep -qE \"^$ACCOUNT .*postgres\" || exit 1
+    [ $BROKER_MODE != private ] || ps -eo user=,args= | grep -v grep | grep -qE \"^$ACCOUNT .*(redis|valkey)-server\" || exit 1
+    ! ps -eo user=,args= | grep -v grep | grep -E '^root ' | grep -qE \"(/usr/local/bin/traefik|(redis|valkey)-server|postgres -D|uwsgi|celery)\""
 check "the login helper only runs as root on demand (socket activated, no daemon)" \
     bash -c "systemctl is-active --quiet motuz-auth.socket && ! ps -eo args= | grep -q '^/usr/bin/python3 -I -S /usr/local/lib/motuz-auth/'"
 
@@ -53,10 +62,34 @@ check "only 80 and 443 listen beyond loopback (besides the VM's sshd on 22)" \
 check "Traefik ($ACCOUNT) listens on 80 and 443" bash -c "ss -ltnpH | grep -E ':(80|443) ' | grep -c traefik | grep -qx 2"
 check "no UDP listeners of $ACCOUNT" bash -c "! ss -lunpH | grep -qE 'users:.*(redis|valkey|postgres|uwsgi|celery|traefik)'"
 check "Redis/Valkey has no TCP port (unix socket only)" bash -c "! ss -ltnpH | grep -qE 'redis|valkey'"
+if [ "$BROKER_MODE" = system ]; then
+    check "system Redis: the socket is 770 redis:redis and $ACCOUNT is in the group redis" \
+        bash -c "[ \"\$(stat -c '%a %U:%G' \$REDIS_SOCK)\" = '770 redis:redis' ] && id -nG $ACCOUNT | tr ' ' '\n' | grep -qx redis"
+    check "system Redis: another local user cannot connect to the socket (EACCES)" \
+        bash -c "runuser -u alice -- python3 -I -S -c 'import socket,os; s=socket.socket(socket.AF_UNIX); s.connect(os.environ[\"REDIS_SOCK\"])' 2>&1 | grep -q 'Permission denied'"
+    check "system Redis: no unauthenticated access (the default user is off)" \
+        bash -c "redis-cli -s \$REDIS_SOCK ping 2>&1 | grep -qE 'NOAUTH|WRONGPASS|Authentication required|NOPERM'"
+    check "system Redis: the ACL user motuz works but cannot CONFIG, FLUSHALL, KEYS or SHUTDOWN" \
+        bash -c "set -f; export REDISCLI_AUTH=\$REDIS_PW; for c in 'CONFIG GET dir' FLUSHALL 'KEYS *' SHUTDOWN; do redis-cli --user motuz -s \$REDIS_SOCK \$c 2>&1 | grep -q NOPERM || exit 1; done; [ \"\$(redis-cli --user motuz -s \$REDIS_SOCK ping)\" = PONG ]"
+    check "system Redis: the password is neither in /etc/redis/motuz.conf (a hash) nor on a command line" \
+        bash -c "pat=\"[\${REDIS_PW:0:1}]\${REDIS_PW:1}\"; ! grep -q \"\$pat\" /etc/redis/motuz.conf && ! ps -eo args= | grep -q \"\$pat\""
+    check "system Redis: the append-only file is on" bash -c "grep -q '^appendonly yes' /etc/redis/motuz.conf"
+fi
 check "~/.config/motuz is 700, secrets.env and broker.env 600" \
     bash -c "[ \$(stat -c %a $HOME_M/.config/motuz) = 700 ] && [ \$(stat -c %a $HOME_M/.config/motuz/secrets.env) = 600 ] && [ \$(stat -c %a $HOME_M/.config/motuz/broker.env) = 600 ]"
-check "the home is not world readable, ~/data/pg is 700" \
-    bash -c "[ \$(( 0\$(stat -c %a $HOME_M) & 7 )) = 0 ] && [ \$(stat -c %a $HOME_M/data/pg) = 700 ]"
+check "the home is not world readable" bash -c "[ \$(( 0\$(stat -c %a $HOME_M) & 7 )) = 0 ]"
+[ "$DB_MODE" != private ] || check "~/data/pg is 700" bash -c "[ \$(stat -c %a $HOME_M/data/pg) = 700 ]"
+if [ "$DB_MODE" = system ]; then
+    check "system PostgreSQL: listens on loopback only" \
+        bash -c "! ss -ltnH | awk '{print \$4}' | grep -E ':\$DB_PORT\$' | grep -vE '^(127\.|\[::1\])' | grep -q ."
+    check "system PostgreSQL: pg_hba has our scram lines and nothing weaker for motuz_user" \
+        bash -c "hba=\$(cd /; runuser -u postgres -- psql -X -p \$DB_PORT -d postgres -tAc 'SHOW hba_file'); grep -q '^host motuz motuz_user 127.0.0.1/32 scram-sha-256' \$hba && ! grep -E '^host .*motuz_user.* (trust|password|md5)\$' \$hba"
+    check "system PostgreSQL: motuz_user logs in on TCP, is no superuser, owns the database" \
+        bash -c "[ \"\$(PGPASSWORD=\$DB_PW psql -X -h 127.0.0.1 -p \$DB_PORT -U motuz_user -d motuz -tAc \"select rolsuper::text || (select pg_get_userbyid(datdba) from pg_database where datname='motuz') from pg_roles where rolname='motuz_user'\")\" = falsemotuz_user ]"
+    check "system PostgreSQL: a wrong password and a local user without a role are refused" \
+        bash -c "! PGPASSWORD=wrong psql -X -h 127.0.0.1 -p \$DB_PORT -U motuz_user -d motuz -tAc 'select 1' && ! PGPASSWORD=x runuser -u alice -- env PGPASSWORD=x psql -X -h 127.0.0.1 -p \$DB_PORT -U postgres -d postgres -tAc 'select 1'"
+    check "system PostgreSQL: the account has no motuz-postgres unit" bash -c "! ls $HOME_M/.config/systemd/user | grep -q motuz-postgres"
+fi
 check "/etc/sudoers.d/motuz is root 440" bash -c "[ \"\$(stat -c '%U %a' /etc/sudoers.d/motuz)\" = 'root 440' ]"
 
 # --- login helper (/run/motuz-auth.sock)

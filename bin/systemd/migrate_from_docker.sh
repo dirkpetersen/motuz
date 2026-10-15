@@ -40,11 +40,6 @@ MOTUZ_ONEDRIVE_CLIENT_SECRET MOTUZ_GDRIVE_CLIENT_SECRET MOTUZ_PAM_SERVICE MOTUZ_
 MOTUZ_CELERY_BROKER_URL MOTUZ_TOKEN_BROKER_URL MOTUZ_INSTALL_AZURE_CLI"
 CARRIED_SECRETS="MOTUZ_FLASK_SECRET_KEY MOTUZ_SMTP_PASSWORD MOTUZ_ONEDRIVE_CLIENT_SECRET MOTUZ_GDRIVE_CLIENT_SECRET"
 
-# Row count of every table of the public schema, as "table|count" lines
-COUNT_SQL="SELECT table_name, (xpath('/row/c/text()', query_to_xml(
-    format('SELECT count(*) AS c FROM %I.%I', table_schema, table_name), false, true, '')))[1]::text
-    FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE' ORDER BY 1"
-
 usage() { sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
 
 # ================================================================== export
@@ -146,9 +141,15 @@ import_systemd() {
     load_distro
     export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
     export DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-unix:path=$XDG_RUNTIME_DIR/bus}"
-    [ -f "$SETTINGS" ] && [ -f "$SECRETS" ] && [ -f "$PGDATA_DIR/PG_VERSION" ] \
-        || die "run bin/systemd/deploy.sh once before the import"
-    [ "$(env_get "$SETTINGS" MOTUZ_DATABASE_HOST)" = 127.0.0.1:5432 ] || die "the import needs the local database (MOTUZ_DATABASE_HOST=127.0.0.1:5432)"
+    [ -f "$SETTINGS" ] && [ -f "$SECRETS" ] || die "run bin/systemd/deploy.sh once before the import"
+    # Into the database of whichever mode is configured: the private cluster (dropped and
+    # created again), or the system / external PostgreSQL (public schema replaced)
+    local mode; mode=$(database_mode "$SETTINGS" "$PGDATA_DIR")
+    case "$mode" in
+        private) [ -f "$PGDATA_DIR/PG_VERSION" ] || die "run bin/systemd/deploy.sh once before the import" ;;
+        system|external) ;;
+        *) die "run bin/systemd/deploy.sh once before the import" ;;
+    esac
 
     WORK_TMP=$(mktemp -d)
     trap 'rm -rf "$WORK_TMP"' EXIT
@@ -164,20 +165,29 @@ import_systemd() {
 
     log "stopping the app and the worker"
     systemctl --user stop motuz-app.service motuz-celery.service
-    systemctl --user start motuz-postgres.service
+    [ "$mode" != private ] || systemctl --user start motuz-postgres.service
 
-    log "database: new $(env_get "$SETTINGS" MOTUZ_DATABASE_NAME) from the dump"
-    local db_name db_user sock="$XDG_RUNTIME_DIR/motuz-postgres"
+    local db_name db_user db_host db_password sock="$XDG_RUNTIME_DIR/motuz-postgres"
     db_name=$(env_get "$SETTINGS" MOTUZ_DATABASE_NAME)
     db_user=$(env_get "$SETTINGS" MOTUZ_DATABASE_USER)
-    psql -X -q -v ON_ERROR_STOP=1 -h "$sock" -d postgres -v db="$db_name" -v user="$db_user" <<'EOSQL'
+    db_host=$(env_get "$SETTINGS" MOTUZ_DATABASE_HOST)
+    db_password=$(env_get "$SECRETS" MOTUZ_DATABASE_PASSWORD)
+    if [ "$mode" = private ]; then
+        log "database: new $db_name from the dump (private cluster)"
+        psql -X -q -v ON_ERROR_STOP=1 -h "$sock" -d postgres -v db="$db_name" -v user="$db_user" <<'EOSQL'
 DROP DATABASE IF EXISTS :"db" WITH (FORCE);
 CREATE DATABASE :"db" OWNER :"user";
 EOSQL
-    # As the superuser (peer login), every object owned by the database owner
-    pg_restore -h "$sock" -d "$db_name" --no-owner --no-privileges --role="$db_user" --exit-on-error "$WORK_TMP/export/motuz.dump" \
-        || die "pg_restore failed"
-    psql -X -h "$sock" -d "$db_name" -tA -F '|' -c "$COUNT_SQL" > "$WORK_TMP/counts.new"
+        # As the superuser (peer login), every object owned by the database owner
+        pg_restore -h "$sock" -d "$db_name" --no-owner --no-privileges --role="$db_user" --exit-on-error "$WORK_TMP/export/motuz.dump" \
+            || die "pg_restore failed"
+        psql -X -h "$sock" -d "$db_name" -tA -F '|' -c "$COUNT_SQL" > "$WORK_TMP/counts.new"
+    else
+        log "database: $db_name on $db_host ($mode) replaced by the dump"
+        restore_dump_over_tcp "$db_host" "$db_user" "$db_password" "$db_name" "$WORK_TMP/export/motuz.dump" \
+            || die "restoring into $db_host failed"
+        PGPASSWORD="$db_password" psql -X -h "${db_host%:*}" -p "${db_host##*:}" -U "$db_user" -d "$db_name" -tA -F '|' -c "$COUNT_SQL" > "$WORK_TMP/counts.new"
+    fi
     if ! diff "$WORK_TMP/export/counts.txt" "$WORK_TMP/counts.new"; then
         die "row counts differ after the restore (above: < docker, > new)"
     fi

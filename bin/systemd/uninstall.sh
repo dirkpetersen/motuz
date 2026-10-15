@@ -7,9 +7,13 @@
 #
 # Usage: sudo bin/systemd/uninstall.sh [--user=NAME] [--purge --yes]
 #   --user=NAME  the service account (default motuz)
-#   --purge      also delete the account with its home and all Motuz data (database,
-#                secrets, certificates), /var/lib/motuz-aws-config, the login helper's
-#                state and /usr/local/bin/{rclone,traefik,uv}; needs --yes
+#   --purge      also delete the account with its home and all Motuz data (a private
+#                database, secrets, certificates), /var/lib/motuz-aws-config, the login
+#                helper's state and /usr/local/bin/{rclone,traefik,uv}; needs --yes.
+#                With the distribution's PostgreSQL (MOTUZ_DATABASE_MODE=system) only the
+#                database motuz and the role motuz_user are dropped (and our pg_hba lines
+#                removed), with the distribution's Redis only /etc/redis/motuz.conf and the
+#                drop-in are removed; the services and other databases are never touched.
 #
 # Always: stops motuz.target and the user manager (loginctl disable-linger), removes the
 # account's Motuz units, the sudoers rule, /etc/pam.d/motuz, the sysctl file, the login
@@ -40,10 +44,18 @@ done
 load_distro
 
 HOME_DIR=""
+DB_MODE=private
+BROKER_MODE=private
+DB_HOST=""
 if id "$ACCOUNT" >/dev/null 2>&1; then
     uid=$(id -u "$ACCOUNT")
     HOME_DIR=$(getent passwd "$ACCOUNT" | cut -d: -f6)
     [ "$uid" != 0 ] || die "$ACCOUNT is root"
+    if [ -f "$HOME_DIR/.config/motuz/motuz.env" ]; then
+        DB_MODE=$(database_mode "$HOME_DIR/.config/motuz/motuz.env" "$HOME_DIR/data/pg")
+        BROKER_MODE=$(broker_mode "$HOME_DIR/.config/motuz/motuz.env" "$HOME_DIR/.config/motuz")
+        DB_HOST=$(env_get "$HOME_DIR/.config/motuz/motuz.env" MOTUZ_DATABASE_HOST)
+    fi
     log "stopping Motuz ($ACCOUNT's user services)"
     if [ -d "/run/user/$uid" ]; then
         runuser -u "$ACCOUNT" -- env XDG_RUNTIME_DIR="/run/user/$uid" systemctl --user disable --now motuz.target >/dev/null 2>&1 || true
@@ -52,7 +64,7 @@ if id "$ACCOUNT" >/dev/null 2>&1; then
     loginctl disable-linger "$ACCOUNT" 2>/dev/null || true
     systemctl stop "user@$uid.service" 2>/dev/null || true
     # Units only: the settings, secrets and data stay unless --purge
-    rm -f "$HOME_DIR"/.config/systemd/user/motuz*
+    rm -rf "$HOME_DIR"/.config/systemd/user/motuz*
     rm -f "$HOME_DIR"/.config/systemd/user/default.target.wants/motuz.target
 else
     warn "no account $ACCOUNT"
@@ -78,6 +90,27 @@ for unit in $DISTRO_SERVICES; do
     systemctl unmask "$unit" >/dev/null 2>&1 || true
 done
 
+as_postgres() { (cd / && runuser -u postgres -- "$@"); }
+if [ "$PURGE" = 1 ] && [ "$DB_MODE" = system ]; then
+    log "purge: the database motuz and the role motuz_user of the system PostgreSQL ($DB_HOST); the service and its other databases stay"
+    as_postgres psql -X -q -p "${DB_HOST##*:}" -d postgres \
+        -c 'DROP DATABASE IF EXISTS motuz WITH (FORCE)' -c 'DROP ROLE IF EXISTS motuz_user' \
+        || warn "could not drop the database motuz / role motuz_user (drop them by hand)"
+    hba=$(as_postgres psql -X -p "${DB_HOST##*:}" -d postgres -tAc 'SHOW hba_file' 2>/dev/null || true)
+    if [ -n "$hba" ] && grep -q '^# BEGIN motuz ' "$hba"; then
+        tmp=$(mktemp)
+        awk '/^# BEGIN motuz /{skip=1} !skip{print} /^# END motuz$/{skip=0}' "$hba" > "$tmp"
+        cat "$tmp" > "$hba"; rm -f "$tmp"
+        as_postgres psql -X -q -p "${DB_HOST##*:}" -d postgres -c 'SELECT pg_reload_conf()' >/dev/null || true
+    fi
+fi
+if [ "$PURGE" = 1 ] && [ "$BROKER_MODE" = system ]; then
+    log "purge: /etc/redis/motuz.conf and the redis-server drop-in (the system Redis stays and restarts with its own configuration)"
+    rm -f /etc/redis/motuz.conf /etc/systemd/system/redis-server.service.d/motuz.conf
+    rmdir /etc/systemd/system/redis-server.service.d 2>/dev/null || true
+    systemctl daemon-reload
+    systemctl restart redis-server.service 2>/dev/null || true
+fi
 if [ "$PURGE" = 1 ]; then
     log "purge: account $ACCOUNT and its home, Motuz data, pinned binaries"
     if [ -n "$HOME_DIR" ]; then
@@ -89,6 +122,8 @@ if [ "$PURGE" = 1 ]; then
     rm -rf /var/lib/motuz-aws-config /var/lib/motuz-auth /opt/motuz-heic /opt/motuz-heic.new
     rm -f /usr/local/bin/rclone /usr/local/bin/traefik /usr/local/bin/uv
 else
+    [ "$DB_MODE" != system ] || echo "    kept: the system PostgreSQL service with the database motuz and the role motuz_user (--purge drops only those)"
+    [ "$BROKER_MODE" != system ] || echo "    kept: the system Redis with /etc/redis/motuz.conf (--purge removes our configuration only)"
     [ -z "$HOME_DIR" ] || echo "    kept: the account $ACCOUNT and $HOME_DIR (checkout, ~/.config/motuz, ~/data), /usr/local/bin/{rclone,traefik,uv}, /opt/motuz-heic (the HEIC converter's packages)"
 fi
 log "done"
