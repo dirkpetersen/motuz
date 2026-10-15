@@ -11,34 +11,54 @@
 
 ![Motuz settings and features](docs/img/mov-settings.gif)
 
-
-<!--  The TOC below is created/maintained by
-      the `Markdown TOC` extension to the
+<!--  The TOC below is created from the headings (## and ###)
+      by the `Markdown TOC` extension to the
       Visual Studio Code editor.
  -->
 
 <!-- TOC -->
 
-1. [Quickstart](#quickstart)
-2. [Beyond quickstart](#beyond-quickstart)
-3. [Customizing your deployment](#customizing-your-deployment)
-4. [Setting up production](#setting-up-production)
-    1. [Authentication](#authentication)
-        1. [Local Authentication](#local-authentication)
-        2. [Authenticate against Active Directory](#authenticate-against-active-directory)
-    2. [Requirements](#requirements)
-    3. [Docker and docker-compose](#docker-and-docker-compose)
-    4. [Shared Filesystems (optional)](#shared-filesystems-optional)
-    5. [Cloning the Motuz repository](#cloning-the-motuz-repository)
-    6. [Set up HTTPS certificate](#set-up-https-certificate)
-        1. [Option A: certificate files (default)](#option-a-certificate-files-default)
-        2. [Option B: Let's Encrypt](#option-b-lets-encrypt)
-    7. [Running Motuz the first time](#running-motuz-the-first-time)
-    8. [Redeploying](#redeploying)
-    9. [Migrating from nginx to Traefik](#migrating-from-nginx-to-traefik)
-    10. [OneDrive: own app registration](#onedrive-own-app-registration)
-    11. [Google Drive](#google-drive)
-    12. [Performance tuning](#performance-tuning)
+1. [Install (default: without Docker)](#install-default-without-docker)
+    1. [Root steps (install.sh)](#root-steps-installsh)
+    2. [Root steps without install.sh](#root-steps-without-installsh)
+    3. [Steps as the motuz account](#steps-as-the-motuz-account)
+    4. [Deploy with an AI assistant (Claude Code)](#deploy-with-an-ai-assistant-claude-code)
+    5. [Why a private PostgreSQL cluster?](#why-a-private-postgresql-cluster)
+    6. [Backups and upgrades](#backups-and-upgrades)
+    7. [Why a sudoers rule](#why-a-sudoers-rule)
+    8. [Logins (PAM)](#logins-pam)
+    9. [Storage](#storage)
+    10. [VM or LXC](#vm-or-lxc)
+    11. [Migrating from the docker install](#migrating-from-the-docker-install)
+    12. [Tests of this install](#tests-of-this-install)
+    13. [Uninstall](#uninstall)
+2. [Install on Amazon Linux 2027 (default on EC2)](#install-on-amazon-linux-2027-default-on-ec2)
+    1. [Install on an instance](#install-on-an-instance)
+    2. [Remote workers on AL2027](#remote-workers-on-al2027)
+    3. [Tests on AL2027](#tests-on-al2027)
+3. [Configuration and features](#configuration-and-features)
+    1. [OneDrive: own app registration](#onedrive-own-app-registration)
+    2. [Google Drive](#google-drive)
+    3. [Privacy policy and terms](#privacy-policy-and-terms)
+    4. [Performance tuning](#performance-tuning)
+    5. [File viewer](#file-viewer)
+    6. [Remote workers (HTTPS only)](#remote-workers-https-only)
+    7. [Temporary EC2 workers](#temporary-ec2-workers)
+4. [Alternative: Docker](#alternative-docker)
+    1. [Quickstart](#quickstart)
+    2. [Beyond quickstart](#beyond-quickstart)
+    3. [Customizing your deployment](#customizing-your-deployment)
+    4. [Setting up production](#setting-up-production)
+    5. [Authentication](#authentication)
+    6. [Requirements](#requirements)
+    7. [Docker and docker-compose](#docker-and-docker-compose)
+    8. [Shared Filesystems (optional)](#shared-filesystems-optional)
+    9. [Cloning the Motuz repository](#cloning-the-motuz-repository)
+    10. [Set up HTTPS certificate](#set-up-https-certificate)
+    11. [Running Motuz the first time](#running-motuz-the-first-time)
+    12. [Redeploying](#redeploying)
+    13. [Migrating from nginx to Traefik](#migrating-from-nginx-to-traefik)
+    14. [Using a custom database](#using-a-custom-database)
 5. [Developer Installation](#developer-installation)
     1. [Initialize](#initialize)
     2. [Start](#start)
@@ -46,7 +66,6 @@
 6. [Development Options](#development-options)
 7. [Examples](#examples)
     1. [How to use the API](#how-to-use-the-api)
-        1. [API Endpoint](#api-endpoint)
     2. [Authentication](#authentication-1)
 8. [Folder structure](#folder-structure)
     1. [Overview](#overview)
@@ -58,7 +77,1318 @@
 <!-- /TOC -->
 
 
-## Quickstart
+## Install (default: without Docker)
+
+Motuz runs as `systemd --user` services of one dedicated account, `motuz`, on **Ubuntu 26.04
+LTS** (a VM, for example on Proxmox, a privileged LXC or bare metal) or **Amazon Linux 2027**
+(EC2, see [Install on Amazon Linux 2027](#install-on-amazon-linux-2027-default-on-ec2)).
+This is the default way to install Motuz; Docker is the
+[alternative](#alternative-docker). Both use the same code, the same Traefik flags and
+dynamic configuration, the same rclone and the same PostgreSQL major version, and
+[move into each other](#migrating-from-the-docker-install).
+
+The install is split in two, so the part that needs root is short and can be reviewed:
+
+1. **As root, once** (and again after updates that change it; `deploy.sh` warns):
+   `sudo bin/systemd/install.sh`. It installs packages and pinned binaries, creates the
+   account and its sudoers rule, prepares the distribution's PostgreSQL and Redis
+   services, and nothing else. Every command it runs is listed under
+   [Root steps without install.sh](#root-steps-without-installsh), for admins who prefer to
+   run them by hand.
+2. **As the account `motuz`**: clone the repository and run `bin/systemd/deploy.sh`
+   ([Steps as the motuz account](#steps-as-the-motuz-account)). This needs no root, now or
+   for updates, and can be done by an AI assistant ([Deploy with an AI assistant
+   (Claude Code)](#deploy-with-an-ai-assistant-claude-code)).
+
+| Service | Unit | Listens on |
+| --- | --- | --- |
+| PostgreSQL 18 | the distribution's service (default on Ubuntu), or `motuz-postgres`, a user service with the distribution's binaries and data in `~/data/pg` | 127.0.0.1:5432 |
+| Celery broker: Redis 8 (Ubuntu) or Valkey 9 (Amazon Linux; AL2027 has no Redis), append-only file | the distribution's `redis-server` (default on Ubuntu), or `motuz-redis`, a user service | a unix socket only, no TCP |
+| uWSGI: API, frontend, OAuth token broker (`~/motuz/venv`, `src/backend/wsgi.ini`) | `motuz-app` | 127.0.0.1:5000, 127.0.0.1:5001 |
+| Celery worker | `motuz-celery` | nothing |
+| Traefik 3.7 (the flags of `docker-compose.yml`, `deployment/docker/traefik/dynamic/motuz.yml`) | `motuz-traefik` | :80, :443 |
+
+The `motuz-*` units are grouped by `motuz.target`, which starts at boot (`loginctl
+enable-linger motuz`). Only Traefik listens beyond loopback: the sysctl
+`net.ipv4.ip_unprivileged_port_start=80` lets a user service bind ports 80 and 443
+(user services cannot get `CAP_NET_BIND_SERVICE`).
+
+**Defaults per distribution** (each with an explicit option; an existing install keeps the
+mode it has and is never switched silently):
+
+| | Ubuntu 26.04 | Amazon Linux 2027 |
+| --- | --- | --- |
+| PostgreSQL | the distribution's service (`postgresql@18-main`): `--system-postgres`, default | private cluster `~/data/pg`: `--private-postgres`, default; `--system-postgres` uses `postgresql.service` |
+| Broker | the distribution's `redis-server` on its socket: `--system-redis`, default | private Valkey (`motuz-redis`): `--private-redis`, default; no system mode |
+| Why | standard tooling (`pg_lsclusters`, `pg_upgradecluster`, `pg_dump` as `postgres`, apt updates) and the packages' own units | the AL2027 packages are a preview with one `postgresql.service` and a Valkey whose `valkey.conf` has no include directory (a system mode would rewrite the package's configuration); one design as before |
+
+### Root steps (install.sh)
+
+As root, from a clone of the repository that only root can change (never from the
+account's `~/motuz`):
+
+```bash
+sudo bin/systemd/install.sh                    # SSSD/Kerberos accounts (Active Directory)
+sudo bin/systemd/install.sh --local-accounts   # also local /etc/shadow accounts (login helper)
+sudo bin/systemd/install.sh --private-postgres --private-redis   # the account's own instances (Ubuntu)
+sudo bin/systemd/install.sh --system-postgres  # the distribution's PostgreSQL (Amazon Linux)
+```
+
+`install.sh` checks that it runs on a supported distribution, is idempotent, and
+prints the PostgreSQL/Redis mode it uses. It installs the packages, the pinned rclone
+(version and SHA256 from `deployment/docker/app/Dockerfile`), Traefik and uv
+(`deployment/systemd/versions.env`, SHA256 checked), the account `motuz` (a system
+account with a locked password, home `/var/lib/motuz`, shell `/bin/bash`: keep it on local
+disk), linger, the sudoers rule, the sysctl files, `/etc/pam.d/motuz`,
+`/var/lib/motuz-aws-config`, the optional login helper, and, in the system modes, the
+database role and the Redis configuration below. It leaves the account usable for the
+next step: `sudo -iu motuz` (or `sudo machinectl shell motuz@`) gives an interactive shell
+with `git` and `curl`; there is no login password and no SSH key, and the account never
+gets a `nologin` shell because the setup is done interactively as that account.
+
+**System PostgreSQL** (`--system-postgres`). Ubuntu: cluster `18/main` of
+`postgresql-common`, created with `pg_createcluster 18 main` if missing, service
+`postgresql@18-main`. Amazon Linux: `postgresql-setup --initdb` and `postgresql.service`.
+In both: the service is enabled and running, listens on `localhost` only (`ALTER SYSTEM`
+if it did not), the role `motuz_user` (scram-sha-256) and the database `motuz` owned by it
+(PostgreSQL 15+ public-schema ownership; `CONNECT` revoked from `PUBLIC`), and lines at the
+top of `pg_hba.conf` (between `# BEGIN motuz` and `# END motuz`) that allow scram for
+`motuz_user` on `127.0.0.1` and `::1` and reject it from anywhere else. The password is
+generated, never on a command line, and left in `~motuz/.config/motuz/handoff.env` (mode
+600, owned by the account) with the mode and address; `deploy.sh` merges it into
+`motuz.env`/`secrets.env` and deletes the file.
+
+**System Redis** (`--system-redis`, Ubuntu). `/etc/redis/motuz.conf` includes the package's
+`redis.conf` and overrides it: `port 0` (no TCP), the unix socket
+`/run/redis/redis-server.sock` with mode 770 (group `redis`; `motuz` is added to the group),
+`appendonly yes`, the `default` user off and the ACL user `motuz` with the password's
+SHA-256 (not requirepass: the password gives Celery what it needs and no more, `-@admin
+-@dangerous -@scripting` denies `CONFIG`, `SHUTDOWN`, `FLUSHALL`, `KEYS`, `DEBUG`, ...).
+A systemd drop-in `/etc/systemd/system/redis-server.service.d/motuz.conf` starts
+`redis-server` with that file; the package's own `redis.conf` is not modified. The Celery
+`visibility_timeout` of 30 days and `vm.overcommit_memory=1` are unchanged.
+`MOTUZ_CELERY_BROKER_URL` becomes `redis+socket://motuz:<password>@/run/redis/redis-server.sock`.
+
+### Root steps without install.sh
+
+What `install.sh` does as root, in order, for an admin who wants to run the commands
+(replace the variables first; each step is idempotent). Versions and checksums are not
+repeated here: they are in `deployment/systemd/versions.env` (Traefik, uv) and in the `ARG
+RCLONE_*` lines of `deployment/docker/app/Dockerfile` (rclone), which the commands read.
+Work from root's own clone: `git clone https://github.com/FredHutch/motuz.git /root/motuz-install; cd /root/motuz-install`.
+
+**1. Packages.**
+
+Ubuntu 26.04:
+
+```bash
+export DEBIAN_FRONTEND=noninteractive
+apt-get update -y
+apt-get install -y --no-install-recommends postgresql-common
+# so that no `main` cluster is created behind your back (--private-postgres; harmless otherwise)
+grep -q '^create_main_cluster = false' /etc/postgresql-common/createcluster.conf \
+  || echo 'create_main_cluster = false' >> /etc/postgresql-common/createcluster.conf
+apt-get install -y --no-install-recommends postgresql-18 postgresql-client-18 redis-server \
+  nodejs npm build-essential git curl ca-certificates unzip openssl python3 sudo iproute2 libpam-modules
+# only with --private-postgres / --private-redis: the package's services must not run
+#   systemctl disable --now postgresql.service redis-server.service; systemctl mask postgresql.service redis-server.service
+```
+
+Amazon Linux 2027:
+
+```bash
+dnf -y install postgresql18-server postgresql18 valkey nodejs24 nodejs24-npm gcc make git tar gzip \
+  unzip openssl python3 python3-devel sudo iproute procps-ng shadow-utils util-linux pam \
+  policycoreutils hostname diffutils findutils gawk sed ca-certificates
+command -v curl >/dev/null || dnf -y install curl     # the AMI has curl-minimal
+systemctl disable --now valkey.service valkey-sentinel.service; systemctl mask valkey.service valkey-sentinel.service
+# private PostgreSQL (the default there): also  systemctl disable --now postgresql.service; systemctl mask postgresql.service
+[ "$(node -p 'process.versions.node.split(".")[0]')" = 24 ] || alternatives --set node /usr/bin/node-24
+```
+
+**2. Pinned rclone, Traefik and uv** (SHA256 checked; arm64 instead of amd64 on ARM):
+
+```bash
+. deployment/systemd/versions.env
+RCLONE_VERSION=$(sed -n 's/^ARG RCLONE_VERSION=//p' deployment/docker/app/Dockerfile)
+RCLONE_SHA256_AMD64=$(sed -n 's/^ARG RCLONE_SHA256_AMD64=//p' deployment/docker/app/Dockerfile)
+ARCH=amd64; UVARCH=x86_64      # arm64 / aarch64 on ARM (then RCLONE_SHA256_ARM64, TRAEFIK_SHA256_ARM64, UV_SHA256_ARM64)
+T=$(mktemp -d); cd "$T"
+curl -fsSLO https://downloads.rclone.org/v$RCLONE_VERSION/rclone-v$RCLONE_VERSION-linux-$ARCH.zip
+echo "$RCLONE_SHA256_AMD64  rclone-v$RCLONE_VERSION-linux-$ARCH.zip" | sha256sum -c -
+unzip -q rclone-v$RCLONE_VERSION-linux-$ARCH.zip && install -m 755 rclone-v$RCLONE_VERSION-linux-$ARCH/rclone /usr/local/bin/rclone
+curl -fsSLO https://github.com/traefik/traefik/releases/download/v$TRAEFIK_VERSION/traefik_v${TRAEFIK_VERSION}_linux_$ARCH.tar.gz
+echo "$TRAEFIK_SHA256_AMD64  traefik_v${TRAEFIK_VERSION}_linux_$ARCH.tar.gz" | sha256sum -c -
+tar -xzf traefik_v${TRAEFIK_VERSION}_linux_$ARCH.tar.gz traefik && install -m 755 traefik /usr/local/bin/traefik
+curl -fsSLO https://github.com/astral-sh/uv/releases/download/$UV_VERSION/uv-$UVARCH-unknown-linux-gnu.tar.gz
+echo "$UV_SHA256_AMD64  uv-$UVARCH-unknown-linux-gnu.tar.gz" | sha256sum -c -
+tar -xzf uv-$UVARCH-unknown-linux-gnu.tar.gz && install -m 755 uv-$UVARCH-unknown-linux-gnu/uv /usr/local/bin/uv
+cd /root/motuz-install
+```
+
+**3. The account**, linger and its systemd user manager:
+
+```bash
+useradd --system --user-group --create-home --home-dir /var/lib/motuz --shell /bin/bash \
+  --comment "Motuz service account" motuz        # locked password; a uid below UID_MIN
+chmod 750 /var/lib/motuz
+loginctl enable-linger motuz
+systemctl start user@$(id -u motuz).service
+```
+
+**4. The sudoers rule** (`--sudo-group=GROUP`: `(%GROUP, !root)` instead of `(ALL, !root)`):
+
+```bash
+cat > /tmp/motuz.sudoers <<'EOF'
+# Motuz (bin/systemd/install.sh): file and rclone operations as the logged-in user
+motuz ALL=(ALL, !root) NOPASSWD:SETENV: /usr/local/bin/rclone, /usr/bin/ls, /usr/bin/mkdir, /usr/bin/env
+EOF
+# the classic sudo (Amazon Linux; not Ubuntu's sudo-rs, `sudo -V | head -1` says "Sudo version" for it) would log
+# rclone's credentials with every allowed command:
+sudo -V | head -1 | grep -q '^Sudo version' && echo 'Defaults:motuz !log_allowed' >> /tmp/motuz.sudoers
+visudo -c -q -f /tmp/motuz.sudoers && install -m 440 -o root -g root /tmp/motuz.sudoers /etc/sudoers.d/motuz
+visudo -c -q
+```
+
+**5. Sysctl, PAM and the AWS SSO directory:**
+
+```bash
+printf 'net.ipv4.ip_unprivileged_port_start = 80\nvm.overcommit_memory = 1\n' > /etc/sysctl.d/60-motuz.conf
+sysctl -q -p /etc/sysctl.d/60-motuz.conf
+install -m 644 deployment/systemd/pam.d/motuz.ubuntu /etc/pam.d/motuz      # Amazon Linux: motuz.amzn
+install -d -m 711 -o motuz -g motuz /var/lib/motuz-aws-config
+```
+
+**6. The login helper** (only for local `/etc/shadow` accounts, `--local-accounts`):
+
+```bash
+install -d -m 755 /usr/local/lib/motuz-auth
+install -m 644 deployment/systemd/auth-helper/motuz_auth_helper.py src/backend/api/utils/pam.py /usr/local/lib/motuz-auth/
+install -m 644 deployment/systemd/system/motuz-auth.socket deployment/systemd/system/motuz-auth@.service /etc/systemd/system/
+systemctl daemon-reload && systemctl enable --now motuz-auth.socket
+```
+
+(`install.sh` also replaces `SocketGroup=motuz` and `MOTUZ_AUTH_CLIENT_USER=motuz` when `--user` names another account.)
+
+**7. System PostgreSQL** (Ubuntu and Amazon Linux default to different modes, see above):
+
+```bash
+# Ubuntu: the cluster 18/main
+systemctl unmask postgresql.service
+pg_lsclusters -h | grep -q '^18 main' || pg_createcluster 18 main -e UTF8 --locale=C.UTF-8
+systemctl enable --now postgresql@18-main.service
+# Amazon Linux instead:
+#   systemctl unmask postgresql.service
+#   [ -f /var/lib/pgsql/data/PG_VERSION ] || PGSETUP_INITDB_OPTIONS="-E UTF8 --locale=C.UTF-8" postgresql-setup --initdb
+#   systemctl enable --now postgresql.service
+
+# role and database (the password in a variable of your shell, not on a command line), on localhost only
+sudo -u postgres psql -tAc 'SHOW listen_addresses'            # must be localhost (else ALTER SYSTEM SET listen_addresses='localhost' and restart)
+PW=$(openssl rand -hex 32)
+sudo -u postgres psql -v ON_ERROR_STOP=1 <<EOF
+CREATE ROLE motuz_user LOGIN PASSWORD '$PW';
+CREATE DATABASE motuz OWNER motuz_user;
+REVOKE CONNECT ON DATABASE motuz FROM PUBLIC;
+EOF
+# pg_hba.conf (SHOW hba_file): these lines at the top, then
+sudo -u postgres psql -c 'SELECT pg_reload_conf()'
+#   host motuz motuz_user 127.0.0.1/32 scram-sha-256
+#   host motuz motuz_user ::1/128 scram-sha-256
+#   host all motuz_user 0.0.0.0/0 reject
+#   host all motuz_user ::/0 reject
+```
+
+Then, as `motuz`, in `~/.config/motuz/motuz.env`: `MOTUZ_DATABASE_MODE=system` and
+`MOTUZ_DATABASE_HOST=127.0.0.1:5432` (the port of `SHOW port`), and `MOTUZ_DATABASE_PASSWORD="$PW"`
+in `secrets.env` (mode 600) before the first `deploy.sh` (it keeps what is there). That
+replaces the `handoff.env` file, which is only `install.sh`'s way to pass the values.
+
+**8. System Redis** (Ubuntu):
+
+```bash
+PW=$(openssl rand -hex 32); HASH=$(printf '%s' "$PW" | sha256sum | cut -d' ' -f1)
+install -m 640 -o root -g redis /dev/stdin /etc/redis/motuz.conf <<EOF
+include /etc/redis/redis.conf
+port 0
+unixsocket /run/redis/redis-server.sock
+unixsocketperm 770
+appendonly yes
+save ""
+user default off
+user motuz on #$HASH ~* &* +@all -@admin -@dangerous -@scripting +info +client|setname +client|setinfo +client|id
+EOF
+install -d /etc/systemd/system/redis-server.service.d
+printf '[Service]\nExecStart=\nExecStart=/usr/bin/redis-server /etc/redis/motuz.conf --supervised systemd --daemonize no\n' \
+  > /etc/systemd/system/redis-server.service.d/motuz.conf
+systemctl unmask redis-server.service; systemctl daemon-reload; systemctl enable redis-server.service; systemctl restart redis-server.service
+usermod -aG redis motuz; systemctl restart user@$(id -u motuz).service    # the user manager needs the new group
+REDISCLI_AUTH="$PW" redis-cli --user motuz -s /run/redis/redis-server.sock ping    # PONG
+```
+
+As `motuz`: `MOTUZ_BROKER_MODE=system` and `MOTUZ_REDIS_SOCKET=/run/redis/redis-server.sock` in
+`motuz.env`, `MOTUZ_REDIS_PASSWORD="$PW"` in `secrets.env`.
+
+**9. SELinux (Amazon Linux, enforcing)**: default labels for what was written, no booleans or
+modules:
+
+```bash
+restorecon -F /usr/local/bin/rclone /usr/local/bin/traefik /usr/local/bin/uv /etc/sudoers.d/motuz \
+  /etc/sysctl.d/60-motuz.conf /etc/pam.d/motuz
+restorecon -RF /var/lib/motuz-aws-config /var/lib/motuz
+# with the login helper: restorecon -F /etc/systemd/system/motuz-auth.socket /etc/systemd/system/motuz-auth@.service; restorecon -RF /usr/local/lib/motuz-auth
+```
+
+**10. Firewall**: only 80/tcp and 443/tcp (Ubuntu: `ufw allow 80/tcp && ufw allow 443/tcp && ufw enable`;
+Amazon Linux: the security group, or `firewall-cmd --permanent --add-service=http --add-service=https && firewall-cmd --reload`).
+
+Then the [steps as the `motuz` account](#steps-as-the-motuz-account).
+
+**What root is needed for later.** Updates of Motuz itself (`deploy.sh --pull`) need no
+root. Run `install.sh` (or the steps above) again when `deploy.sh` prints "run
+bin/systemd/install.sh again as root": it does when the pinned rclone or Traefik, `/etc/pam.d/motuz`
+or the login helper in the checkout differ from what is installed, or a system service was
+prepared that the account has not picked up. Root is also needed for the firewall and DNS,
+joining a directory (`realm join`), mounting shared filesystems, and OS updates (`apt`/`dnf`).
+`bin/systemd/uninstall.sh` undoes the root steps ([Uninstall](#uninstall)).
+
+### Steps as the motuz account
+
+```bash
+sudo -iu motuz          # or: sudo machinectl shell motuz@
+git clone https://github.com/FredHutch/motuz.git ~/motuz        # or your fork / branch
+~/motuz/bin/systemd/deploy.sh            # every update: ~/motuz/bin/systemd/deploy.sh --pull
+```
+
+`deploy.sh` creates `~/motuz/venv` with uv (Python 3.12, the Python of the Docker image,
+installed by uv; Ubuntu's own 3.14 only runs the scripts), installs `requirements.txt`
+(uWSGI is built from source, as in the image), builds the frontend with the distribution's
+Node.js (`npm ci && npm run build`), creates `~/.config/motuz/motuz.env` (settings, from
+`deployment/systemd/motuz.env.example`) and `secrets.env` (mode 600: the Flask key, the
+database and Redis passwords, empty OAuth client secrets) on the first run and never
+overwrites them, merges the passwords and modes `install.sh` left in `handoff.env`, creates
+a self-signed certificate in `~/data/certs` if there is none, writes Redis' and Traefik's
+generated configuration and the units, prepares the database (the private cluster, or
+checks the login to the system or external one), restarts `motuz.target` and checks
+`https://127.0.0.1/api/system/info/`. Settings are the `MOTUZ_*` variables of `.env`
+and `docker-compose.yml`; edit `motuz.env` (or `bin/systemd/config.sh set KEY VALUE`; secrets:
+`bin/systemd/config.sh ask-secret KEY`, which asks on the terminal and never prints) and
+run `deploy.sh` again (or `systemctl --user restart motuz.target`). Certificates: replace
+`~/data/certs/cert.crt` and `cert.key` and run `systemctl --user restart motuz-traefik`,
+or set `MOTUZ_ACME_DOMAIN` (and `MOTUZ_ACME_EMAIL`) for Let's Encrypt. Open 80/tcp and
+443/tcp in the firewall.
+
+**An external database.** Set `MOTUZ_DATABASE_MODE=external`, `MOTUZ_DATABASE_HOST` (`host:port`),
+`MOTUZ_DATABASE_USER`, `MOTUZ_DATABASE_NAME` in `motuz.env` and `MOTUZ_DATABASE_PASSWORD` in
+`secrets.env` (and `MOTUZ_DATABASE_REQUIRE_SSL=true` for a remote server), create the role
+and the database owned by it on that server, and run `deploy.sh`: it checks the login and
+never installs, enables or waits for `motuz-postgres`.
+
+Status and logs (as `motuz`; `sudo -iu motuz` sets no session, `deploy.sh` finds the user
+manager itself):
+
+```bash
+export XDG_RUNTIME_DIR=/run/user/$(id -u)
+systemctl --user status 'motuz*'
+sudo journalctl _SYSTEMD_USER_UNIT=motuz-app.service -f   # as an admin: motuz is a system
+                                                          # account, its logs are in the system journal
+```
+
+### Deploy with an AI assistant (Claude Code)
+
+The second half of the install can be done by [Claude Code](https://code.claude.com/docs)
+running as `motuz`, guided by a playbook in the repository
+(`.claude/skills/motuz-deploy/SKILL.md`). It asks you for what only you know (public host
+name, Let's Encrypt or your own certificate, shared mounts, SSSD or local accounts, OAuth
+client ids, operator name for `/privacy`, remote or EC2 workers), writes the settings with
+`bin/systemd/config.sh`, runs `deploy.sh`, verifies (health check, units, listeners, a
+login and a small copy job through `bin/systemd/smoke_test.py`) and reports what root
+still has to do. **Read the safety notes below first.**
+
+> **Safety.** The account `motuz` can act as every user except root (its sudoers rule), so
+> an AI assistant running as `motuz` is as powerful as a root-like service. Therefore:
+> - Run it **only for setup and updates** and close it afterwards; never leave it running.
+> - Keep permission prompts **on**. Never use `--dangerously-skip-permissions`, auto-accept
+>   or `bypassPermissions`; the settings file below disables bypass mode.
+> - Install `deployment/systemd/claude/settings.json` as `~motuz/.claude/settings.json`
+>   *before* the first start (command below). It denies `sudo`, `su`, `doas`, `pkexec`,
+>   `machinectl`, reading or editing `secrets.env`, `broker.env`, `handoff.env`, `redis.conf`
+>   and the TLS key, pipes into a shell, and editing Claude's own settings. This is a
+>   guardrail, not a sandbox: you stay the boundary by reading every prompt. As root you can
+>   install the same content as Claude Code *managed settings* (see Anthropic's "Settings" documentation
+>   for the file location on Linux), which the account cannot weaken.
+> - For the strongest setting, take the sudoers rule away while the assistant works
+>   (`sudo mv /etc/sudoers.d/motuz /root/motuz.sudoers`) and put it back (`sudo mv
+>   /root/motuz.sudoers /etc/sudoers.d/motuz; sudo visudo -c`) before the playbook's
+>   login/copy test (the app needs it to run jobs, `deploy.sh` does not).
+> - Secrets: the assistant never sees them. It asks you to run `! bin/systemd/config.sh
+>   ask-secret MOTUZ_ONEDRIVE_CLIENT_SECRET` (the value is typed hidden). Do not paste secrets
+>   into the chat. The playbook's test login uses a password file you create the same way.
+> - The sign-in (or API key) is yours, kept only in `~motuz/.claude` (mode 600). Afterwards run
+>   `claude logout` or delete `~motuz/.claude` and `~motuz/.claude.json` if your organization
+>   prefers, and remove `~motuz/.local/bin/claude`.
+> - Nothing in this repository contains credentials, and root installs nothing for Claude Code.
+
+As root, after `install.sh` (nothing else is needed; `git` and `curl` are installed by it):
+
+```bash
+sudo -iu motuz            # or: sudo machinectl shell motuz@
+```
+
+As `motuz`, install Claude Code with Anthropic's official per-user installer (it installs into
+`~/.local/bin` and updates itself, no root; the current instructions are at
+https://code.claude.com/docs/en/setup, which also lists `npm install -g @anthropic-ai/claude-code` with a
+user-level npm prefix, never `sudo`, as an alternative; Amazon Linux 2027 is not on the page's list of
+tested distributions, Ubuntu is), put the guardrails in
+place, clone the repository and start it there:
+
+```bash
+curl -fsSL https://claude.ai/install.sh | bash
+export PATH="$HOME/.local/bin:$PATH"; echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.profile
+git clone https://github.com/FredHutch/motuz.git ~/motuz            # or your fork / branch
+install -d -m 700 ~/.claude && install -m 600 ~/motuz/deployment/systemd/claude/settings.json ~/.claude/settings.json
+cd ~/motuz && claude        # sign in when asked (browser on another machine: use the URL it prints)
+```
+
+Inside Claude Code type `/motuz-deploy`. When it is done: `/exit`, then `claude logout` if you
+want to remove the sign-in.
+
+### Why a private PostgreSQL cluster?
+
+On Ubuntu the default is the distribution's own PostgreSQL 18 and Redis services, managed
+with the standard tools (`pg_lsclusters`, `systemctl status postgresql@18-main`, `apt`
+updates, `pg_upgradecluster`, backups as `postgres`). The private mode is still available
+(`--private-postgres`, `--private-redis`) and is the default on Amazon Linux. What the
+**private** cluster is and why you might choose it:
+
+- It uses the distribution's PostgreSQL 18 **binaries** but runs `postgres` as a user
+  service of `motuz` with the data in `~motuz/data/pg` (`motuz-postgres.service`, TCP on
+  127.0.0.1:5432, the unix socket in the account's private runtime directory), and keeps the
+  distribution's service masked. Start, stop, backups, `psql` as the superuser (peer login of
+  the account) and the upgrade to a new major version need **no root**.
+- It is isolated: only the account can reach it, nothing else on the machine shares its
+  `pg_hba.conf`, `postgresql.conf` or major version, and removing Motuz removes it.
+- It is the **same layout on both distributions**, whatever their packaging of services.
+- The system mode is what you want if the machine already runs, or will run, other databases
+  you manage with the distribution's tools, if you back up with a system-wide tool, or if you
+  prefer standard tooling and root-managed services.
+
+Choose with `install.sh --system-postgres` / `--private-postgres` (and `--system-redis` /
+`--private-redis`); `MOTUZ_DATABASE_MODE` and `MOTUZ_BROKER_MODE` in `motuz.env` record it.
+An existing install keeps its mode: `install.sh` and `deploy.sh` never switch it silently.
+To move an existing private cluster to the system service run `sudo bin/systemd/install.sh
+--system-postgres` (prepares the empty database and prints the next step), then as `motuz`:
+
+```bash
+~/motuz/bin/systemd/migrate_postgres.sh
+```
+
+It stops the app and worker, dumps the private cluster, restores it into the system
+database as `motuz_user`, **compares the row count of every table**, only then switches
+the settings, stops `motuz-postgres` and runs `deploy.sh`. `~/data/pg` stays as a fallback
+until you delete it. Redis can be switched with `install.sh --system-redis` and `deploy.sh`
+(the queue is transient; stop running jobs first). An external database is `MOTUZ_DATABASE_MODE=external`
+(see above); `uninstall.sh` never drops a system or external cluster (with `--purge` it drops
+only the database `motuz` and the role `motuz_user` of the system service, after printing
+what it does).
+
+### Backups and upgrades
+
+The database is the only state worth backing up (the broker holds queued jobs only; secrets
+and settings are in `~motuz/.config/motuz`, certificates in `~motuz/data/certs`). A dump,
+whichever mode:
+
+```bash
+# system PostgreSQL (as root, or any account that may become postgres)
+sudo -u postgres pg_dump -Fc motuz > motuz-$(date +%F).dump
+# private cluster (as motuz; the socket is in the runtime directory)
+pg_dump -h /run/user/$(id -u)/motuz-postgres -Fc motuz > motuz-$(date +%F).dump
+# external: pg_dump -h HOST -U motuz_user -Fc motuz  (the password in PGPASSWORD or ~/.pgpass)
+```
+
+Restore into an installation at the same Motuz release (stop `motuz-app` and `motuz-celery`
+first; the dump holds the schema, so a newer checkout migrates it with `deploy.sh`):
+
+```bash
+sudo -u postgres pg_restore --clean --if-exists --no-owner --role=motuz_user -d motuz motuz-2026-10-14.dump   # system
+pg_restore -h /run/user/$(id -u)/motuz-postgres --clean --if-exists --no-owner --role=motuz_user -d motuz motuz-2026-10-14.dump   # private
+```
+
+Upgrades: Motuz itself (`deploy.sh --pull`, migrations run on every start); minor PostgreSQL
+and Redis versions with `apt`/`dnf` (system mode: the service restarts; private mode:
+restart `motuz-postgres` afterwards); a new PostgreSQL **major** version: system mode,
+`pg_upgradecluster 18 main` (Ubuntu) or the distribution's upgrade procedure, then update
+`MOTUZ_DATABASE_HOST` if the port changed; private mode, dump with the old binaries,
+install the new `postgresql-N` package, point `PG_BINDIR` in `bin/systemd/distro/<ID>.sh`
+and restore into a new `~/data/pg` (the same dump and restore as `migrate_from_docker.sh`).
+
+### Why a sudoers rule
+
+Every file and rclone operation runs as the logged-in user, so the operating system
+checks the permissions (in Docker, Motuz runs as root for this). Without Docker, the
+account `motuz` gets exactly one rule, `/etc/sudoers.d/motuz`, checked with `visudo -c`:
+
+```
+motuz ALL=(ALL, !root) NOPASSWD:SETENV: /usr/local/bin/rclone, /usr/bin/ls, /usr/bin/mkdir, /usr/bin/env
+```
+
+- `rclone` copies, lists and reads cloud storage; `ls` and `mkdir` browse the local
+  filesystem; `env` starts the small Python readers of the file viewer and of the
+  credentials in the home directory (`python3 -I -S -c ...`).
+- `!root`: never as root. `SETENV`: rclone gets a connection's credentials as
+  `RCLONE_CONFIG_*` variables, passed with `sudo --preserve-env=<names>` (Ubuntu 26.04's
+  default `sudo` is sudo-rs, which ignores `-E`; the classic `sudo` works as well).
+- With the classic `sudo` (Amazon Linux, or Ubuntu's `sudo.ws`) the file also gets
+  `Defaults:motuz !log_allowed`: that `sudo` logs the variables of `--preserve-env` with
+  every allowed command (`ENV=RCLONE_CONFIG_..._SECRET_ACCESS_KEY=...`), which would put
+  the connections' secrets into the journal. Refused commands are still logged; Motuz
+  logs the commands it runs itself, with the credentials masked.
+- `install.sh --sudo-group=GROUP` allows only the members of a group
+  (`(%GROUP, !root)`).
+- Motuz refuses logins as root and as the account it runs as.
+
+This rule lets `motuz` act as any other user, as the root of the Docker install does, so
+treat the account like root: no password (locked), no other use, its home only readable
+by itself.
+
+### Logins (PAM)
+
+Motuz checks passwords with the PAM service `motuz` (`MOTUZ_PAM_SERVICE`,
+`/etc/pam.d/motuz`: Ubuntu's `common-auth` and `common-account`; the Docker install
+keeps using `login`).
+
+- **SSSD / Kerberos (Active Directory)**: join the machine to the directory as usual
+  (`realm join` or your SSSD configuration). `pam_sss` and `pam_krb5` work in the
+  unprivileged app itself.
+- **Local accounts** (`/etc/shadow`): an unprivileged `pam_unix` can only check the
+  password of the account it runs as. `install.sh --local-accounts` installs a small login
+  helper, `motuz-auth.socket` / `motuz-auth@.service`: a socket-activated root service
+  (Python standard library, a root-owned copy in `/usr/local/lib/motuz-auth`) that runs
+  one PAM check per connection on `/run/motuz-auth.sock` (root:motuz, mode 0660; the
+  peer must also be the `motuz` account) and answers yes or no. It refuses root,
+  accounts below `UID_MIN` (system accounts), `nobody` and `motuz` itself, limits requests
+  to 4 KiB, locks a user out for 15 minutes after 5 failed attempts, and never logs
+  passwords. `deploy.sh` sets `MOTUZ_AUTH_HELPER=/run/motuz-auth.sock` when it finds the
+  socket on the first deploy; without it Motuz uses PAM in-process.
+
+### Storage
+
+Mount the shared filesystems on the host (the `/fh/...` mounts of
+`docker-compose.override.yml`) at the same paths and list them in `MOTUZ_REQUIRED_PATHS`
+(commas or colons) in `motuz.env`, as for a remote worker: the worker does not start
+while one is not mounted (`systemctl --user status motuz-celery` says
+which; it retries every 30 seconds), and a job fails with the reason instead of running
+on a half-mounted tree.
+
+### VM or LXC
+
+A VM is preferred. A privileged LXC works too; leave nesting off (nesting in a privileged
+container exposes more of the host's `/proc` and `/sys`); if `systemd --user` services do
+not work there without it, use a VM. In an unprivileged LXC `nesting=1` is fine, but uids
+on shared storage need a 1:1 `lxc.idmap`. Hardening a privileged LXC: keep the default
+AppArmor and seccomp profiles; no nesting, fuse, mount or keyctl features; add
+`lxc.cap.drop: sys_ptrace sys_pacct mknod net_raw syslog wake_alarm block_suspend`;
+mount data with `mountoptions=nosuid;nodev` and `backup=0`; set `lxc.cgroup2.pids.max`;
+use the Proxmox firewall; let only root@pam edit the container's configuration; and set
+`protection: 1`.
+
+More worker machines connect through the HTTPS worker API ("Remote workers (HTTPS
+only)"). On such a host, `sudo bin/systemd/install.sh --worker-only` prepares only what
+the worker needs (the pinned rclone, python3, the `motuz` account with linger, the same
+sudoers rule, `/var/lib/motuz-aws-config`); then configure `worker.env` and start
+`motuz-worker.service` as that section describes. Workers never reach the database or
+the broker, and the central install needs no change for them.
+
+Other distributions: everything distribution specific (packages, the paths of the
+PostgreSQL and Redis binaries, how the distribution's own database service is kept from
+running, the PAM stack, the firewall hint) is in `bin/systemd/distro/<ID>.sh`, chosen by
+`ID` in `/etc/os-release`: `ubuntu.sh` and `amzn.sh` ([Amazon Linux 2027](#install-on-amazon-linux-2027-default-on-ec2)).
+
+### Migrating from the docker install
+
+`bin/systemd/migrate_from_docker.sh` moves the data, the secrets and the settings:
+
+```bash
+# 1. On the docker host, as root, with Motuz running:
+sudo bin/systemd/migrate_from_docker.sh export --out /root/motuz-export.tar.gz
+docker-compose down            # if the new install is on the same host (ports 80/443)
+
+# 2. On the new host: install.sh, the clone and a first deploy.sh (above); the import goes into the
+#    database mode that is configured (system, private or external), then
+sudo install -o motuz -m 600 /root/motuz-export.tar.gz /var/lib/motuz/
+sudo -iu motuz ~/motuz/bin/systemd/migrate_from_docker.sh import ~/motuz-export.tar.gz
+```
+
+The export holds the database as a `pg_dump` dump with the row count of every table, the
+Flask secret key (it signs the login tokens: sessions stay valid), the SMTP password, the
+OAuth client secrets, the `MOTUZ_*` settings of the running app container, Traefik's
+`acme.json` and `certs/cert.*`, and the list of the app container's mounts (recreate them
+at the same paths). It is secret: delete it after the import. The import refuses a
+database at a migration the new checkout does not know (check out the Docker install's
+release, or a newer one), recreates the database with `pg_restore` (the private cluster: dropped and
+created again; the system or an external PostgreSQL: the `public` schema of the database
+is replaced, as `motuz_user`), checks the row counts, writes the secrets and settings and runs
+`deploy.sh`, which applies newer migrations.
+
+The data directory is never copied: the Docker image is Alpine (musl libc) and Ubuntu
+uses glibc, so text sorts differently and copied indexes on text columns would be
+corrupt. A dump and restore rebuilds every index.
+
+The other direction has no script: dump the database ([Backups and upgrades](#backups-and-upgrades)),
+restore it into the Docker stack's `database` container (`docker exec -i motuz_database pg_restore ...`
+as `motuz_user`), copy `MOTUZ_FLASK_SECRET_KEY` (so logins stay valid) and the other secrets into
+`/docker/secrets`, and start the stack.
+
+### Tests of this install
+
+`test/e2e/run_systemd.sh` starts an Ubuntu 26.04 cloud image as a VM (QEMU/KVM in a
+container, `test/e2e/systemd/vm.sh`; needs docker and `/dev/kvm`), runs `install.sh
+--local-accounts` and `deploy.sh` in it, and runs the same end-to-end suites as
+`test/e2e/run.sh` against it (`MOTUZ_E2E_TARGET=systemd`), plus security checks
+(`test/e2e/systemd/security_test.sh`: processes, sudo, ports, the system PostgreSQL's and Redis' access). `MOTUZ_E2E_INSTALL_OPTS` passes more options to `install.sh`, e.g.
+`--private-postgres --private-redis` to test the private mode on Ubuntu. `test/e2e/systemd/migration_test.sh` migrates
+the Docker e2e stack into such a VM.
+
+### Uninstall
+
+`sudo bin/systemd/uninstall.sh` stops Motuz and removes the units (and the drop-ins), the
+sudoers rule, the PAM service, the sysctl file and the login helper, and unmasks the
+distribution's PostgreSQL and Redis/Valkey services; the account and its data stay.
+`--purge --yes` also deletes the account, its home (a private database, secrets,
+certificates) and the pinned binaries. With the distribution's services it never touches
+them: `--purge` drops only the database `motuz` and the role `motuz_user` (and our `pg_hba.conf`
+lines) of the system PostgreSQL, and removes `/etc/redis/motuz.conf` and the drop-in. Packages
+stay installed.
+
+## Install on Amazon Linux 2027 (default on EC2)
+
+On EC2, install Motuz on Amazon Linux 2027 (AL2027, a public preview since September 2026)
+with the same scripts as [Install (default: without Docker)](#install-default-without-docker):
+`systemd --user` services of the account `motuz`, the same units, settings
+(`~/.config/motuz/motuz.env`, including the `MOTUZ_RCLONE_*` defaults), sudoers rule,
+login helper, migration and update steps. They start faster than containers, run as fast,
+and work with SELinux enforcing. What differs is in `bin/systemd/distro/amzn.sh`:
+
+| | Amazon Linux 2027 | Ubuntu 26.04 |
+| --- | --- | --- |
+| PostgreSQL 18 | `postgresql18-server` (binaries in `/usr/bin`) | `postgresql-18` |
+| Celery broker (`motuz-redis`) | **Valkey 9** (`valkey-server`; AL2027 has neither RabbitMQ nor Redis) | Redis 8 |
+| Python of `~/motuz/venv` | the system's **Python 3.14** (`python3`, `python3-devel` for uWSGI) | Python 3.12 from uv |
+| Node.js (frontend build) | `nodejs24`, `nodejs24-npm` | `nodejs` 22 |
+| `/etc/pam.d/motuz` | `password-auth` (authselect) | `common-auth`, `common-account` |
+| SELinux | enforcing, nothing to change | (AppArmor, nothing to change) |
+
+rclone, Traefik and uv are the pinned downloads with their SHA256 in both cases (never
+AL2027's own `rclone` package, which is another version).
+
+**Broker.** Valkey speaks the Redis protocol, so Celery uses its Redis transport
+(`MOTUZ_CELERY_BROKER_URL=redis+socket://...`, written to `broker.env` by `deploy.sh`; the
+Docker install keeps `amqp://` RabbitMQ). The Redis transport redelivers a task that a
+worker has fetched but not acknowledged within `visibility_timeout`. Motuz acknowledges a
+task when it starts (Celery's default, `acks_late` off), so only jobs that wait behind
+other long jobs in the worker's prefetch are affected; their timeout is 30 days
+(`MOTUZ_CELERY_VISIBILITY_TIMEOUT`, seconds), far above any job. Tasks are not acknowledged
+late on purpose: a job whose worker dies is failed, not silently run again days later.
+Stopping a job (`revoke(terminate=True)`) goes through Celery's remote control, which the
+Redis transport supports (pub/sub on the same socket).
+
+**Python.** `requirements.txt` is compiled for 3.12, the Python of the Docker image. On
+AL2027 all backend unit tests and the end-to-end suites pass on its Python 3.14 with these
+pins (uWSGI 2.0.31 builds), so `deploy.sh` uses `/usr/bin/python3.14`
+(`DISTRO_PYTHON`): it gets the distribution's security updates and needs no download. On
+Ubuntu, `deploy.sh` keeps uv's 3.12.
+
+**SELinux** stays enforcing; no booleans, file contexts or policy modules are needed.
+`install.sh` runs `restorecon` on everything it writes. The account's user services
+(uWSGI, Celery, rclone, Traefik, PostgreSQL, Valkey) run as `unconfined_u` like any login
+of the account, `sudo` to the logged-in user keeps that context, and the login helper is a
+system service (`unconfined_service_t`) that may read `/etc/shadow`. Traefik binds 80 and
+443 through the same sysctl as on Ubuntu. Check with `sudo ausearch -m avc -ts boot`
+(empty). PostgreSQL and Valkey are user services of `motuz` by default
+(`motuz-postgres`, `motuz-redis`) rather than the packages' system services (which would
+run confined as `postgresql_t` / `valkey_t`): `deploy.sh` manages everything as the account
+without root, and the database and the broker are reachable only by that account.
+`install.sh --system-postgres` uses the package's `postgresql.service` instead
+(`postgresql-setup --initdb`, the role and database as described under
+[Root steps](#root-steps-installsh)); there is no system Valkey mode, because `valkey.conf`
+has no include directory and a drop-in for the unit would still mean rewriting the package's
+configuration. The system PostgreSQL service on AL2027 is as simple as on Ubuntu (it works the same way and is
+tested with `MOTUZ_E2E_INSTALL_OPTS=--system-postgres`), so the default could change; it is
+private for now to keep one design with the single Valkey.
+
+
+### Install on an instance
+
+Launch AL2027 (the AMI of the SSM parameter
+`/aws/service/ami-amazon-linux-latest/al2027-preview-ami-kernel-default-arm64`, or
+`-x86_64`), at least 4 GiB of memory (for example c7g.large) and a 16 GiB root volume,
+IMDSv2 only, an instance profile with `AmazonSSMManagedInstanceCore` for Session Manager
+(no SSH), and a security group with 443 (and 80, for the redirect and Let's Encrypt) open
+to your users only. As user data, `deployment/aws/user-data-al2027.sh` (edit `REPO`,
+`BRANCH` and `INSTALL_ARGS` first) clones the repository to `/root/motuz-install` and
+runs `bin/systemd/bootstrap.sh`, which runs `install.sh`, clones the account's
+`~/motuz` and runs `deploy.sh`; the output is in `/var/log/cloud-init-output.log`:
+
+```bash
+aws ec2 run-instances --image-id resolve:ssm:/aws/service/ami-amazon-linux-latest/al2027-preview-ami-kernel-default-arm64 \
+    --instance-type c7g.large --iam-instance-profile Name=<profile with AmazonSSMManagedInstanceCore> \
+    --security-group-ids <sg> --user-data file://deployment/aws/user-data-al2027.sh \
+    --metadata-options HttpTokens=required,HttpPutResponseHopLimit=1,HttpEndpoint=enabled \
+    --block-device-mappings 'DeviceName=/dev/xvda,Ebs={VolumeSize=20,VolumeType=gp3,Encrypted=true}' \
+    --tag-specifications 'ResourceType=instance,Tags=[{Key=Name,Value=motuz}]'
+```
+
+On an existing instance, as root (the same as the user data does):
+
+```bash
+sudo dnf -y install git
+sudo git clone --branch <branch> https://github.com/<you>/motuz.git /root/motuz-install
+sudo /root/motuz-install/bin/systemd/bootstrap.sh --repo=https://github.com/<you>/motuz.git --branch=<branch> --local-accounts
+```
+
+`install.sh` and `bootstrap.sh` run from root's own clone, never from the account's
+`~/motuz` (the account must not be able to change what root runs). Then add users
+(`useradd` + `passwd` with `--local-accounts`, or join the directory with
+`realm join` / SSSD and `authselect select sssd`, without `--local-accounts`), set
+`MOTUZ_ACME_DOMAIN` for a Let's Encrypt certificate (port 80 must be reachable) and
+connect with `aws ssm start-session --target <instance id>`.
+
+**Updates**: `sudo git -C /root/motuz-install pull && sudo /root/motuz-install/bin/systemd/bootstrap.sh
+--local-accounts` (idempotent: `install.sh` again, `git pull --ff-only` of `~/motuz`,
+`deploy.sh`), or only `sudo -iu motuz ~/motuz/bin/systemd/deploy.sh --pull` when the
+installed pieces did not change (`deploy.sh` warns otherwise). `dnf upgrade` keeps
+PostgreSQL 18 and Python 3.14; after a Python minor change `deploy.sh` rebuilds the venv.
+
+**Uninstall**: see [Uninstall](#uninstall).
+
+### Remote workers on AL2027
+
+`install.sh --worker-only` installs a [remote worker](#remote-workers-https-only) without
+the server: `python3`, `sudo`, the pinned rclone, the account with the same sudoers rule,
+and the user unit `motuz-worker.service` with `~/.config/motuz-worker/worker.env`
+(`MOTUZ_HOME` = the checkout it runs from, which must be readable by the account, for
+example a root-owned clone in `/opt/motuz`). Non-interactive, for example from user data:
+
+```bash
+git clone --branch <release> https://github.com/<you>/motuz.git /opt/motuz
+# a permanent worker: starts motuz-worker with the secret of `manage.py workers add`
+/opt/motuz/bin/systemd/install.sh --worker-only --central-url=https://motuz.example.org --pool=onprem --credential-file=/root/credential
+# a temporary worker: one job with a bootstrap token, then e.g. shutdown
+/opt/motuz/bin/systemd/install.sh --worker-only --central-url=https://motuz.example.org --pool=aws
+/opt/motuz/bin/systemd/worker_once.sh --bootstrap-token-file=/run/motuz-bootstrap
+```
+
+`worker_once.sh` moves the token into the account's private runtime directory and runs
+`motuz_worker.py --bootstrap-token-file ... --once` as the transient user service
+`motuz-worker-once` (so it runs as the account, in its user manager, not in cloud-init's
+context), deletes the token and exits with the worker's exit code (0 done, 1 error, 3 no
+job, 78 configuration error).
+
+`--run-as=NAME` makes a cloud-to-cloud worker like the [temporary EC2
+workers](#temporary-ec2-workers): rclone runs as the system account NAME (created, no
+shell) instead of the jobs' owners, the sudoers rule allows only `/usr/local/bin/rclone`
+as NAME, and `worker.env` gets `MOTUZ_WORKER_RUN_AS` (local jobs and credentials from a
+home directory are refused). A prebuilt AMI for those workers: `install.sh --worker-only
+--run-as=motuzjob` from a checkout in `/opt/motuz` at the server's release, plus
+`/opt/motuz/.motuz-source` with `<source url> <ref>`; the launcher's user data then skips
+its downloads.
+
+### Tests on AL2027
+
+`test/e2e/run_systemd.sh --distro=al2027` runs the same suites as for Ubuntu against an
+AL2027 container with systemd as PID 1 (`test/e2e/systemd/container.sh`,
+`al2027.Dockerfile`: privileged, its own network namespace, so it needs no free ports on
+the host). There is no AL2027 VM image outside EC2 and a container cannot enforce SELinux,
+so SELinux is tested on an instance: the same `run_systemd.sh --inside-setup` and
+`--inside` run there as root, then `ausearch -m avc` must be empty.
+`test/e2e/systemd/worker_host_test.sh` (after `run_systemd.sh --distro=al2027 --keep`)
+installs a worker with `install.sh --worker-only` in a second container that shares the
+first one's network, runs a job there and one with `worker_once.sh`; `--inside` does the
+same on the server itself (e.g. on the instance).
+
+## Configuration and features
+
+These apply to both installs (settings in `motuz.env`/`secrets.env`, or `.env` and `/docker/secrets`).
+
+### OneDrive: own app registration
+
+"Sign in with Microsoft" (Clouds > New connection > OneDrive) uses rclone's
+public OneDrive app by default. Its only redirect address is
+`http://localhost:53682/`, so after signing in, users copy the address of the
+error page the browser shows and paste it into Motuz. All Motuz installations
+and rclone users share that app's Microsoft Graph throttling quota.
+
+With your own app registration in Microsoft Entra ID, Microsoft redirects back
+to Motuz, which completes the sign-in by itself, and Motuz gets its own
+throttling quota.
+
+1. In the [Microsoft Entra admin center](https://entra.microsoft.com/), open
+   *App registrations* > *New registration*:
+   - Name: e.g. `Motuz`
+   - Supported account types: *Accounts in any organizational directory
+     (Multitenant)*. Motuz signs in through Microsoft's `common` endpoints, like
+     rclone, which single-tenant apps cannot use. The app still only works in
+     tenants whose administrator consents to it (step 3).
+   - Redirect URI: platform *Web*,
+     `https://motuz.example.org/api/oauth/onedrive/callback` (your Motuz host
+     name; it must match `MOTUZ_ONEDRIVE_REDIRECT_URI` exactly).
+2. Note the *Application (client) ID* on the app's *Overview* page.
+3. *API permissions* > *Add a permission* > *Microsoft Graph* > *Delegated
+   permissions*: `Files.ReadWrite.All`, `Sites.Read.All`, `offline_access` and
+   `User.Read` (usually already there). Then *Grant admin consent for
+   <tenant>*: users cannot consent to `Files.ReadWrite.All` and
+   `Sites.Read.All` themselves, so without the tenant's admin consent they see
+   "Need admin approval".
+4. *Certificates & secrets* > *Client secrets* > *New client secret*. Copy its
+   *Value* (not the *Secret ID*); it is shown only once. Note the expiry date:
+   Motuz cannot refresh tokens once the secret expires.
+5. Configure Motuz. The id and redirect URI go in `.env` (or the environment
+   that runs `./start.sh`, which takes precedence), the secret in a docker
+   secret file, never in `.env`:
+   ```bash
+   MOTUZ_ONEDRIVE_CLIENT_ID=<Application (client) ID>
+   MOTUZ_ONEDRIVE_REDIRECT_URI=https://motuz.example.org/api/oauth/onedrive/callback
+   ```
+   ```bash
+   # $MOTUZ_DOCKER_ROOT/secrets, /docker by default
+   (umask 077 && printf '%s' '<secret value>' > /docker/secrets/MOTUZ_ONEDRIVE_CLIENT_SECRET)
+   ```
+6. Redeploy with `bin/redeploy.sh` (or `./start.sh`).
+
+`bin/prod/start.sh` creates `/docker/secrets/MOTUZ_ONEDRIVE_CLIENT_SECRET` as
+an empty file (mode 600) if it does not exist, because docker-compose does not
+start with a missing secret file. Empty or unset values mean "not configured":
+without `MOTUZ_ONEDRIVE_CLIENT_ID` Motuz uses rclone's app and ignores the
+secret and the redirect URI.
+
+Each connection remembers which app issued its token and is always refreshed
+with that app:
+
+- Connections created before the own app was configured, and connections
+  created by pasting a token from `rclone config`, keep using rclone's app.
+- Rotating the client secret (same client id) keeps all connections working:
+  replace the file and redeploy before the old secret expires.
+- Connections created with an own app stop working when its client id changes
+  or is removed from the configuration. Their jobs fail with "This OneDrive
+  connection was created with a different app registration..."; the owner
+  signs in with Microsoft again (or pastes an rclone token into the
+  connection).
+
+The edit dialog of a OneDrive connection shows which app it uses. The client
+secret is only used by the `app` container (sign-in and token refresh); rclone
+never receives it.
+
+### Google Drive
+
+Clouds > New connection > *Google Drive (beta)* creates an rclone `drive`
+remote with the `drive` scope (full access to the user's files). My Drive is the
+default; a shared drive (formerly Team Drive) sets rclone's `team_drive`, and an
+optional root folder id starts the connection in a folder. As with OneDrive,
+the token broker keeps the token fresh and rclone never sees the refresh token.
+Jobs use rclone's recommendations for Drive: API calls paced at 10 per second
+(`--tpslimit 10`, which applies to the whole rclone process, and a 100ms pacer),
+64 MiB upload chunks (buffered in memory per transfer), and the job fails when
+Google's daily upload limit (about 750 GiB per user) is reached.
+
+There are three ways to connect:
+
+1. **Paste a token from `rclone config`** (*Advanced* in the dialog, which
+   shows the steps): `rclone config`, new remote, storage `drive`, empty
+   `client_id` and `client_secret`, scope `1`, confirm that you want to use
+   rclone's shared client, sign in, then `rclone config show <name>` and paste
+   the `token` JSON (and `team_drive`, if any). Only tokens of rclone's own
+   client work: Motuz cannot refresh a token issued to a client id whose secret
+   it does not have.
+2. **Sign in with Google, rclone's app** (default): Motuz opens Google's sign-in
+   page. rclone's app only redirects to `http://127.0.0.1:53682/`, so the
+   browser shows an error page afterwards and the user pastes its address into
+   Motuz, then picks My Drive or a shared drive.
+3. **Sign in with Google, own OAuth client**: Google redirects back to Motuz,
+   which completes the sign-in by itself.
+
+**rclone's shared client is not a long-term option.** It is shared by all
+rclone users worldwide and heavily rate limited (Google's default quota is per
+client id), and rclone announced that it is being retired and will stop
+working during 2026 (`rclone config` now warns about it). When that happens,
+connections created with it (pasted tokens and option 2) stop refreshing and
+users must sign in again with an own client. Configure an own client for
+production.
+
+#### Own OAuth client
+
+1. In the [Google Cloud Console](https://console.cloud.google.com/), create or
+   select a project, then *APIs & Services* > *Library* > *Google Drive API* >
+   *Enable*. Without it, sign-in succeeds but Motuz reports "Google Drive
+   cannot be accessed: Google Drive API has not been used in project ...".
+2. *Google Auth Platform* (formerly *OAuth consent screen*): app name, support
+   email, contact email.
+   - *Audience*: *Internal* if all users are in your Google Workspace domain
+     (no verification needed, only your domain's accounts can sign in);
+     *External* otherwise.
+   - *Data access*: add the scope `https://www.googleapis.com/auth/drive`.
+3. *Clients* > *Create client* > type *Web application*, authorized redirect
+   URI `https://motuz.example.org/api/oauth/gdrive/callback` (your Motuz host
+   name; it must match `MOTUZ_GDRIVE_REDIRECT_URI` exactly). Copy the client id
+   and the client secret.
+4. Configure Motuz: the id and redirect URI in `.env` (or the environment that
+   runs `./start.sh`), the secret in the docker secret file, never in `.env`:
+   ```bash
+   MOTUZ_GDRIVE_CLIENT_ID=<client id>.apps.googleusercontent.com
+   MOTUZ_GDRIVE_REDIRECT_URI=https://motuz.example.org/api/oauth/gdrive/callback
+   ```
+   ```bash
+   (umask 077 && printf '%s' '<client secret>' > /docker/secrets/MOTUZ_GDRIVE_CLIENT_SECRET)
+   ```
+5. Redeploy with `bin/redeploy.sh` (or `./start.sh`). `bin/prod/start.sh`
+   creates an empty `MOTUZ_GDRIVE_CLIENT_SECRET` if it is missing; empty or
+   unset values mean "not configured" (rclone's app).
+
+Google's restrictions on the `drive` scope, which Google classifies as
+*restricted*:
+
+- An *External* app that is not verified is in *Testing* mode: only the test
+  users listed under *Audience* (up to 100) can sign in, they see a "Google
+  hasn't verified this app" warning, and Google expires their refresh tokens
+  after 7 days, so those connections need a new sign-in every week. Publishing
+  the app for everyone requires Google's verification of the restricted scope,
+  which includes a security assessment by a third party.
+- An *Internal* app avoids verification, but only works for accounts of the
+  Workspace organization that owns the Cloud project.
+- Google Workspace administrators can block third-party apps or unconfigured
+  apps (*Admin console* > *Security* > *API controls* > *App access
+  control*). Users then see "Access blocked" or "admin_policy_enforced", the
+  same situation as a OneDrive tenant that requires admin approval: the
+  administrator has to trust the client id (Motuz's own client, or rclone's
+  `202264815644.apps.googleusercontent.com`).
+- Google sends a refresh token only with `access_type=offline` and
+  `prompt=consent`, which Motuz always requests. Refresh tokens stop working
+  when the user revokes access (myaccount.google.com > *Security* >
+  *Third-party apps*), when an administrator removes the app's access, or
+  after 6 months without use.
+
+Each connection remembers the client that issued its token
+(`gdrive_client_id`) and is always refreshed with it, exactly like OneDrive:
+pasted tokens and connections created before the own client was configured
+keep using rclone's app; changing or removing `MOTUZ_GDRIVE_CLIENT_ID` breaks
+connections of the old client ("This Google Drive connection was created with
+a different OAuth client ... Sign in with Google again"); rotating only the
+secret keeps them working. The client secret is used only by the `app`
+container.
+
+### Privacy policy and terms
+
+Motuz serves a privacy policy at `https://<host>/privacy` and terms of service
+at `https://<host>/terms`: plain HTML without login or JavaScript
+(`src/backend/api/views/legal_views.py`, templates in
+`src/backend/api/templates/legal/`). The login page and the page shown without
+JavaScript (`src/frontend/index.html`) describe the app and link to both.
+Google's consent-screen branding (*Google Auth Platform* > *Branding*) needs
+exactly these: the home page `https://<host>/`, the privacy policy link and the
+terms of service link, all on a domain you have verified in Google Search
+Console.
+
+Set who runs the installation in `.env` (all optional; without them the pages
+refer to "the administrator of this Motuz installation"):
+```bash
+MOTUZ_OPERATOR_NAME=Example Research Institute
+MOTUZ_CONTACT_EMAIL=motuz-admin@example.org
+MOTUZ_OPERATOR_URL=https://www.example.org/
+```
+The text describes what Motuz itself does. Review it with your institution
+(e.g. log retention, backups, who handles data protection requests), edit the
+templates if needed, and change `EFFECTIVE_DATE` in `legal_views.py` whenever
+the text changes.
+
+### Performance tuning
+
+Motuz copies with rclone. With rclone's defaults (4 parallel transfers, 8 checkers, 4
+streams per file above 256 MiB, S3 parts of 5 MiB with 4 in flight) one job rarely goes
+beyond a few Gb/s, however fast the link. Two levels of settings change that:
+
+- **Installation defaults** in `.env` (passed to `app` and `celery` by
+  `docker-compose.yml`). Unset or empty means rclone's default, i.e. no flag at all, so
+  existing installations behave as before.
+- **Per job**, in the collapsed "Performance" section of the New Copy Job dialog: a
+  preset or custom values for the destination's type, within the server's caps and
+  memory budget. The job detail shows them, Retry keeps them, and "Check Integrity"
+  passes the checkers on.
+
+| Setting (`.env`) | rclone flag | rclone default | Per job |
+|---|---|---|---|
+| `MOTUZ_RCLONE_TRANSFERS` | `--transfers` | 4 | yes |
+| `MOTUZ_RCLONE_CHECKERS` | `--checkers` (also for integrity checks) | 8 | yes |
+| `MOTUZ_RCLONE_MULTI_THREAD_STREAMS` | `--multi-thread-streams` (0: off) | 4 | yes |
+| `MOTUZ_RCLONE_MULTI_THREAD_CUTOFF` | `--multi-thread-cutoff` | 256M | yes |
+| `MOTUZ_RCLONE_BUFFER_SIZE` | `--buffer-size` | 16M | no |
+| `MOTUZ_RCLONE_S3_UPLOAD_CONCURRENCY` | `--s3-upload-concurrency` | 4 | yes (S3 destinations) |
+| `MOTUZ_RCLONE_S3_CHUNK_SIZE` | `--s3-chunk-size` (5M to 5G) | 5M | yes (S3 destinations) |
+| `MOTUZ_RCLONE_AZUREBLOB_UPLOAD_CONCURRENCY` | `--azureblob-upload-concurrency` | 16 | yes (Azure destinations) |
+| `MOTUZ_RCLONE_AZUREBLOB_CHUNK_SIZE` | `--azureblob-chunk-size` | 4M | yes (Azure destinations) |
+
+Caps for the per-job values: `MOTUZ_RCLONE_MAX_TRANSFERS` (default 64),
+`MOTUZ_RCLONE_MAX_CHECKERS` (128), `MOTUZ_RCLONE_MAX_MULTI_THREAD_STREAMS` (32),
+`MOTUZ_RCLONE_MAX_UPLOAD_CONCURRENCY` (64, S3 and Azure), and the memory budget per job
+`MOTUZ_RCLONE_MEMORY_BUDGET` (default `8G`). Numbers are whole numbers, sizes use
+rclone's binary units and need a unit (`64M`, `1.5G`, `64Mi`). An invalid value, an
+installation default above its cap or defaults above the memory budget stop the app and
+the worker at startup, with a message that names the variable.
+
+**What matters when**
+
+- *Many small files* (below ~100 MB): per-file overhead dominates. Raise
+  `--transfers` (16 to 64) and `--checkers` (32 to 128); streams and chunk sizes hardly
+  matter. On S3 the request rate of the bucket (prefix) may become the limit.
+- *Few large files*: a single file must be split. Raise `--multi-thread-streams`
+  (8 to 16), lower `--multi-thread-cutoff` (64M to 128M), and for S3/Azure raise the chunk
+  size (32M to 128M) and the upload concurrency (8 to 32). Transfers can stay small.
+- *Mixed data* needs both, which is what costs memory (see below).
+
+**Suggested installation defaults**, per link speed (one job; several jobs share the
+link and the node's memory):
+
+| Link | transfers | checkers | streams | cutoff | S3/Azure chunk | upload concurrency | memory estimate (S3) | budget |
+|---|---|---|---|---|---|---|---|---|
+| 10 Gb/s | 8 | 16 | 4 | 256M | 16M | 8 | 1.5 GiB | 8G (default) |
+| 100 Gb/s | 32 | 64 | 8 | 128M | 32M | 16 | 20 GiB | 32G |
+| 200 Gb/s | 64 | 128 | 16 | 64M | 64M | 16 | 80 GiB | 96G |
+
+Beyond about 20 Gb/s a single rclone process is usually limited by CPU (TLS, MD5 of
+every part for S3) and by the storage on both sides: run several jobs in parallel, e.g.
+one per top-level folder, and make sure the source filesystem (e.g. CephFS) can read
+at that rate with that many parallel streams. The presets below are fitted to the budget
+per destination, so raise the budget together with the caps.
+
+**Presets** (New Copy Job dialog; values are clamped to the caps and reduced until the
+estimate fits the budget, then marked "reduced"):
+
+| Preset | transfers | checkers | streams | cutoff | S3/Azure chunk × concurrency |
+|---|---|---|---|---|---|
+| Default | server defaults | | | | |
+| Many small files | 32 | 64 | | | |
+| Few large files | 4 | | 16 | 64M | 64M × 16 |
+| Maximum | 64 | 128 | 16 | 64M | 64M × 16 |
+
+With the default budget of 8 GiB, "Maximum" becomes 10 transfers with 32M chunks for S3
+and Azure destinations and 32 transfers for local ones.
+
+**Memory estimate.** Each transfer buffers what it reads, per stream, and each upload to
+S3 or Azure holds its chunks in memory while they are sent. Motuz estimates the memory
+of one job as
+
+    transfers × ( max(1, streams) × buffer_size
+                + max(upload_concurrency, streams) × chunk_size )
+
+where the second term only counts for S3 and Azure Blob destinations (with that
+backend's chunk size and upload concurrency; rclone uses the larger of the upload
+concurrency and the streams for multi-thread uploads), and unset values count with
+rclone's defaults. Example: 32 transfers × (8 × 16 MiB + 16 × 32 MiB) = 20 GiB. Jobs
+whose estimate is above `MOTUZ_RCLONE_MEMORY_BUDGET` are refused (the dialog shows the
+estimate as you type). It is a rough upper bound: it is reached only when every
+transfer is a large file at the same time. For a hard limit inside rclone, add
+`--max-buffer-memory` (below).
+
+**Extra flags.** `MOTUZ_RCLONE_EXTRA_FLAGS` (admin only, e.g.
+`--max-buffer-memory=64G --use-mmap`) accepts only these flags, each with a validated
+value: `--fast-list`, `--use-mmap`, `--no-traverse`, `--disable-http2`,
+`--s3-disable-http2`, `--max-buffer-memory=SIZE`, `--multi-thread-chunk-size=SIZE`,
+`--multi-thread-write-buffer-size=SIZE`, `--s3-upload-cutoff=SIZE`,
+`--s3-copy-cutoff=SIZE`, `--low-level-retries=N`, `--retries=N`. There is deliberately
+no free-form option: rclone runs as the user, and other flags could start a remote
+control server (`--rc`), run programs (`--password-command`, `--metadata-mapper`),
+write files or credentials anywhere (`--log-file`, `--dump`), or weaken what is copied
+and checked (`--ignore-checksum`, `--size-only`).
+
+Users can never pass flags: per-job settings are a fixed set of names whose values are
+parsed as numbers or sizes and formatted by Motuz, one argv item per flag
+(`--transfers=32`), without a shell. The flags appear in the rclone command in the
+celery log (credentials stay masked).
+
+### File viewer
+
+A double-click on a file in a pane opens a read-only viewer; the file is read as the
+logged-in user (locally with their permissions, in the cloud with their connection):
+
+- `.png`, `.jpg`/`.jpeg`, `.gif`, `.webp`: the image, fit to the window (a click shows
+  100%). The server decides the type from the file's first bytes, not its name, and
+  shows only PNG, JPEG, GIF and WebP; SVG files open as text (an SVG can contain
+  scripts). Images above `MOTUZ_VIEW_IMAGE_MAX_BYTES` (default `25M`, at most `256M`,
+  set in `.env`) are refused before they are read.
+- `.md`, `.markdown`: rendered in the browser from the first 1 MiB, without raw HTML
+  (shown as text). Links open in a new tab and only for http, https and mailto;
+  remote images are never loaded, images next to the file (relative paths) are.
+  *Source* shows the text.
+- anything else: a text pager like `less`, with *Follow* (like `tail -f`).
+
+### Remote workers (HTTPS only)
+
+Jobs can run on other machines than the Motuz server: **remote workers** run
+`motuz-worker` (`src/worker/motuz_worker.py`), which needs nothing but outbound HTTPS to
+the Motuz server (port 443, optionally through an HTTP proxy). Workers have no database
+access, open no ports and need no VPN. Typical setups:
+
+- Motuz in the cloud (e.g. a small EC2 instance), workers on-prem next to the file systems
+  (Proxmox VMs with the same mounts, users and versions as each other).
+- Temporary EC2 workers, one per large cloud-to-cloud job (see "Temporary EC2 workers").
+
+A worker runs the same job code as the Motuz server's Celery worker: rclone as the job's
+owner (`sudo -E -u <owner>`), the same output parsing, Stop, progress and final state in
+the UI. Local paths are the worker's own mounts.
+
+**Which jobs go where** (`.env` of the Motuz server, passed to the `app` container):
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `MOTUZ_LOCAL_JOB_POOL` | `central` | Pool of jobs with a local path: `central` runs them on the Motuz server (Celery), e.g. `onprem` queues them for on-prem workers |
+| `MOTUZ_LARGE_JOB_POOL` | `central` | Pool of large cloud-to-cloud jobs, e.g. `aws`; other cloud-to-cloud jobs run centrally |
+| `MOTUZ_LARGE_JOB_BYTES`, `MOTUZ_LARGE_JOB_FILES` | 300 GB, 50000 | "Large": the source has at least this many bytes or files (`rclone size`, at most `MOTUZ_JOB_SIZE_TIMEOUT` = 60 s; slower counts as large) |
+| `MOTUZ_WORKER_LEASE_SECONDS` | 120 | A claimed job fails when its worker has not reported for this long |
+| `MOTUZ_PUBLIC_URL` | the address the worker used | `https://` address of the Motuz server for the token broker URL in job tickets |
+
+With the defaults nothing changes: every job runs on the Motuz server. A job queued for a
+pool without workers waits ("Waiting for a worker of pool ..." in its details).
+
+**Security model**
+
+- Each worker has a credential: `manage.py workers add <name> --pool onprem` prints a
+  secret once; the server stores only its SHA-256. The worker exchanges it at
+  `POST /api/workers/auth` for an access token (10 minutes) that is signed with a key of
+  its own and has the audience `motuz-worker`: user endpoints never accept it, and worker
+  endpoints never accept user tokens. Secrets are compared in constant time.
+- A worker claims jobs of its own pool only (`POST /api/workers/claim`, long poll). A claim
+  hands out one job atomically (`SELECT ... FOR UPDATE SKIP LOCKED` plus a compare-and-set)
+  with a **job ticket**: the job's parameters (type, owner, paths, options), the rclone
+  configuration of that job's own connections (the same `_formatCredentials` as the
+  server; connections using credentials from the home directory are read on the worker,
+  as the owner), the job's rclone performance flags (from the server's `MOTUZ_RCLONE_*`
+  settings and the job's overrides, see "Performance tuning"; workers need no such
+  settings), an expiry and a ticket token. Nothing about other
+  jobs, connections or users. A ticket is returned once and never again.
+- Progress (`POST /api/workers/jobs/<ticket>/progress`, every few seconds) and the result
+  (`.../finish`) need the worker's access token and the ticket token (`X-Motuz-Ticket`) of
+  a job that worker claimed. Progress renews the **lease**; its answer is `continue` or
+  `stop` (the user pressed Stop: the worker kills rclone). A job whose lease expires (the
+  worker died or lost its connection) is marked FAILED with the reason; it is not
+  requeued, because the worker might still be running rclone. A worker that reports after
+  that gets `410 Gone` and stops rclone.
+- OneDrive and Google Drive: rclone on the worker gets a **job-scoped broker token**
+  instead of the connection's broker handle, and the token URL
+  `https://<Motuz server>/api/workers/oauth/token`. That endpoint refreshes only the
+  connection on that side of that running job, with the same broker code as the loopback
+  broker (locking, caching, rotation, own-app credentials); the real refresh token never
+  leaves the server. `/internal` stays unreachable from outside.
+- Tickets and broker tokens die when the job ends, its lease expires or its worker is
+  revoked (`manage.py workers revoke <name>`, which also fails the worker's running jobs).
+- Sign-in, claims and the broker are rate limited; sign-ins, claims, ticket and broker use
+  are logged (logger `motuz.audit`) without secrets.
+
+**On the Motuz server**
+
+```bash
+# .env: send jobs with local paths to the on-prem workers, then ./bin/prod/start.sh
+MOTUZ_LOCAL_JOB_POOL=onprem
+
+# One credential per worker; the secret is printed once
+docker exec motuz_app bash -c 'source ./load-secrets.sh >/dev/null && python3 manage.py workers add proxmox-1 --pool onprem'
+docker exec motuz_app bash -c 'source ./load-secrets.sh >/dev/null && python3 manage.py workers list'
+docker exec motuz_app bash -c 'source ./load-secrets.sh >/dev/null && python3 manage.py workers revoke proxmox-1'
+```
+
+**Installing a worker** (Ubuntu; the same Motuz release and rclone version as the server,
+the same users (SSSD/LDAP) and mounts as the other workers):
+
+```bash
+sudo apt-get install -y python3 sudo unzip curl
+# rclone: the version pinned in deployment/docker/app/Dockerfile, at /usr/local/bin/rclone
+sudo git clone https://github.com/FredHutch/motuz /opt/motuz   # check out the server's release
+
+# An unprivileged account that may run rclone, ls, mkdir and env as any user except root
+# (rclone as the job's owner, like the server's containers do); SETENV: rclone gets its
+# configuration, proxy and CA bundle as variables (sudo --preserve-env=<names>).
+# On Ubuntu 26.04, `sudo bin/systemd/install.sh --worker-only` does this and the rclone
+# download (README, "Install without Docker").
+sudo useradd --system --create-home --home-dir /var/lib/motuz --shell /usr/sbin/nologin motuz
+echo 'motuz ALL=(ALL, !root) NOPASSWD:SETENV: /usr/local/bin/rclone, /usr/bin/ls, /usr/bin/mkdir, /usr/bin/env' \
+    | sudo tee /etc/sudoers.d/motuz-worker
+sudo chmod 440 /etc/sudoers.d/motuz-worker
+sudo visudo -c
+sudo loginctl enable-linger motuz          # user services without a login
+
+# Configuration and the secret from `manage.py workers add` (mode 600)
+sudo -u motuz install -d -m 700 /var/lib/motuz/.config/motuz-worker /var/lib/motuz/.config/systemd/user
+sudo -u motuz sh -c 'umask 077; cat > ~/.config/motuz-worker/credential'   # paste, Ctrl-D
+sudo -u motuz install -m 600 /opt/motuz/src/worker/worker.env.example /var/lib/motuz/.config/motuz-worker/worker.env
+sudo -u motuz editor /var/lib/motuz/.config/motuz-worker/worker.env   # MOTUZ_CENTRAL_URL, proxy, mounts
+sudo -u motuz install -m 644 /opt/motuz/src/worker/motuz-worker.service /var/lib/motuz/.config/systemd/user/
+
+# Check (mounts, sign-in, version), then start
+sudo -u motuz bash -c 'set -a; . ~/.config/motuz-worker/worker.env; python3 $MOTUZ_HOME/src/worker/motuz_worker.py --check'
+sudo -u motuz XDG_RUNTIME_DIR=/run/user/$(id -u motuz) systemctl --user enable --now motuz-worker
+sudo -u motuz XDG_RUNTIME_DIR=/run/user/$(id -u motuz) journalctl --user -u motuz-worker -f
+```
+
+Worker settings (`worker.env`, see `src/worker/worker.env.example`): `MOTUZ_CENTRAL_URL`
+(https only), `MOTUZ_WORKER_CREDENTIAL_FILE` (must be mode 600), `MOTUZ_WORKER_POOL`
+(optional check), `MOTUZ_REQUIRED_PATHS` (mount points that must be mounted before the
+worker claims jobs), `HTTPS_PROXY`/`NO_PROXY` (used by the worker and passed to rclone)
+and `MOTUZ_CA_BUNDLE` (a PEM bundle for the server's certificate, also given to rclone as
+`SSL_CERT_FILE`; it replaces the system roots, so it must contain them, and it must be
+readable by every user, e.g. `/etc/motuz-worker/ca.pem`, because rclone runs as the job's
+owner). Before claiming,
+the worker checks its mounts and that its release (`src/backend/api/version.py`: `VERSION`,
+`WORKER_PROTOCOL`) equals the server's; otherwise it logs why and waits. On SIGTERM it
+stops rclone and reports the job as failed. Exit code 78 (configuration error, revoked
+credential) stops systemd from restarting it.
+
+**Ephemeral workers** (what the EC2 launcher uses): a single-use bootstrap token, valid
+for minutes and optionally bound to one job queued for the same pool, replaces the
+credential:
+
+```bash
+python3 manage.py workers bootstrap --pool aws --job copy:123 --ttl 15m   # prints mzb1....
+# on the new instance (token e.g. from its user data; a file keeps it out of `ps`):
+python3 /opt/motuz/src/worker/motuz_worker.py --bootstrap-token-file /run/motuz-bootstrap --once
+```
+
+The worker exchanges the token (it cannot be used again), claims exactly its job, runs it,
+reports the result and exits; the server then revokes the ephemeral worker. Code can call
+`worker_manager.create_bootstrap_token(pool, job='copy:123', ttl_seconds=900)`.
+
+### Temporary EC2 workers
+
+When the Motuz server runs in AWS, each large cloud-to-cloud job can get its own
+short-lived EC2 instance: a remote worker of the pool `aws` that boots, runs exactly this
+job and terminates. The Motuz server itself stays small; the copy runs on a
+network-optimized instance sized for the job. Off by default (`MOTUZ_EC2_WORKERS=false`).
+
+**How it works**
+
+1. A new copy or integrity-check job whose source is large (`MOTUZ_LARGE_JOB_BYTES` /
+   `_FILES`, see "Remote workers") is queued for the pool `MOTUZ_LARGE_JOB_POOL=aws`,
+   with the source size that `rclone size` measured.
+2. Right after (a Celery task, so creating the job does not wait for AWS), the launcher
+   (`src/backend/api/managers/ec2_launcher.py`) starts an instance if fewer than
+   `MOTUZ_EC2_MAX_WORKERS` are running; otherwise the job waits in the queue ("waiting for
+   a free EC2 worker slot") until one ends. It creates a single-use bootstrap token bound
+   to the job (valid for `MOTUZ_EC2_BOOT_TIMEOUT`), puts it into the instance's user data,
+   and calls `RunInstances` with the launch template of the instance type's architecture
+   (`deployment/aws/README.md`), the type from `MOTUZ_EC2_INSTANCE_TYPES`, the worker tags
+   and a `ClientToken` derived from the job, so that a repeated call never starts a
+   second instance for the same job.
+3. The instance (Amazon Linux 2027) restricts instance metadata to root, installs rclone
+   (the version pinned for the server, checksum verified) and Motuz at the server's commit,
+   and runs `motuz_worker.py --bootstrap-token-file ... --once`. The worker exchanges the
+   token, claims its job, reports progress over HTTPS like any remote worker, and exits;
+   then the instance shuts down, which terminates it.
+4. A reaper on the Motuz server (`manage.py ec2 reap --loop`, started by the Celery
+   container every `MOTUZ_EC2_REAP_INTERVAL`) cleans up and starts queued jobs whose
+   turn has come.
+
+The job table shows where a job runs, e.g. "aws · starting worker (c7gn.large)",
+"aws · running on c7gn.2xlarge"; the job dialog shows it as "Runs on".
+
+**Which jobs.** Only cloud-to-cloud jobs whose two connections are HTTPS APIs with
+credentials stored in Motuz: S3 (AWS or an `https://` endpoint on port 443), Azure Blob,
+Google Cloud Storage, Dropbox, OneDrive, Google Drive. The workers reach nothing but port
+443 and have none of the users' files, so large jobs with SFTP, WebDAV, Swift, an S3
+endpoint on another port, or "Credentials from your home directory" run on the Motuz
+server instead. Jobs with a local path never go to EC2 workers: the server refuses to
+start with `MOTUZ_LOCAL_JOB_POOL` set to the EC2 pool.
+
+**Settings** (`.env` of the Motuz server; passed to `app` and `celery`):
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `MOTUZ_EC2_WORKERS` | `false` | `true` launches workers for the jobs of the EC2 pool |
+| `MOTUZ_EC2_POOL` | `aws` | The pool; must equal `MOTUZ_LARGE_JOB_POOL` |
+| `MOTUZ_AWS_REGION` | (required) | Region of the launch templates, e.g. `us-west-2` |
+| `MOTUZ_PUBLIC_URL` | (required) | `https://` address of this server, reachable from the internet on 443 |
+| `MOTUZ_EC2_INSTANCE_TYPES` | `1T:c7gn.large,10T:c7gn.2xlarge,*:c7gn.4xlarge` | Instance type by source size (decimal: `1T` = 10^12 bytes): below 1 TB `c7gn.large`, below 10 TB `c7gn.2xlarge`, else (and when the listing timed out) `c7gn.4xlarge`. Graviton types (`c7gn`, `c8gn`) use the arm64 template, others (`c6in`, `c7i`) the x86_64 one; only types the IAM policy allows can start |
+| `MOTUZ_EC2_MAX_WORKERS` | 2 | Instances at the same time (worker instances without a record count too) |
+| `MOTUZ_EC2_MAX_RUNTIME` | `24h` | An instance running longer is terminated and its job failed with that reason |
+| `MOTUZ_EC2_BOOT_TIMEOUT` | `20m` | Lifetime of the bootstrap token; an instance that has not started its job by then is terminated and the job failed |
+| `MOTUZ_EC2_LAUNCH_TEMPLATE_ARM64`, `_AMD64` | `motuz-worker-arm64`, `motuz-worker` | Launch template names or ids (`lt-...`) |
+| `MOTUZ_EC2_LAUNCH_TEMPLATE_VERSION` | `$Default` | Or `$Latest` or a number (`1` = the Ubuntu 26.04 fallback, also tested end to end 2026-09-28: real copy, hashsum and Google Drive -> S3 broker jobs, no code changes needed) |
+| `MOTUZ_EC2_SUBNET_ID` | (none) | Subnet; unset: EC2 picks a default subnet |
+| `MOTUZ_EC2_REAP_INTERVAL` | `60s` | Reaper period |
+| `MOTUZ_EC2_HALT_DELAY` | `0` | For debugging: minutes a worker waits before shutting down after a failure |
+| `MOTUZ_WORKER_SOURCE` | `https://github.com/dirkpetersen/motuz` | Where workers get Motuz (a GitHub repository is fetched as an archive, anything else with git) |
+| `MOTUZ_WORKER_SOURCE_REF` | the image's commit | Commit, tag or branch; `bin/prod/build.sh` records the commit it builds (`MOTUZ_SOURCE_COMMIT`), which must be pushed to `MOTUZ_WORKER_SOURCE` |
+
+An invalid or inconsistent value stops the app and the Celery worker at startup with a
+message naming the variable. AWS credentials come from the server's instance profile
+(IMDSv2), never from a file.
+
+**Limits and cleanup.** IAM cannot limit the number of instances, and a stop could be
+requested instead of a termination, so Motuz enforces both itself:
+
+- `MOTUZ_EC2_MAX_WORKERS` concurrent instances; further jobs wait queued.
+- On the instance: `shutdown -h +<max runtime + 15 min>` right after boot, and a shutdown
+  when `motuz-worker --once` exits, successful or not. The worker gives up when it has no
+  job after `MOTUZ_EC2_BOOT_TIMEOUT` (also while the server is unreachable). The launch
+  templates set `InstanceInitiatedShutdownBehavior=terminate`; the launcher never passes
+  that parameter (nor any other that would override the template: image, security group,
+  instance profile, key pair, metadata options).
+- The reaper terminates instances whose job ended (finished, failed or stopped), that
+  run longer than `MOTUZ_EC2_MAX_RUNTIME`, that did not start their job within
+  `MOTUZ_EC2_BOOT_TIMEOUT`, that are stopped, and instances with the worker tags
+  (`Project=motuz`, `Component=worker`, `ManagedBy=motuz-central`) that have no record in
+  the `ec2_worker` table and are older than 10 minutes. So one account and region must
+  have at most one Motuz server with EC2 workers. It fails the job of an instance that
+  ended before or while running it, with the reason and the command for its console
+  output (`aws ec2 get-console-output --latest --instance-id ...`; EC2 keeps it only while
+  the instance exists, see `MOTUZ_EC2_HALT_DELAY`).
+- No capacity for a type (`InsufficientInstanceCapacity`, when launching or as the
+  reason an instance ended before claiming its job): the next type of the table is tried
+  once (the last type falls back to the one before it); then the job fails.
+
+**On the instance.** Before anything else a firewall rule (nftables, or iptables with the
+owner match; the Amazon Linux 2027 preview has neither, so nftables is installed with dnf
+first; Ubuntu 26.04's AMI ships `iptables`/`nft` already, so this dnf fallback is AL2027
+only) lets only root reach the instance metadata service (169.254.169.254), which
+serves the user data with the bootstrap token and the (permissionless) instance role; the
+script checks it as an unprivileged account. `motuz-worker` runs as the account `motuz`,
+rclone as `motuzjob` (`MOTUZ_WORKER_RUN_AS`; `motuz` may run only `/usr/local/bin/rclone`
+as `motuzjob` through sudo): the job's owner does not exist on the instance, and the
+instance runs one job of one user. The bootstrap token is the only secret in the user
+data (single use, bound to the job, valid for minutes) and is never printed; the job's
+credentials arrive in the job ticket over HTTPS, as for any remote worker. The user data
+(`src/backend/api/templates/ec2/worker-user-data.sh`, about 10 KB of the 16 KB limit)
+skips the downloads when rclone and Motuz at the right version are already installed, the
+hook for a prebuilt AMI or the Amazon Linux 2027 installer's worker-only mode. Booting
+to a running worker takes about 20 seconds.
+
+**Commands** (in the `motuz_app` or `motuz_celery` container):
+
+```bash
+docker exec motuz_celery bash -c 'source ./load-secrets.sh >/dev/null && python3 manage.py ec2 check'   # IAM: RunInstances dry run per type
+docker exec motuz_celery bash -c 'source ./load-secrets.sh >/dev/null && python3 manage.py ec2 status'  # launches and live worker instances
+docker exec motuz_celery bash -c 'source ./load-secrets.sh >/dev/null && python3 manage.py ec2 reap'    # one reaper pass now
+```
+
+To debug a worker, set `MOTUZ_EC2_HALT_DELAY=30m`: a worker whose setup or job failed
+then stays up that long, and `aws ec2 get-console-output --latest --instance-id <id>` shows
+the boot steps (`motuz-boot: ...`) and the worker's log. The `motuz-worker-ssm-debug`
+policy (`deployment/aws/README.md`) would allow a Session Manager shell, but the Amazon
+Linux 2027 preview instances did not register with Systems Manager in a test; detach the
+policy again afterwards in any case.
+
+**Costs.** Only while instances run: e.g. `c7gn.large` about 0.12 USD/h, `c7gn.4xlarge`
+about 1 USD/h in us-west-2, plus 16 GiB gp3 and a public IPv4 address. With the defaults
+at most two workers of at most 24 hours each run at a time. Keep an AWS budget alert.
+
+## Alternative: Docker
+
+The same Motuz in containers with `docker-compose` (Traefik, the app, Celery, RabbitMQ and
+PostgreSQL, all with host networking), for machines where you do not want a service
+account with systemd user services, or to try Motuz quickly. Everything in the
+[configuration and features](#configuration-and-features) below applies to both installs; the
+settings are the same `MOTUZ_*` variables (`.env` and `/docker/secrets` here, `motuz.env` and
+`secrets.env` there). To move to the default install, or to see what differs, read
+[Migrating from the docker install](#migrating-from-the-docker-install); `make quickstart`,
+`bin/quickstart.sh` and `bin/redeploy.sh` keep working. The default install, which needs
+no Docker, is [Install (default: without Docker)](#install-default-without-docker)
+(`sudo bin/systemd/bootstrap.sh` does all of it on a fresh machine).
+
+### Quickstart
 
 - Install [`docker` and `docker-compose`](https://docs.docker.com/install/linux/docker-ce/ubuntu/)
 - Run the following command
@@ -77,8 +1407,7 @@ cd motuz
 
 ---
 
-
-## Beyond quickstart
+### Beyond quickstart
 
 In this section we will explain what each step of quickstart does. We will also see how to customize some of these steps.
 
@@ -118,8 +1447,7 @@ docker-compose up -d
 
 6. See result at http://localhost/.
 
-
-## Customizing your deployment
+### Customizing your deployment
 
 - Add your SSL certificates - `/docker/certs/`, or set `MOTUZ_ACME_DOMAIN` for [Let's Encrypt](#option-b-lets-encrypt)
 - Change the environment variables - `.env`
@@ -127,8 +1455,7 @@ docker-compose up -d
 - Change the files that are visible to motuz - `docker-compose.override.yml`
 - Use a different root (instead of `/docker`) by changing the MOTUZ_DOCKER_ROOT variable in `.env`
 
-
-## Setting up production
+### Setting up production
 
 The following instructions could be used on
 an on-premises system or an EC2 instance.
@@ -139,10 +1466,9 @@ than virtual machines.
 
 We recommend using a machine running Ubuntu 24.04 (Noble).
 
-To run Motuz without Docker, as `systemd --user` services on Ubuntu 26.04 LTS (for
-example in a Proxmox VM), see [Install without Docker (Ubuntu 26.04)](#install-without-docker-ubuntu-2604).
-On EC2 the default is the same install on Amazon Linux 2027, see
-[Install on Amazon Linux 2027 (default on EC2)](#install-on-amazon-linux-2027-default-on-ec2).
+The following sections are the Docker install; the default install without Docker is
+[Install (default: without Docker)](#install-default-without-docker).
+
 
 ### Authentication
 
@@ -179,7 +1505,6 @@ sudo apt-get update -y
 sudo apt-get install -y krb5-user libpam-krb5
 ```
 
-
 ### Requirements
 
 Git and rsyslog are required regardless of authentication method.
@@ -190,7 +1515,6 @@ sudo apt-get update -y
 sudo apt-get install -y git rsyslog
 ```
 
-
 ### Docker and docker-compose
 
 Docker is also required. Install it according to
@@ -200,8 +1524,6 @@ repositories.
 
 Then, install the latest release of `docker-compose` from
 the [releases page](https://github.com/docker/compose/releases) on GitHub. Instructions are provided on that page.
-
-
 
 ### Shared Filesystems (optional)
 
@@ -360,7 +1682,6 @@ This will stop Motuz, rebuild Docker images, run
 database migrations if necessary, and bring Motuz
 back up. It will result in short (-2min) downtime.
 
-
 ### Migrating from nginx to Traefik
 
 Installations from before Traefik ran nginx in a container named `motuz_nginx`.
@@ -397,319 +1718,6 @@ To migrate:
      the stop/start hook pair around a standalone renewal does that. A hook that
      only copies files needs a `docker restart motuz_traefik` after the copy.
 
-
-### OneDrive: own app registration
-
-"Sign in with Microsoft" (Clouds > New connection > OneDrive) uses rclone's
-public OneDrive app by default. Its only redirect address is
-`http://localhost:53682/`, so after signing in, users copy the address of the
-error page the browser shows and paste it into Motuz. All Motuz installations
-and rclone users share that app's Microsoft Graph throttling quota.
-
-With your own app registration in Microsoft Entra ID, Microsoft redirects back
-to Motuz, which completes the sign-in by itself, and Motuz gets its own
-throttling quota.
-
-1. In the [Microsoft Entra admin center](https://entra.microsoft.com/), open
-   *App registrations* > *New registration*:
-   - Name: e.g. `Motuz`
-   - Supported account types: *Accounts in any organizational directory
-     (Multitenant)*. Motuz signs in through Microsoft's `common` endpoints, like
-     rclone, which single-tenant apps cannot use. The app still only works in
-     tenants whose administrator consents to it (step 3).
-   - Redirect URI: platform *Web*,
-     `https://motuz.example.org/api/oauth/onedrive/callback` (your Motuz host
-     name; it must match `MOTUZ_ONEDRIVE_REDIRECT_URI` exactly).
-2. Note the *Application (client) ID* on the app's *Overview* page.
-3. *API permissions* > *Add a permission* > *Microsoft Graph* > *Delegated
-   permissions*: `Files.ReadWrite.All`, `Sites.Read.All`, `offline_access` and
-   `User.Read` (usually already there). Then *Grant admin consent for
-   <tenant>*: users cannot consent to `Files.ReadWrite.All` and
-   `Sites.Read.All` themselves, so without the tenant's admin consent they see
-   "Need admin approval".
-4. *Certificates & secrets* > *Client secrets* > *New client secret*. Copy its
-   *Value* (not the *Secret ID*); it is shown only once. Note the expiry date:
-   Motuz cannot refresh tokens once the secret expires.
-5. Configure Motuz. The id and redirect URI go in `.env` (or the environment
-   that runs `./start.sh`, which takes precedence), the secret in a docker
-   secret file, never in `.env`:
-   ```bash
-   MOTUZ_ONEDRIVE_CLIENT_ID=<Application (client) ID>
-   MOTUZ_ONEDRIVE_REDIRECT_URI=https://motuz.example.org/api/oauth/onedrive/callback
-   ```
-   ```bash
-   # $MOTUZ_DOCKER_ROOT/secrets, /docker by default
-   (umask 077 && printf '%s' '<secret value>' > /docker/secrets/MOTUZ_ONEDRIVE_CLIENT_SECRET)
-   ```
-6. Redeploy with `bin/redeploy.sh` (or `./start.sh`).
-
-`bin/prod/start.sh` creates `/docker/secrets/MOTUZ_ONEDRIVE_CLIENT_SECRET` as
-an empty file (mode 600) if it does not exist, because docker-compose does not
-start with a missing secret file. Empty or unset values mean "not configured":
-without `MOTUZ_ONEDRIVE_CLIENT_ID` Motuz uses rclone's app and ignores the
-secret and the redirect URI.
-
-Each connection remembers which app issued its token and is always refreshed
-with that app:
-
-- Connections created before the own app was configured, and connections
-  created by pasting a token from `rclone config`, keep using rclone's app.
-- Rotating the client secret (same client id) keeps all connections working:
-  replace the file and redeploy before the old secret expires.
-- Connections created with an own app stop working when its client id changes
-  or is removed from the configuration. Their jobs fail with "This OneDrive
-  connection was created with a different app registration..."; the owner
-  signs in with Microsoft again (or pastes an rclone token into the
-  connection).
-
-The edit dialog of a OneDrive connection shows which app it uses. The client
-secret is only used by the `app` container (sign-in and token refresh); rclone
-never receives it.
-
-
-### Google Drive
-
-Clouds > New connection > *Google Drive (beta)* creates an rclone `drive`
-remote with the `drive` scope (full access to the user's files). My Drive is the
-default; a shared drive (formerly Team Drive) sets rclone's `team_drive`, and an
-optional root folder id starts the connection in a folder. As with OneDrive,
-the token broker keeps the token fresh and rclone never sees the refresh token.
-Jobs use rclone's recommendations for Drive: API calls paced at 10 per second
-(`--tpslimit 10`, which applies to the whole rclone process, and a 100ms pacer),
-64 MiB upload chunks (buffered in memory per transfer), and the job fails when
-Google's daily upload limit (about 750 GiB per user) is reached.
-
-There are three ways to connect:
-
-1. **Paste a token from `rclone config`** (*Advanced* in the dialog, which
-   shows the steps): `rclone config`, new remote, storage `drive`, empty
-   `client_id` and `client_secret`, scope `1`, confirm that you want to use
-   rclone's shared client, sign in, then `rclone config show <name>` and paste
-   the `token` JSON (and `team_drive`, if any). Only tokens of rclone's own
-   client work: Motuz cannot refresh a token issued to a client id whose secret
-   it does not have.
-2. **Sign in with Google, rclone's app** (default): Motuz opens Google's sign-in
-   page. rclone's app only redirects to `http://127.0.0.1:53682/`, so the
-   browser shows an error page afterwards and the user pastes its address into
-   Motuz, then picks My Drive or a shared drive.
-3. **Sign in with Google, own OAuth client**: Google redirects back to Motuz,
-   which completes the sign-in by itself.
-
-**rclone's shared client is not a long-term option.** It is shared by all
-rclone users worldwide and heavily rate limited (Google's default quota is per
-client id), and rclone announced that it is being retired and will stop
-working during 2026 (`rclone config` now warns about it). When that happens,
-connections created with it (pasted tokens and option 2) stop refreshing and
-users must sign in again with an own client. Configure an own client for
-production.
-
-#### Own OAuth client
-
-1. In the [Google Cloud Console](https://console.cloud.google.com/), create or
-   select a project, then *APIs & Services* > *Library* > *Google Drive API* >
-   *Enable*. Without it, sign-in succeeds but Motuz reports "Google Drive
-   cannot be accessed: Google Drive API has not been used in project ...".
-2. *Google Auth Platform* (formerly *OAuth consent screen*): app name, support
-   email, contact email.
-   - *Audience*: *Internal* if all users are in your Google Workspace domain
-     (no verification needed, only your domain's accounts can sign in);
-     *External* otherwise.
-   - *Data access*: add the scope `https://www.googleapis.com/auth/drive`.
-3. *Clients* > *Create client* > type *Web application*, authorized redirect
-   URI `https://motuz.example.org/api/oauth/gdrive/callback` (your Motuz host
-   name; it must match `MOTUZ_GDRIVE_REDIRECT_URI` exactly). Copy the client id
-   and the client secret.
-4. Configure Motuz: the id and redirect URI in `.env` (or the environment that
-   runs `./start.sh`), the secret in the docker secret file, never in `.env`:
-   ```bash
-   MOTUZ_GDRIVE_CLIENT_ID=<client id>.apps.googleusercontent.com
-   MOTUZ_GDRIVE_REDIRECT_URI=https://motuz.example.org/api/oauth/gdrive/callback
-   ```
-   ```bash
-   (umask 077 && printf '%s' '<client secret>' > /docker/secrets/MOTUZ_GDRIVE_CLIENT_SECRET)
-   ```
-5. Redeploy with `bin/redeploy.sh` (or `./start.sh`). `bin/prod/start.sh`
-   creates an empty `MOTUZ_GDRIVE_CLIENT_SECRET` if it is missing; empty or
-   unset values mean "not configured" (rclone's app).
-
-Google's restrictions on the `drive` scope, which Google classifies as
-*restricted*:
-
-- An *External* app that is not verified is in *Testing* mode: only the test
-  users listed under *Audience* (up to 100) can sign in, they see a "Google
-  hasn't verified this app" warning, and Google expires their refresh tokens
-  after 7 days, so those connections need a new sign-in every week. Publishing
-  the app for everyone requires Google's verification of the restricted scope,
-  which includes a security assessment by a third party.
-- An *Internal* app avoids verification, but only works for accounts of the
-  Workspace organization that owns the Cloud project.
-- Google Workspace administrators can block third-party apps or unconfigured
-  apps (*Admin console* > *Security* > *API controls* > *App access
-  control*). Users then see "Access blocked" or "admin_policy_enforced", the
-  same situation as a OneDrive tenant that requires admin approval: the
-  administrator has to trust the client id (Motuz's own client, or rclone's
-  `202264815644.apps.googleusercontent.com`).
-- Google sends a refresh token only with `access_type=offline` and
-  `prompt=consent`, which Motuz always requests. Refresh tokens stop working
-  when the user revokes access (myaccount.google.com > *Security* >
-  *Third-party apps*), when an administrator removes the app's access, or
-  after 6 months without use.
-
-Each connection remembers the client that issued its token
-(`gdrive_client_id`) and is always refreshed with it, exactly like OneDrive:
-pasted tokens and connections created before the own client was configured
-keep using rclone's app; changing or removing `MOTUZ_GDRIVE_CLIENT_ID` breaks
-connections of the old client ("This Google Drive connection was created with
-a different OAuth client ... Sign in with Google again"); rotating only the
-secret keeps them working. The client secret is used only by the `app`
-container.
-
-
-### Privacy policy and terms
-
-Motuz serves a privacy policy at `https://<host>/privacy` and terms of service
-at `https://<host>/terms`: plain HTML without login or JavaScript
-(`src/backend/api/views/legal_views.py`, templates in
-`src/backend/api/templates/legal/`). The login page and the page shown without
-JavaScript (`src/frontend/index.html`) describe the app and link to both.
-Google's consent-screen branding (*Google Auth Platform* > *Branding*) needs
-exactly these: the home page `https://<host>/`, the privacy policy link and the
-terms of service link, all on a domain you have verified in Google Search
-Console.
-
-Set who runs the installation in `.env` (all optional; without them the pages
-refer to "the administrator of this Motuz installation"):
-```bash
-MOTUZ_OPERATOR_NAME=Example Research Institute
-MOTUZ_CONTACT_EMAIL=motuz-admin@example.org
-MOTUZ_OPERATOR_URL=https://www.example.org/
-```
-The text describes what Motuz itself does. Review it with your institution
-(e.g. log retention, backups, who handles data protection requests), edit the
-templates if needed, and change `EFFECTIVE_DATE` in `legal_views.py` whenever
-the text changes.
-
-
-### Performance tuning
-
-Motuz copies with rclone. With rclone's defaults (4 parallel transfers, 8 checkers, 4
-streams per file above 256 MiB, S3 parts of 5 MiB with 4 in flight) one job rarely goes
-beyond a few Gb/s, however fast the link. Two levels of settings change that:
-
-- **Installation defaults** in `.env` (passed to `app` and `celery` by
-  `docker-compose.yml`). Unset or empty means rclone's default, i.e. no flag at all, so
-  existing installations behave as before.
-- **Per job**, in the collapsed "Performance" section of the New Copy Job dialog: a
-  preset or custom values for the destination's type, within the server's caps and
-  memory budget. The job detail shows them, Retry keeps them, and "Check Integrity"
-  passes the checkers on.
-
-| Setting (`.env`) | rclone flag | rclone default | Per job |
-|---|---|---|---|
-| `MOTUZ_RCLONE_TRANSFERS` | `--transfers` | 4 | yes |
-| `MOTUZ_RCLONE_CHECKERS` | `--checkers` (also for integrity checks) | 8 | yes |
-| `MOTUZ_RCLONE_MULTI_THREAD_STREAMS` | `--multi-thread-streams` (0: off) | 4 | yes |
-| `MOTUZ_RCLONE_MULTI_THREAD_CUTOFF` | `--multi-thread-cutoff` | 256M | yes |
-| `MOTUZ_RCLONE_BUFFER_SIZE` | `--buffer-size` | 16M | no |
-| `MOTUZ_RCLONE_S3_UPLOAD_CONCURRENCY` | `--s3-upload-concurrency` | 4 | yes (S3 destinations) |
-| `MOTUZ_RCLONE_S3_CHUNK_SIZE` | `--s3-chunk-size` (5M to 5G) | 5M | yes (S3 destinations) |
-| `MOTUZ_RCLONE_AZUREBLOB_UPLOAD_CONCURRENCY` | `--azureblob-upload-concurrency` | 16 | yes (Azure destinations) |
-| `MOTUZ_RCLONE_AZUREBLOB_CHUNK_SIZE` | `--azureblob-chunk-size` | 4M | yes (Azure destinations) |
-
-Caps for the per-job values: `MOTUZ_RCLONE_MAX_TRANSFERS` (default 64),
-`MOTUZ_RCLONE_MAX_CHECKERS` (128), `MOTUZ_RCLONE_MAX_MULTI_THREAD_STREAMS` (32),
-`MOTUZ_RCLONE_MAX_UPLOAD_CONCURRENCY` (64, S3 and Azure), and the memory budget per job
-`MOTUZ_RCLONE_MEMORY_BUDGET` (default `8G`). Numbers are whole numbers, sizes use
-rclone's binary units and need a unit (`64M`, `1.5G`, `64Mi`). An invalid value, an
-installation default above its cap or defaults above the memory budget stop the app and
-the worker at startup, with a message that names the variable.
-
-**What matters when**
-
-- *Many small files* (below ~100 MB): per-file overhead dominates. Raise
-  `--transfers` (16 to 64) and `--checkers` (32 to 128); streams and chunk sizes hardly
-  matter. On S3 the request rate of the bucket (prefix) may become the limit.
-- *Few large files*: a single file must be split. Raise `--multi-thread-streams`
-  (8 to 16), lower `--multi-thread-cutoff` (64M to 128M), and for S3/Azure raise the chunk
-  size (32M to 128M) and the upload concurrency (8 to 32). Transfers can stay small.
-- *Mixed data* needs both, which is what costs memory (see below).
-
-**Suggested installation defaults**, per link speed (one job; several jobs share the
-link and the node's memory):
-
-| Link | transfers | checkers | streams | cutoff | S3/Azure chunk | upload concurrency | memory estimate (S3) | budget |
-|---|---|---|---|---|---|---|---|---|
-| 10 Gb/s | 8 | 16 | 4 | 256M | 16M | 8 | 1.5 GiB | 8G (default) |
-| 100 Gb/s | 32 | 64 | 8 | 128M | 32M | 16 | 20 GiB | 32G |
-| 200 Gb/s | 64 | 128 | 16 | 64M | 64M | 16 | 80 GiB | 96G |
-
-Beyond about 20 Gb/s a single rclone process is usually limited by CPU (TLS, MD5 of
-every part for S3) and by the storage on both sides: run several jobs in parallel, e.g.
-one per top-level folder, and make sure the source filesystem (e.g. CephFS) can read
-at that rate with that many parallel streams. The presets below are fitted to the budget
-per destination, so raise the budget together with the caps.
-
-**Presets** (New Copy Job dialog; values are clamped to the caps and reduced until the
-estimate fits the budget, then marked "reduced"):
-
-| Preset | transfers | checkers | streams | cutoff | S3/Azure chunk × concurrency |
-|---|---|---|---|---|---|
-| Default | server defaults | | | | |
-| Many small files | 32 | 64 | | | |
-| Few large files | 4 | | 16 | 64M | 64M × 16 |
-| Maximum | 64 | 128 | 16 | 64M | 64M × 16 |
-
-With the default budget of 8 GiB, "Maximum" becomes 10 transfers with 32M chunks for S3
-and Azure destinations and 32 transfers for local ones.
-
-**Memory estimate.** Each transfer buffers what it reads, per stream, and each upload to
-S3 or Azure holds its chunks in memory while they are sent. Motuz estimates the memory
-of one job as
-
-    transfers × ( max(1, streams) × buffer_size
-                + max(upload_concurrency, streams) × chunk_size )
-
-where the second term only counts for S3 and Azure Blob destinations (with that
-backend's chunk size and upload concurrency; rclone uses the larger of the upload
-concurrency and the streams for multi-thread uploads), and unset values count with
-rclone's defaults. Example: 32 transfers × (8 × 16 MiB + 16 × 32 MiB) = 20 GiB. Jobs
-whose estimate is above `MOTUZ_RCLONE_MEMORY_BUDGET` are refused (the dialog shows the
-estimate as you type). It is a rough upper bound: it is reached only when every
-transfer is a large file at the same time. For a hard limit inside rclone, add
-`--max-buffer-memory` (below).
-
-**Extra flags.** `MOTUZ_RCLONE_EXTRA_FLAGS` (admin only, e.g.
-`--max-buffer-memory=64G --use-mmap`) accepts only these flags, each with a validated
-value: `--fast-list`, `--use-mmap`, `--no-traverse`, `--disable-http2`,
-`--s3-disable-http2`, `--max-buffer-memory=SIZE`, `--multi-thread-chunk-size=SIZE`,
-`--multi-thread-write-buffer-size=SIZE`, `--s3-upload-cutoff=SIZE`,
-`--s3-copy-cutoff=SIZE`, `--low-level-retries=N`, `--retries=N`. There is deliberately
-no free-form option: rclone runs as the user, and other flags could start a remote
-control server (`--rc`), run programs (`--password-command`, `--metadata-mapper`),
-write files or credentials anywhere (`--log-file`, `--dump`), or weaken what is copied
-and checked (`--ignore-checksum`, `--size-only`).
-
-Users can never pass flags: per-job settings are a fixed set of names whose values are
-parsed as numbers or sizes and formatted by Motuz, one argv item per flag
-(`--transfers=32`), without a shell. The flags appear in the rclone command in the
-celery log (credentials stay masked).
-
-### File viewer
-
-A double-click on a file in a pane opens a read-only viewer; the file is read as the
-logged-in user (locally with their permissions, in the cloud with their connection):
-
-- `.png`, `.jpg`/`.jpeg`, `.gif`, `.webp`: the image, fit to the window (a click shows
-  100%). The server decides the type from the file's first bytes, not its name, and
-  shows only PNG, JPEG, GIF and WebP; SVG files open as text (an SVG can contain
-  scripts). Images above `MOTUZ_VIEW_IMAGE_MAX_BYTES` (default `25M`, at most `256M`,
-  set in `.env`) are refused before they are read.
-- `.md`, `.markdown`: rendered in the browser from the first 1 MiB, without raw HTML
-  (shown as text). Links open in a new tab and only for http, https and mailto;
-  remote images are never loaded, images next to the file (relative paths) are.
-  *Source* shows the text.
-- anything else: a text pager like `less`, with *Follow* (like `tail -f`).
-
 ### Using a custom database
 
 The [.env](/.env) file provides a set of default variables that can be overwritten with environment variables. This can be leveraged to use a custom database.
@@ -734,597 +1742,8 @@ The config above is the equivalent of connecting to
 postgresql://your_user:your_password@your_host.com:5432/your_database_name
 ```
 
-
-### Remote workers (HTTPS only)
-
-Jobs can run on other machines than the Motuz server: **remote workers** run
-`motuz-worker` (`src/worker/motuz_worker.py`), which needs nothing but outbound HTTPS to
-the Motuz server (port 443, optionally through an HTTP proxy). Workers have no database
-access, open no ports and need no VPN. Typical setups:
-
-- Motuz in the cloud (e.g. a small EC2 instance), workers on-prem next to the file systems
-  (Proxmox VMs with the same mounts, users and versions as each other).
-- Temporary EC2 workers, one per large cloud-to-cloud job (see "Temporary EC2 workers").
-
-A worker runs the same job code as the Motuz server's Celery worker: rclone as the job's
-owner (`sudo -E -u <owner>`), the same output parsing, Stop, progress and final state in
-the UI. Local paths are the worker's own mounts.
-
-**Which jobs go where** (`.env` of the Motuz server, passed to the `app` container):
-
-| Variable | Default | Meaning |
-|---|---|---|
-| `MOTUZ_LOCAL_JOB_POOL` | `central` | Pool of jobs with a local path: `central` runs them on the Motuz server (Celery), e.g. `onprem` queues them for on-prem workers |
-| `MOTUZ_LARGE_JOB_POOL` | `central` | Pool of large cloud-to-cloud jobs, e.g. `aws`; other cloud-to-cloud jobs run centrally |
-| `MOTUZ_LARGE_JOB_BYTES`, `MOTUZ_LARGE_JOB_FILES` | 300 GB, 50000 | "Large": the source has at least this many bytes or files (`rclone size`, at most `MOTUZ_JOB_SIZE_TIMEOUT` = 60 s; slower counts as large) |
-| `MOTUZ_WORKER_LEASE_SECONDS` | 120 | A claimed job fails when its worker has not reported for this long |
-| `MOTUZ_PUBLIC_URL` | the address the worker used | `https://` address of the Motuz server for the token broker URL in job tickets |
-
-With the defaults nothing changes: every job runs on the Motuz server. A job queued for a
-pool without workers waits ("Waiting for a worker of pool ..." in its details).
-
-**Security model**
-
-- Each worker has a credential: `manage.py workers add <name> --pool onprem` prints a
-  secret once; the server stores only its SHA-256. The worker exchanges it at
-  `POST /api/workers/auth` for an access token (10 minutes) that is signed with a key of
-  its own and has the audience `motuz-worker`: user endpoints never accept it, and worker
-  endpoints never accept user tokens. Secrets are compared in constant time.
-- A worker claims jobs of its own pool only (`POST /api/workers/claim`, long poll). A claim
-  hands out one job atomically (`SELECT ... FOR UPDATE SKIP LOCKED` plus a compare-and-set)
-  with a **job ticket**: the job's parameters (type, owner, paths, options), the rclone
-  configuration of that job's own connections (the same `_formatCredentials` as the
-  server; connections using credentials from the home directory are read on the worker,
-  as the owner), the job's rclone performance flags (from the server's `MOTUZ_RCLONE_*`
-  settings and the job's overrides, see "Performance tuning"; workers need no such
-  settings), an expiry and a ticket token. Nothing about other
-  jobs, connections or users. A ticket is returned once and never again.
-- Progress (`POST /api/workers/jobs/<ticket>/progress`, every few seconds) and the result
-  (`.../finish`) need the worker's access token and the ticket token (`X-Motuz-Ticket`) of
-  a job that worker claimed. Progress renews the **lease**; its answer is `continue` or
-  `stop` (the user pressed Stop: the worker kills rclone). A job whose lease expires (the
-  worker died or lost its connection) is marked FAILED with the reason; it is not
-  requeued, because the worker might still be running rclone. A worker that reports after
-  that gets `410 Gone` and stops rclone.
-- OneDrive and Google Drive: rclone on the worker gets a **job-scoped broker token**
-  instead of the connection's broker handle, and the token URL
-  `https://<Motuz server>/api/workers/oauth/token`. That endpoint refreshes only the
-  connection on that side of that running job, with the same broker code as the loopback
-  broker (locking, caching, rotation, own-app credentials); the real refresh token never
-  leaves the server. `/internal` stays unreachable from outside.
-- Tickets and broker tokens die when the job ends, its lease expires or its worker is
-  revoked (`manage.py workers revoke <name>`, which also fails the worker's running jobs).
-- Sign-in, claims and the broker are rate limited; sign-ins, claims, ticket and broker use
-  are logged (logger `motuz.audit`) without secrets.
-
-**On the Motuz server**
-
-```bash
-# .env: send jobs with local paths to the on-prem workers, then ./bin/prod/start.sh
-MOTUZ_LOCAL_JOB_POOL=onprem
-
-# One credential per worker; the secret is printed once
-docker exec motuz_app bash -c 'source ./load-secrets.sh >/dev/null && python3 manage.py workers add proxmox-1 --pool onprem'
-docker exec motuz_app bash -c 'source ./load-secrets.sh >/dev/null && python3 manage.py workers list'
-docker exec motuz_app bash -c 'source ./load-secrets.sh >/dev/null && python3 manage.py workers revoke proxmox-1'
-```
-
-**Installing a worker** (Ubuntu; the same Motuz release and rclone version as the server,
-the same users (SSSD/LDAP) and mounts as the other workers):
-
-```bash
-sudo apt-get install -y python3 sudo unzip curl
-# rclone: the version pinned in deployment/docker/app/Dockerfile, at /usr/local/bin/rclone
-sudo git clone https://github.com/FredHutch/motuz /opt/motuz   # check out the server's release
-
-# An unprivileged account that may run rclone, ls, mkdir and env as any user except root
-# (rclone as the job's owner, like the server's containers do); SETENV: rclone gets its
-# configuration, proxy and CA bundle as variables (sudo --preserve-env=<names>).
-# On Ubuntu 26.04, `sudo bin/systemd/install.sh --worker-only` does this and the rclone
-# download (README, "Install without Docker").
-sudo useradd --system --create-home --home-dir /var/lib/motuz --shell /usr/sbin/nologin motuz
-echo 'motuz ALL=(ALL, !root) NOPASSWD:SETENV: /usr/local/bin/rclone, /usr/bin/ls, /usr/bin/mkdir, /usr/bin/env' \
-    | sudo tee /etc/sudoers.d/motuz-worker
-sudo chmod 440 /etc/sudoers.d/motuz-worker
-sudo visudo -c
-sudo loginctl enable-linger motuz          # user services without a login
-
-# Configuration and the secret from `manage.py workers add` (mode 600)
-sudo -u motuz install -d -m 700 /var/lib/motuz/.config/motuz-worker /var/lib/motuz/.config/systemd/user
-sudo -u motuz sh -c 'umask 077; cat > ~/.config/motuz-worker/credential'   # paste, Ctrl-D
-sudo -u motuz install -m 600 /opt/motuz/src/worker/worker.env.example /var/lib/motuz/.config/motuz-worker/worker.env
-sudo -u motuz editor /var/lib/motuz/.config/motuz-worker/worker.env   # MOTUZ_CENTRAL_URL, proxy, mounts
-sudo -u motuz install -m 644 /opt/motuz/src/worker/motuz-worker.service /var/lib/motuz/.config/systemd/user/
-
-# Check (mounts, sign-in, version), then start
-sudo -u motuz bash -c 'set -a; . ~/.config/motuz-worker/worker.env; python3 $MOTUZ_HOME/src/worker/motuz_worker.py --check'
-sudo -u motuz XDG_RUNTIME_DIR=/run/user/$(id -u motuz) systemctl --user enable --now motuz-worker
-sudo -u motuz XDG_RUNTIME_DIR=/run/user/$(id -u motuz) journalctl --user -u motuz-worker -f
-```
-
-Worker settings (`worker.env`, see `src/worker/worker.env.example`): `MOTUZ_CENTRAL_URL`
-(https only), `MOTUZ_WORKER_CREDENTIAL_FILE` (must be mode 600), `MOTUZ_WORKER_POOL`
-(optional check), `MOTUZ_REQUIRED_PATHS` (mount points that must be mounted before the
-worker claims jobs), `HTTPS_PROXY`/`NO_PROXY` (used by the worker and passed to rclone)
-and `MOTUZ_CA_BUNDLE` (a PEM bundle for the server's certificate, also given to rclone as
-`SSL_CERT_FILE`; it replaces the system roots, so it must contain them, and it must be
-readable by every user, e.g. `/etc/motuz-worker/ca.pem`, because rclone runs as the job's
-owner). Before claiming,
-the worker checks its mounts and that its release (`src/backend/api/version.py`: `VERSION`,
-`WORKER_PROTOCOL`) equals the server's; otherwise it logs why and waits. On SIGTERM it
-stops rclone and reports the job as failed. Exit code 78 (configuration error, revoked
-credential) stops systemd from restarting it.
-
-**Ephemeral workers** (what the EC2 launcher uses): a single-use bootstrap token, valid
-for minutes and optionally bound to one job queued for the same pool, replaces the
-credential:
-
-```bash
-python3 manage.py workers bootstrap --pool aws --job copy:123 --ttl 15m   # prints mzb1....
-# on the new instance (token e.g. from its user data; a file keeps it out of `ps`):
-python3 /opt/motuz/src/worker/motuz_worker.py --bootstrap-token-file /run/motuz-bootstrap --once
-```
-
-The worker exchanges the token (it cannot be used again), claims exactly its job, runs it,
-reports the result and exits; the server then revokes the ephemeral worker. Code can call
-`worker_manager.create_bootstrap_token(pool, job='copy:123', ttl_seconds=900)`.
-
-
-### Temporary EC2 workers
-
-When the Motuz server runs in AWS, each large cloud-to-cloud job can get its own
-short-lived EC2 instance: a remote worker of the pool `aws` that boots, runs exactly this
-job and terminates. The Motuz server itself stays small; the copy runs on a
-network-optimized instance sized for the job. Off by default (`MOTUZ_EC2_WORKERS=false`).
-
-**How it works**
-
-1. A new copy or integrity-check job whose source is large (`MOTUZ_LARGE_JOB_BYTES` /
-   `_FILES`, see "Remote workers") is queued for the pool `MOTUZ_LARGE_JOB_POOL=aws`,
-   with the source size that `rclone size` measured.
-2. Right after (a Celery task, so creating the job does not wait for AWS), the launcher
-   (`src/backend/api/managers/ec2_launcher.py`) starts an instance if fewer than
-   `MOTUZ_EC2_MAX_WORKERS` are running; otherwise the job waits in the queue ("waiting for
-   a free EC2 worker slot") until one ends. It creates a single-use bootstrap token bound
-   to the job (valid for `MOTUZ_EC2_BOOT_TIMEOUT`), puts it into the instance's user data,
-   and calls `RunInstances` with the launch template of the instance type's architecture
-   (`deployment/aws/README.md`), the type from `MOTUZ_EC2_INSTANCE_TYPES`, the worker tags
-   and a `ClientToken` derived from the job, so that a repeated call never starts a
-   second instance for the same job.
-3. The instance (Amazon Linux 2027) restricts instance metadata to root, installs rclone
-   (the version pinned for the server, checksum verified) and Motuz at the server's commit,
-   and runs `motuz_worker.py --bootstrap-token-file ... --once`. The worker exchanges the
-   token, claims its job, reports progress over HTTPS like any remote worker, and exits;
-   then the instance shuts down, which terminates it.
-4. A reaper on the Motuz server (`manage.py ec2 reap --loop`, started by the Celery
-   container every `MOTUZ_EC2_REAP_INTERVAL`) cleans up and starts queued jobs whose
-   turn has come.
-
-The job table shows where a job runs, e.g. "aws · starting worker (c7gn.large)",
-"aws · running on c7gn.2xlarge"; the job dialog shows it as "Runs on".
-
-**Which jobs.** Only cloud-to-cloud jobs whose two connections are HTTPS APIs with
-credentials stored in Motuz: S3 (AWS or an `https://` endpoint on port 443), Azure Blob,
-Google Cloud Storage, Dropbox, OneDrive, Google Drive. The workers reach nothing but port
-443 and have none of the users' files, so large jobs with SFTP, WebDAV, Swift, an S3
-endpoint on another port, or "Credentials from your home directory" run on the Motuz
-server instead. Jobs with a local path never go to EC2 workers: the server refuses to
-start with `MOTUZ_LOCAL_JOB_POOL` set to the EC2 pool.
-
-**Settings** (`.env` of the Motuz server; passed to `app` and `celery`):
-
-| Variable | Default | Meaning |
-|---|---|---|
-| `MOTUZ_EC2_WORKERS` | `false` | `true` launches workers for the jobs of the EC2 pool |
-| `MOTUZ_EC2_POOL` | `aws` | The pool; must equal `MOTUZ_LARGE_JOB_POOL` |
-| `MOTUZ_AWS_REGION` | (required) | Region of the launch templates, e.g. `us-west-2` |
-| `MOTUZ_PUBLIC_URL` | (required) | `https://` address of this server, reachable from the internet on 443 |
-| `MOTUZ_EC2_INSTANCE_TYPES` | `1T:c7gn.large,10T:c7gn.2xlarge,*:c7gn.4xlarge` | Instance type by source size (decimal: `1T` = 10^12 bytes): below 1 TB `c7gn.large`, below 10 TB `c7gn.2xlarge`, else (and when the listing timed out) `c7gn.4xlarge`. Graviton types (`c7gn`, `c8gn`) use the arm64 template, others (`c6in`, `c7i`) the x86_64 one; only types the IAM policy allows can start |
-| `MOTUZ_EC2_MAX_WORKERS` | 2 | Instances at the same time (worker instances without a record count too) |
-| `MOTUZ_EC2_MAX_RUNTIME` | `24h` | An instance running longer is terminated and its job failed with that reason |
-| `MOTUZ_EC2_BOOT_TIMEOUT` | `20m` | Lifetime of the bootstrap token; an instance that has not started its job by then is terminated and the job failed |
-| `MOTUZ_EC2_LAUNCH_TEMPLATE_ARM64`, `_AMD64` | `motuz-worker-arm64`, `motuz-worker` | Launch template names or ids (`lt-...`) |
-| `MOTUZ_EC2_LAUNCH_TEMPLATE_VERSION` | `$Default` | Or `$Latest` or a number (`1` = the Ubuntu 26.04 fallback, also tested end to end 2026-09-28: real copy, hashsum and Google Drive -> S3 broker jobs, no code changes needed) |
-| `MOTUZ_EC2_SUBNET_ID` | (none) | Subnet; unset: EC2 picks a default subnet |
-| `MOTUZ_EC2_REAP_INTERVAL` | `60s` | Reaper period |
-| `MOTUZ_EC2_HALT_DELAY` | `0` | For debugging: minutes a worker waits before shutting down after a failure |
-| `MOTUZ_WORKER_SOURCE` | `https://github.com/dirkpetersen/motuz` | Where workers get Motuz (a GitHub repository is fetched as an archive, anything else with git) |
-| `MOTUZ_WORKER_SOURCE_REF` | the image's commit | Commit, tag or branch; `bin/prod/build.sh` records the commit it builds (`MOTUZ_SOURCE_COMMIT`), which must be pushed to `MOTUZ_WORKER_SOURCE` |
-
-An invalid or inconsistent value stops the app and the Celery worker at startup with a
-message naming the variable. AWS credentials come from the server's instance profile
-(IMDSv2), never from a file.
-
-**Limits and cleanup.** IAM cannot limit the number of instances, and a stop could be
-requested instead of a termination, so Motuz enforces both itself:
-
-- `MOTUZ_EC2_MAX_WORKERS` concurrent instances; further jobs wait queued.
-- On the instance: `shutdown -h +<max runtime + 15 min>` right after boot, and a shutdown
-  when `motuz-worker --once` exits, successful or not. The worker gives up when it has no
-  job after `MOTUZ_EC2_BOOT_TIMEOUT` (also while the server is unreachable). The launch
-  templates set `InstanceInitiatedShutdownBehavior=terminate`; the launcher never passes
-  that parameter (nor any other that would override the template: image, security group,
-  instance profile, key pair, metadata options).
-- The reaper terminates instances whose job ended (finished, failed or stopped), that
-  run longer than `MOTUZ_EC2_MAX_RUNTIME`, that did not start their job within
-  `MOTUZ_EC2_BOOT_TIMEOUT`, that are stopped, and instances with the worker tags
-  (`Project=motuz`, `Component=worker`, `ManagedBy=motuz-central`) that have no record in
-  the `ec2_worker` table and are older than 10 minutes. So one account and region must
-  have at most one Motuz server with EC2 workers. It fails the job of an instance that
-  ended before or while running it, with the reason and the command for its console
-  output (`aws ec2 get-console-output --latest --instance-id ...`; EC2 keeps it only while
-  the instance exists, see `MOTUZ_EC2_HALT_DELAY`).
-- No capacity for a type (`InsufficientInstanceCapacity`, when launching or as the
-  reason an instance ended before claiming its job): the next type of the table is tried
-  once (the last type falls back to the one before it); then the job fails.
-
-**On the instance.** Before anything else a firewall rule (nftables, or iptables with the
-owner match; the Amazon Linux 2027 preview has neither, so nftables is installed with dnf
-first; Ubuntu 26.04's AMI ships `iptables`/`nft` already, so this dnf fallback is AL2027
-only) lets only root reach the instance metadata service (169.254.169.254), which
-serves the user data with the bootstrap token and the (permissionless) instance role; the
-script checks it as an unprivileged account. `motuz-worker` runs as the account `motuz`,
-rclone as `motuzjob` (`MOTUZ_WORKER_RUN_AS`; `motuz` may run only `/usr/local/bin/rclone`
-as `motuzjob` through sudo): the job's owner does not exist on the instance, and the
-instance runs one job of one user. The bootstrap token is the only secret in the user
-data (single use, bound to the job, valid for minutes) and is never printed; the job's
-credentials arrive in the job ticket over HTTPS, as for any remote worker. The user data
-(`src/backend/api/templates/ec2/worker-user-data.sh`, about 10 KB of the 16 KB limit)
-skips the downloads when rclone and Motuz at the right version are already installed, the
-hook for a prebuilt AMI or the Amazon Linux 2027 installer's worker-only mode. Booting
-to a running worker takes about 20 seconds.
-
-**Commands** (in the `motuz_app` or `motuz_celery` container):
-
-```bash
-docker exec motuz_celery bash -c 'source ./load-secrets.sh >/dev/null && python3 manage.py ec2 check'   # IAM: RunInstances dry run per type
-docker exec motuz_celery bash -c 'source ./load-secrets.sh >/dev/null && python3 manage.py ec2 status'  # launches and live worker instances
-docker exec motuz_celery bash -c 'source ./load-secrets.sh >/dev/null && python3 manage.py ec2 reap'    # one reaper pass now
-```
-
-To debug a worker, set `MOTUZ_EC2_HALT_DELAY=30m`: a worker whose setup or job failed
-then stays up that long, and `aws ec2 get-console-output --latest --instance-id <id>` shows
-the boot steps (`motuz-boot: ...`) and the worker's log. The `motuz-worker-ssm-debug`
-policy (`deployment/aws/README.md`) would allow a Session Manager shell, but the Amazon
-Linux 2027 preview instances did not register with Systems Manager in a test; detach the
-policy again afterwards in any case.
-
-**Costs.** Only while instances run: e.g. `c7gn.large` about 0.12 USD/h, `c7gn.4xlarge`
-about 1 USD/h in us-west-2, plus 16 GiB gp3 and a public IPv4 address. With the defaults
-at most two workers of at most 24 hours each run at a time. Keep an AWS budget alert.
-
-
-## Install without Docker (Ubuntu 26.04)
-
-A second way to run Motuz: `systemd --user` services of one dedicated account, `motuz`,
-on Ubuntu 26.04 LTS. Meant for a VM (for example on Proxmox) or a privileged LXC. The
-Docker install above stays the same; both use the same code, the same Traefik flags and
-dynamic configuration, the same rclone and the same PostgreSQL major version.
-
-| Service | Unit (in `~motuz/.config/systemd/user`) | Listens on |
-| --- | --- | --- |
-| PostgreSQL 18 (Ubuntu's binaries, data in `~/data/pg`) | `motuz-postgres` | 127.0.0.1:5432 |
-| Redis 8, the Celery broker (password, append-only file in `~/data/redis`) | `motuz-redis` | a unix socket in `/run/user/<uid>/motuz-redis` only |
-| uWSGI: API, frontend, OAuth token broker (`~/motuz/venv`, `src/backend/wsgi.ini`) | `motuz-app` | 127.0.0.1:5000, 127.0.0.1:5001 |
-| Celery worker | `motuz-celery` | nothing |
-| Traefik 3.7 (the flags of `docker-compose.yml`, `deployment/docker/traefik/dynamic/motuz.yml`) | `motuz-traefik` | :80, :443 |
-
-All five are grouped by `motuz.target`, which starts at boot (`loginctl enable-linger
-motuz`). Only Traefik listens beyond loopback: the sysctl
-`net.ipv4.ip_unprivileged_port_start=80` lets a user service bind ports 80 and 443
-(user services cannot get `CAP_NET_BIND_SERVICE`).
-
-### Install
-
-As root, from any clone of the repository:
-
-```bash
-sudo bin/systemd/install.sh                    # SSSD/Kerberos accounts (Active Directory)
-sudo bin/systemd/install.sh --local-accounts   # also local /etc/shadow accounts (login helper)
-```
-
-`install.sh` checks that it runs on Ubuntu 26.04 and is idempotent (run it again after
-updates; `deploy.sh` warns when it should). It installs the apt packages (PostgreSQL 18
-without Ubuntu's own `main` cluster, whose service is masked like `redis-server`'s,
-Node.js, build tools), the pinned rclone (version and SHA256 from
-`deployment/docker/app/Dockerfile`), Traefik and uv (`deployment/systemd/versions.env`,
-SHA256 checked), the account `motuz` (a system account with a locked password, home
-`/var/lib/motuz`: keep it on local disk), linger, the sudoers rule, the sysctl,
-`/etc/pam.d/motuz` and `/var/lib/motuz-aws-config`. Then, as `motuz`:
-
-```bash
-sudo -iu motuz
-git clone https://github.com/FredHutch/motuz.git ~/motuz
-~/motuz/bin/systemd/deploy.sh            # every update: ~/motuz/bin/systemd/deploy.sh --pull
-```
-
-`deploy.sh` creates `~/motuz/venv` with uv (Python 3.12, the Python of the Docker image,
-installed by uv; Ubuntu's own 3.14 only runs the scripts), installs `requirements.txt`
-(uWSGI is built from source, as in the image), builds the frontend with Ubuntu's Node.js
-22 (`npm ci && npm run build`), creates `~/.config/motuz/motuz.env` (settings, from
-`deployment/systemd/motuz.env.example`) and `secrets.env` (mode 600: the Flask key, the
-database and Redis passwords, empty OAuth client secrets) on the first run and never
-overwrites them, a self-signed certificate in `~/data/certs` if there is none, the
-database cluster, the units, restarts `motuz.target` and checks
-`https://127.0.0.1/api/system/info/`. Settings are the `MOTUZ_*` variables of `.env`
-and `docker-compose.yml`; after editing `motuz.env` run `deploy.sh` again (or
-`systemctl --user restart motuz.target`). Certificates: replace
-`~/data/certs/cert.crt` and `cert.key` and run `systemctl --user restart motuz-traefik`,
-or set `MOTUZ_ACME_DOMAIN` (and `MOTUZ_ACME_EMAIL`) for Let's Encrypt. Open 80/tcp and
-443/tcp in the firewall.
-
-Status and logs (as `motuz`; `sudo -iu motuz` sets no session, `deploy.sh` finds the user
-manager itself):
-
-```bash
-export XDG_RUNTIME_DIR=/run/user/$(id -u)
-systemctl --user status 'motuz*'
-sudo journalctl _SYSTEMD_USER_UNIT=motuz-app.service -f   # as an admin: motuz is a system
-                                                          # account, its logs are in the system journal
-```
-
-### Why a sudoers rule
-
-Every file and rclone operation runs as the logged-in user, so the operating system
-checks the permissions (in Docker, Motuz runs as root for this). Without Docker, the
-account `motuz` gets exactly one rule, `/etc/sudoers.d/motuz`, checked with `visudo -c`:
-
-```
-motuz ALL=(ALL, !root) NOPASSWD:SETENV: /usr/local/bin/rclone, /usr/bin/ls, /usr/bin/mkdir, /usr/bin/env
-```
-
-- `rclone` copies, lists and reads cloud storage; `ls` and `mkdir` browse the local
-  filesystem; `env` starts the small Python readers of the file viewer and of the
-  credentials in the home directory (`python3 -I -S -c ...`).
-- `!root`: never as root. `SETENV`: rclone gets a connection's credentials as
-  `RCLONE_CONFIG_*` variables, passed with `sudo --preserve-env=<names>` (Ubuntu 26.04's
-  default `sudo` is sudo-rs, which ignores `-E`; the classic `sudo` works as well).
-- With the classic `sudo` (Amazon Linux, or Ubuntu's `sudo.ws`) the file also gets
-  `Defaults:motuz !log_allowed`: that `sudo` logs the variables of `--preserve-env` with
-  every allowed command (`ENV=RCLONE_CONFIG_..._SECRET_ACCESS_KEY=...`), which would put
-  the connections' secrets into the journal. Refused commands are still logged; Motuz
-  logs the commands it runs itself, with the credentials masked.
-- `install.sh --sudo-group=GROUP` allows only the members of a group
-  (`(%GROUP, !root)`).
-- Motuz refuses logins as root and as the account it runs as.
-
-This rule lets `motuz` act as any other user, as the root of the Docker install does, so
-treat the account like root: no password (locked), no other use, its home only readable
-by itself.
-
-### Logins (PAM)
-
-Motuz checks passwords with the PAM service `motuz` (`MOTUZ_PAM_SERVICE`,
-`/etc/pam.d/motuz`: Ubuntu's `common-auth` and `common-account`; the Docker install
-keeps using `login`).
-
-- **SSSD / Kerberos (Active Directory)**: join the machine to the directory as usual
-  (`realm join` or your SSSD configuration). `pam_sss` and `pam_krb5` work in the
-  unprivileged app itself.
-- **Local accounts** (`/etc/shadow`): an unprivileged `pam_unix` can only check the
-  password of the account it runs as. `install.sh --local-accounts` installs a small login
-  helper, `motuz-auth.socket` / `motuz-auth@.service`: a socket-activated root service
-  (Python standard library, a root-owned copy in `/usr/local/lib/motuz-auth`) that runs
-  one PAM check per connection on `/run/motuz-auth.sock` (root:motuz, mode 0660; the
-  peer must also be the `motuz` account) and answers yes or no. It refuses root,
-  accounts below `UID_MIN` (system accounts), `nobody` and `motuz` itself, limits requests
-  to 4 KiB, locks a user out for 15 minutes after 5 failed attempts, and never logs
-  passwords. `deploy.sh` sets `MOTUZ_AUTH_HELPER=/run/motuz-auth.sock` when it finds the
-  socket on the first deploy; without it Motuz uses PAM in-process.
-
-### Storage
-
-Mount the shared filesystems on the host (the `/fh/...` mounts of
-`docker-compose.override.yml`) at the same paths and list them in `MOTUZ_REQUIRED_PATHS`
-(commas or colons) in `motuz.env`, as for a remote worker: the worker does not start
-while one is not mounted (`systemctl --user status motuz-celery` says
-which; it retries every 30 seconds), and a job fails with the reason instead of running
-on a half-mounted tree.
-
-### VM or LXC
-
-A VM is preferred. A privileged LXC works too; leave nesting off (nesting in a privileged
-container exposes more of the host's `/proc` and `/sys`); if `systemd --user` services do
-not work there without it, use a VM. In an unprivileged LXC `nesting=1` is fine, but uids
-on shared storage need a 1:1 `lxc.idmap`. Hardening a privileged LXC: keep the default
-AppArmor and seccomp profiles; no nesting, fuse, mount or keyctl features; add
-`lxc.cap.drop: sys_ptrace sys_pacct mknod net_raw syslog wake_alarm block_suspend`;
-mount data with `mountoptions=nosuid;nodev` and `backup=0`; set `lxc.cgroup2.pids.max`;
-use the Proxmox firewall; let only root@pam edit the container's configuration; and set
-`protection: 1`.
-
-More worker machines connect through the HTTPS worker API ("Remote workers (HTTPS
-only)"). On such a host, `sudo bin/systemd/install.sh --worker-only` prepares only what
-the worker needs (the pinned rclone, python3, the `motuz` account with linger, the same
-sudoers rule, `/var/lib/motuz-aws-config`); then configure `worker.env` and start
-`motuz-worker.service` as that section describes. Workers never reach the database or
-the broker, and the central install needs no change for them.
-
-Other distributions: everything distribution specific (packages, the paths of the
-PostgreSQL and Redis binaries, how the distribution's own database service is kept from
-running, the PAM stack, the firewall hint) is in `bin/systemd/distro/<ID>.sh`, chosen by
-`ID` in `/etc/os-release`: `ubuntu.sh` and `amzn.sh` ([Amazon Linux 2027](#install-on-amazon-linux-2027-default-on-ec2)).
-
-### Migrating from the docker install
-
-`bin/systemd/migrate_from_docker.sh` moves the data, the secrets and the settings:
-
-```bash
-# 1. On the docker host, as root, with Motuz running:
-sudo bin/systemd/migrate_from_docker.sh export --out /root/motuz-export.tar.gz
-docker-compose down            # if the new install is on the same host (ports 80/443)
-
-# 2. On the new host: install.sh, the clone and a first deploy.sh (above), then
-sudo install -o motuz -m 600 /root/motuz-export.tar.gz /var/lib/motuz/
-sudo -iu motuz ~/motuz/bin/systemd/migrate_from_docker.sh import ~/motuz-export.tar.gz
-```
-
-The export holds the database as a `pg_dump` dump with the row count of every table, the
-Flask secret key (it signs the login tokens: sessions stay valid), the SMTP password, the
-OAuth client secrets, the `MOTUZ_*` settings of the running app container, Traefik's
-`acme.json` and `certs/cert.*`, and the list of the app container's mounts (recreate them
-at the same paths). It is secret: delete it after the import. The import refuses a
-database at a migration the new checkout does not know (check out the Docker install's
-release, or a newer one), recreates the database with `pg_restore` (owned by
-`motuz_user`), checks the row counts, writes the secrets and settings and runs
-`deploy.sh`, which applies newer migrations.
-
-The data directory is never copied: the Docker image is Alpine (musl libc) and Ubuntu
-uses glibc, so text sorts differently and copied indexes on text columns would be
-corrupt. A dump and restore rebuilds every index.
-
-### Tests of this install
-
-`test/e2e/run_systemd.sh` starts an Ubuntu 26.04 cloud image as a VM (QEMU/KVM in a
-container, `test/e2e/systemd/vm.sh`; needs docker and `/dev/kvm`), runs `install.sh
---local-accounts` and `deploy.sh` in it, and runs the same end-to-end suites as
-`test/e2e/run.sh` against it (`MOTUZ_E2E_TARGET=systemd`), plus security checks
-(`test/e2e/systemd/security_test.sh`). `test/e2e/systemd/migration_test.sh` migrates
-the Docker e2e stack into such a VM.
-
-
-## Install on Amazon Linux 2027 (default on EC2)
-
-On EC2, install Motuz on Amazon Linux 2027 (AL2027, a public preview since September 2026)
-with the same scripts as [Install without Docker (Ubuntu 26.04)](#install-without-docker-ubuntu-2604):
-`systemd --user` services of the account `motuz`, the same units, settings
-(`~/.config/motuz/motuz.env`, including the `MOTUZ_RCLONE_*` defaults), sudoers rule,
-login helper, migration and update steps. They start faster than containers, run as fast,
-and work with SELinux enforcing. What differs is in `bin/systemd/distro/amzn.sh`:
-
-| | Amazon Linux 2027 | Ubuntu 26.04 |
-| --- | --- | --- |
-| PostgreSQL 18 | `postgresql18-server` (binaries in `/usr/bin`) | `postgresql-18` |
-| Celery broker (`motuz-redis`) | **Valkey 9** (`valkey-server`; AL2027 has neither RabbitMQ nor Redis) | Redis 8 |
-| Python of `~/motuz/venv` | the system's **Python 3.14** (`python3`, `python3-devel` for uWSGI) | Python 3.12 from uv |
-| Node.js (frontend build) | `nodejs24`, `nodejs24-npm` | `nodejs` 22 |
-| `/etc/pam.d/motuz` | `password-auth` (authselect) | `common-auth`, `common-account` |
-| SELinux | enforcing, nothing to change | (AppArmor, nothing to change) |
-
-rclone, Traefik and uv are the pinned downloads with their SHA256 in both cases (never
-AL2027's own `rclone` package, which is another version).
-
-**Broker.** Valkey speaks the Redis protocol, so Celery uses its Redis transport
-(`MOTUZ_CELERY_BROKER_URL=redis+socket://...`, written to `broker.env` by `deploy.sh`; the
-Docker install keeps `amqp://` RabbitMQ). The Redis transport redelivers a task that a
-worker has fetched but not acknowledged within `visibility_timeout`. Motuz acknowledges a
-task when it starts (Celery's default, `acks_late` off), so only jobs that wait behind
-other long jobs in the worker's prefetch are affected; their timeout is 30 days
-(`MOTUZ_CELERY_VISIBILITY_TIMEOUT`, seconds), far above any job. Tasks are not acknowledged
-late on purpose: a job whose worker dies is failed, not silently run again days later.
-Stopping a job (`revoke(terminate=True)`) goes through Celery's remote control, which the
-Redis transport supports (pub/sub on the same socket).
-
-**Python.** `requirements.txt` is compiled for 3.12, the Python of the Docker image. On
-AL2027 all backend unit tests and the end-to-end suites pass on its Python 3.14 with these
-pins (uWSGI 2.0.31 builds), so `deploy.sh` uses `/usr/bin/python3.14`
-(`DISTRO_PYTHON`): it gets the distribution's security updates and needs no download. On
-Ubuntu, `deploy.sh` keeps uv's 3.12.
-
-**SELinux** stays enforcing; no booleans, file contexts or policy modules are needed.
-`install.sh` runs `restorecon` on everything it writes. The account's user services
-(uWSGI, Celery, rclone, Traefik, PostgreSQL, Valkey) run as `unconfined_u` like any login
-of the account, `sudo` to the logged-in user keeps that context, and the login helper is a
-system service (`unconfined_service_t`) that may read `/etc/shadow`. Traefik binds 80 and
-443 through the same sysctl as on Ubuntu. Check with `sudo ausearch -m avc -ts boot`
-(empty). PostgreSQL and Valkey stay user services of `motuz`, as on Ubuntu, rather than
-the packages' system services (which would run confined as `postgresql_t` / `redis_t`):
-then `deploy.sh` manages everything as the account without root, both distributions
-share one design, and the database and the broker are reachable only by that account.
-
-### Install on an instance
-
-Launch AL2027 (the AMI of the SSM parameter
-`/aws/service/ami-amazon-linux-latest/al2027-preview-ami-kernel-default-arm64`, or
-`-x86_64`), at least 4 GiB of memory (for example c7g.large) and a 16 GiB root volume,
-IMDSv2 only, an instance profile with `AmazonSSMManagedInstanceCore` for Session Manager
-(no SSH), and a security group with 443 (and 80, for the redirect and Let's Encrypt) open
-to your users only. As user data, `deployment/aws/user-data-al2027.sh` (edit `REPO`,
-`BRANCH` and `INSTALL_ARGS` first) clones the repository to `/root/motuz-install` and
-runs `bin/systemd/bootstrap.sh`, which runs `install.sh`, clones the account's
-`~/motuz` and runs `deploy.sh`; the output is in `/var/log/cloud-init-output.log`:
-
-```bash
-aws ec2 run-instances --image-id resolve:ssm:/aws/service/ami-amazon-linux-latest/al2027-preview-ami-kernel-default-arm64 \
-    --instance-type c7g.large --iam-instance-profile Name=<profile with AmazonSSMManagedInstanceCore> \
-    --security-group-ids <sg> --user-data file://deployment/aws/user-data-al2027.sh \
-    --metadata-options HttpTokens=required,HttpPutResponseHopLimit=1,HttpEndpoint=enabled \
-    --block-device-mappings 'DeviceName=/dev/xvda,Ebs={VolumeSize=20,VolumeType=gp3,Encrypted=true}' \
-    --tag-specifications 'ResourceType=instance,Tags=[{Key=Name,Value=motuz}]'
-```
-
-On an existing instance, as root (the same as the user data does):
-
-```bash
-sudo dnf -y install git
-sudo git clone --branch <branch> https://github.com/<you>/motuz.git /root/motuz-install
-sudo /root/motuz-install/bin/systemd/bootstrap.sh --repo=https://github.com/<you>/motuz.git --branch=<branch> --local-accounts
-```
-
-`install.sh` and `bootstrap.sh` run from root's own clone, never from the account's
-`~/motuz` (the account must not be able to change what root runs). Then add users
-(`useradd` + `passwd` with `--local-accounts`, or join the directory with
-`realm join` / SSSD and `authselect select sssd`, without `--local-accounts`), set
-`MOTUZ_ACME_DOMAIN` for a Let's Encrypt certificate (port 80 must be reachable) and
-connect with `aws ssm start-session --target <instance id>`.
-
-**Updates**: `sudo git -C /root/motuz-install pull && sudo /root/motuz-install/bin/systemd/bootstrap.sh
---local-accounts` (idempotent: `install.sh` again, `git pull --ff-only` of `~/motuz`,
-`deploy.sh`), or only `sudo -iu motuz ~/motuz/bin/systemd/deploy.sh --pull` when the
-installed pieces did not change (`deploy.sh` warns otherwise). `dnf upgrade` keeps
-PostgreSQL 18 and Python 3.14; after a Python minor change `deploy.sh` rebuilds the venv.
-
-**Uninstall**: `sudo bin/systemd/uninstall.sh` stops Motuz and removes the units, the
-sudoers rule, the PAM service, the sysctl file and the login helper, and unmasks the
-distribution's PostgreSQL and Valkey services; the account and its data stay.
-`--purge --yes` also deletes the account, its home (database, secrets, certificates) and
-the pinned binaries. Packages stay installed.
-
-### Remote workers on AL2027
-
-`install.sh --worker-only` installs a [remote worker](#remote-workers-https-only) without
-the server: `python3`, `sudo`, the pinned rclone, the account with the same sudoers rule,
-and the user unit `motuz-worker.service` with `~/.config/motuz-worker/worker.env`
-(`MOTUZ_HOME` = the checkout it runs from, which must be readable by the account, for
-example a root-owned clone in `/opt/motuz`). Non-interactive, for example from user data:
-
-```bash
-git clone --branch <release> https://github.com/<you>/motuz.git /opt/motuz
-# a permanent worker: starts motuz-worker with the secret of `manage.py workers add`
-/opt/motuz/bin/systemd/install.sh --worker-only --central-url=https://motuz.example.org --pool=onprem --credential-file=/root/credential
-# a temporary worker: one job with a bootstrap token, then e.g. shutdown
-/opt/motuz/bin/systemd/install.sh --worker-only --central-url=https://motuz.example.org --pool=aws
-/opt/motuz/bin/systemd/worker_once.sh --bootstrap-token-file=/run/motuz-bootstrap
-```
-
-`worker_once.sh` moves the token into the account's private runtime directory and runs
-`motuz_worker.py --bootstrap-token-file ... --once` as the transient user service
-`motuz-worker-once` (so it runs as the account, in its user manager, not in cloud-init's
-context), deletes the token and exits with the worker's exit code (0 done, 1 error, 3 no
-job, 78 configuration error).
-
-`--run-as=NAME` makes a cloud-to-cloud worker like the [temporary EC2
-workers](#temporary-ec2-workers): rclone runs as the system account NAME (created, no
-shell) instead of the jobs' owners, the sudoers rule allows only `/usr/local/bin/rclone`
-as NAME, and `worker.env` gets `MOTUZ_WORKER_RUN_AS` (local jobs and credentials from a
-home directory are refused). A prebuilt AMI for those workers: `install.sh --worker-only
---run-as=motuzjob` from a checkout in `/opt/motuz` at the server's release, plus
-`/opt/motuz/.motuz-source` with `<source url> <ref>`; the launcher's user data then skips
-its downloads.
-
-### Tests on AL2027
-
-`test/e2e/run_systemd.sh --distro=al2027` runs the same suites as for Ubuntu against an
-AL2027 container with systemd as PID 1 (`test/e2e/systemd/container.sh`,
-`al2027.Dockerfile`: privileged, its own network namespace, so it needs no free ports on
-the host). There is no AL2027 VM image outside EC2 and a container cannot enforce SELinux,
-so SELinux is tested on an instance: the same `run_systemd.sh --inside-setup` and
-`--inside` run there as root, then `ausearch -m avc` must be empty.
-`test/e2e/systemd/worker_host_test.sh` (after `run_systemd.sh --distro=al2027 --keep`)
-installs a worker with `install.sh --worker-only` in a second container that shares the
-first one's network, runs a job there and one with `worker_once.sh`; `--inside` does the
-same on the server itself (e.g. on the instance).
-
+The install without Docker takes the same settings in `motuz.env` and `secrets.env` with
+`MOTUZ_DATABASE_MODE=external` (see [Steps as the motuz account](#steps-as-the-motuz-account)).
 
 ## Developer Installation
 
@@ -1412,7 +1831,6 @@ MOTUZ_HOST='0.0.0.0' ./bin/dev/frontend_start.sh
 MOTUZ_HOST='0.0.0.0' ./bin/dev/backend_start.sh
 ```
 
-
 ## Examples
 
 ### How to use the API
@@ -1449,10 +1867,7 @@ curl -X POST "https://example.com/api/auth/login/" \
 
 - The `refresh_token` has longer validity, say T days. Please note that the `POST /api/auth/refresh/` endpoint issues a new `refresh_token` as well, so if the users login at least once every T days, they will never be logged out.
 
-
-
 ## Folder structure
-
 
 ### Overview
 
@@ -1467,7 +1882,6 @@ curl -X POST "https://example.com/api/auth/login/" \
 | `test/` | All test code in one place |
 | `test/frontend/` | Frontend testing |
 | `test/backend/` | Backend testing |
-
 
 ### Frontend folder structure (inside `/src/frontend/`)
 
@@ -1485,7 +1899,6 @@ curl -X POST "https://example.com/api/auth/login/" \
 | `js/views/` | Motuz-Specific view and business logic |
 | `webpack/` | Webpack configurations (For JS bundling) |
 
-
 ### Backend folder structure (inside `/src/backend/`)
 
 | Folder | Description |
@@ -1498,7 +1911,6 @@ curl -X POST "https://example.com/api/auth/login/" \
 | `api/views/` | API Endpoints for Swagger |
 | `migrations/` | Database Migrations |
 
-
 ### Temp folders
 
 Additional temporary folders - ignore and do not commit
@@ -1508,9 +1920,6 @@ Additional temporary folders - ignore and do not commit
 | `__pycache__/` | Python Bytecode |
 | `node_modules/` | JavaScript dependencies |
 | `venv/` | Python dependencies |
-
-
-
 
 ## Other resources
 

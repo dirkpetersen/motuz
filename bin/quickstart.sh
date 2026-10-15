@@ -4,6 +4,10 @@
 # - Can be called as many times as required
 # - Can bootstrap an empty system
 #
+# This is the DOCKER install, the alternative. The default install of Motuz needs no Docker:
+# `sudo bin/systemd/bootstrap.sh --repo=URL --branch=B` on Ubuntu 26.04 or Amazon Linux 2027
+# (README, "Install (default: without Docker)").
+#
 # Example
 # ./quickstart.sh
 
@@ -124,6 +128,7 @@ start() {
 }
 
 
+_color_yellow "Note: this sets up the Docker install (the alternative). The default install runs without Docker: sudo bin/systemd/bootstrap.sh (README, 'Install (default: without Docker)')."
 install_docker
 install_docker_compose
 create_folders
