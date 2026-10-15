@@ -113,10 +113,15 @@ if [ "$PURGE" = 1 ] && [ "$BROKER_MODE" = system ]; then
     redis_pw=$(env_get "/etc/motuz/handoff-$ACCOUNT.env" MOTUZ_REDIS_PASSWORD)
     redis_sock=$(env_get "/etc/motuz/handoff-$ACCOUNT.env" MOTUZ_REDIS_SOCKET)
     if valid_secret "$redis_pw" && [ -S "$redis_sock" ]; then
+        deleted=0
         for pattern in 'celery*' '_kombu.*' 'unacked*' 'kombu*'; do
-            REDISCLI_AUTH="$redis_pw" redis-cli --user motuz -s "$redis_sock" --scan --pattern "$pattern" 2>/dev/null \
-                | while IFS= read -r key; do REDISCLI_AUTH="$redis_pw" redis-cli --user motuz -s "$redis_sock" DEL "$key" >/dev/null; done || true
+            keys=$(REDISCLI_AUTH="$redis_pw" redis-cli --user motuz -s "$redis_sock" --scan --pattern "$pattern" 2>/dev/null || true)
+            while IFS= read -r key; do
+                [ -n "$key" ] || continue
+                REDISCLI_AUTH="$redis_pw" redis-cli --user motuz -s "$redis_sock" DEL "$key" >/dev/null && deleted=$((deleted + 1))
+            done <<< "$keys"
         done
+        echo "    deleted $deleted Motuz keys from the system Redis"
     else
         warn "could not delete Motuz's keys from the system Redis (no handoff file or socket): redis-cli --scan for celery*, _kombu.*, unacked*"
     fi

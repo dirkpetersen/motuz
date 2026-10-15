@@ -133,7 +133,7 @@ setup_system_postgres() {
 
     # Something else may use this cluster already: do not take it over silently
     others=$(as_postgres psql -X -d postgres -tAc "SELECT string_agg(datname, ', ') FROM pg_database WHERE datname NOT IN ('postgres', 'template0', 'template1', '$db')")
-    if [ "$PG_OPTION" != system ]; then
+    if [ "$PG_OPTION" != system ] && [ "$EXISTING_PG" != system ]; then
         if [ -n "$others" ] || non_loopback "$listen"; then
             die "the system PostgreSQL looks in use by something else (databases: ${others:-none besides the standard ones}; listen_addresses = '$listen'). Motuz would only add the role $dbuser, the database $db and pg_hba.conf lines for them and set listen_addresses to localhost; if that is fine run install.sh --system-postgres, otherwise --private-postgres"
         fi
@@ -246,7 +246,7 @@ redis_in_use() {
 setup_system_redis() {
     local password hash conf=/etc/redis/motuz.conf reason
     log "Redis: the distribution's service (system mode, unix socket $SYSTEM_REDIS_SOCKET)"
-    if [ "$REDIS_OPTION" != system ] && reason=$(redis_in_use); then
+    if [ "$REDIS_OPTION" != system ] && [ "$EXISTING_REDIS" != system ] && reason=$(redis_in_use); then
         die "the system Redis looks in use by something else ($reason). Motuz would switch it to a unix socket only (port 0) with the default user off; if that is fine run install.sh --system-redis, otherwise --private-redis"
     fi
     # Joining the group means restarting the account's user manager, which ends running jobs
