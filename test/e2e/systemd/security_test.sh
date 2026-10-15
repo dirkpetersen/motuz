@@ -83,7 +83,7 @@ if [ "$DB_MODE" = system ]; then
     check "system PostgreSQL: listens on loopback only" \
         bash -c "! ss -ltnH | awk '{print \$4}' | grep -E ':\$DB_PORT\$' | grep -vE '^(127\.|\[::1\])' | grep -q ."
     check "system PostgreSQL: pg_hba has our scram lines and nothing weaker for motuz_user" \
-        bash -c "hba=\$(cd /; runuser -u postgres -- psql -X -d postgres -tAc 'SHOW hba_file'); grep -q '^host motuz motuz_user 127.0.0.1/32 scram-sha-256' \$hba && ! grep -E '^host .*motuz_user.* (trust|password|md5)\$' \$hba"
+        bash -c "hba=\$(cd /; runuser -u postgres -- psql -X -p \$DB_PORT -d postgres -tAc 'SHOW hba_file'); grep -q '^host motuz motuz_user 127.0.0.1/32 scram-sha-256' \$hba && ! grep -E '^host .*motuz_user.* (trust|password|md5)\$' \$hba"
     check "system PostgreSQL: motuz_user logs in on TCP, is no superuser, owns the database" \
         bash -c "[ \"\$(PGPASSWORD=\$DB_PW psql -X -h 127.0.0.1 -p \$DB_PORT -U motuz_user -d motuz -tAc \"select rolsuper::text || (select pg_get_userbyid(datdba) from pg_database where datname='motuz') from pg_roles where rolname='motuz_user'\")\" = falsemotuz_user ]"
     check "system PostgreSQL: a wrong password and a local user without a role are refused" \

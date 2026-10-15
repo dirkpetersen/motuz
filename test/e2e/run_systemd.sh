@@ -72,6 +72,8 @@ if [ "$MODE" = host ]; then
             mkdir -p "$LOGS"
             "$VM" ssh "sudo tar -C $INSIDE_ROOT -czf - logs 2>/dev/null" 2>/dev/null | tar -C "$LOGS" -xzf - --strip-components=1 2>/dev/null || true
             "$VM" ssh "sudo journalctl --no-pager -o short-iso _UID=\$(id -u $ACCOUNT) 2>/dev/null; sudo journalctl --no-pager -o short-iso -u motuz-auth.socket -u 'motuz-auth@*' 2>/dev/null" > "$LOGS/journal.log" 2>/dev/null || true
+            # why a user manager or a system service failed (also when install.sh did not finish)
+            "$VM" ssh "sudo systemctl --no-pager -l status 'user@*' 'user-runtime-dir@*' 2>&1; sudo systemctl --failed --no-pager 2>&1; sudo journalctl --no-pager -o short-iso -b -p warning 2>&1 | tail -150; sudo journalctl --no-pager -o short-iso -u 'user@*' -u 'user-runtime-dir@*' 2>&1 | tail -100" > "$LOGS/system-journal.log" 2>&1 || true
             if [ "$KEEP" = 1 ]; then
                 echo "VM left running (--keep): $VM ssh; remove it with $VM down"
             else
