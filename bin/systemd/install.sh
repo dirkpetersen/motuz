@@ -376,6 +376,6 @@ distro_firewall_hint
 cat <<EOF
 
 Next, as $ACCOUNT (sudo -iu $ACCOUNT, or sudo machinectl shell $ACCOUNT@):
-    git clone https://github.com/FredHutch/motuz.git ~/motuz    # or your fork / branch
+    git clone https://github.com/dirkpetersen/motuz.git ~/motuz    # or your fork / branch
     ~/motuz/bin/systemd/deploy.sh
 EOF

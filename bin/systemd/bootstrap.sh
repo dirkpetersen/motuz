@@ -7,7 +7,7 @@
 # EC2)".
 #
 # Usage: sudo bin/systemd/bootstrap.sh [--repo=URL] [--branch=NAME] [install.sh options]
-#   --repo=URL      the repository the account clones (default https://github.com/FredHutch/motuz.git),
+#   --repo=URL      the repository the account clones (default https://github.com/dirkpetersen/motuz.git),
 #                   or the absolute path of a local clone or mirror the account can read
 #   --branch=NAME   its branch (default: the remote's default branch)
 #   other options (--local-accounts, --sudo-group=GROUP, --user=NAME, --home=DIR,
@@ -16,7 +16,7 @@
 set -euo pipefail
 source "$(dirname "$0")/_lib.sh"
 
-REPO_URL=https://github.com/FredHutch/motuz.git
+REPO_URL=https://github.com/dirkpetersen/motuz.git
 BRANCH=""
 ACCOUNT=motuz
 INSTALL_ARGS=()

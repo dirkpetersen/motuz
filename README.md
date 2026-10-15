@@ -182,7 +182,7 @@ What `install.sh` does as root, in order, for an admin who wants to run the comm
 (replace the variables first; each step is idempotent). Versions and checksums are not
 repeated here: they are in `deployment/systemd/versions.env` (Traefik, uv) and in the `ARG
 RCLONE_*` lines of `deployment/docker/app/Dockerfile` (rclone), which the commands read.
-Work from root's own clone: `git clone https://github.com/FredHutch/motuz.git /root/motuz-install; cd /root/motuz-install`.
+Work from root's own clone: `git clone https://github.com/dirkpetersen/motuz.git /root/motuz-install; cd /root/motuz-install`.
 
 **1. Packages.**
 
@@ -383,7 +383,7 @@ joining a directory (`realm join`), mounting shared filesystems, and OS updates 
 
 ```bash
 sudo -iu motuz          # or: sudo machinectl shell motuz@
-git clone https://github.com/FredHutch/motuz.git ~/motuz        # or your fork / branch
+git clone https://github.com/dirkpetersen/motuz.git ~/motuz        # or your fork / branch
 ~/motuz/bin/systemd/deploy.sh            # every update: ~/motuz/bin/systemd/deploy.sh --pull
 ```
 
@@ -472,7 +472,7 @@ place, clone the repository and start it there:
 ```bash
 curl -fsSL https://claude.ai/install.sh | bash
 export PATH="$HOME/.local/bin:$PATH"; echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.profile
-git clone https://github.com/FredHutch/motuz.git ~/motuz            # or your fork / branch
+git clone https://github.com/dirkpetersen/motuz.git ~/motuz            # or your fork / branch
 install -d -m 700 ~/.claude && install -m 600 ~/motuz/deployment/systemd/claude/settings.json ~/.claude/settings.json
 cd ~/motuz && claude        # sign in when asked (browser on another machine: use the URL it prints)
 ```
@@ -1276,7 +1276,7 @@ the same users (SSSD/LDAP) and mounts as the other workers):
 ```bash
 sudo apt-get install -y python3 sudo unzip curl
 # rclone: the version pinned in deployment/docker/app/Dockerfile, at /usr/local/bin/rclone
-sudo git clone https://github.com/FredHutch/motuz /opt/motuz   # check out the server's release
+sudo git clone https://github.com/dirkpetersen/motuz /opt/motuz   # check out the server's release
 
 # An unprivileged account that may run rclone, ls, mkdir and env as any user except root
 # (rclone as the job's owner, like the server's containers do); SETENV: rclone gets its
@@ -1472,7 +1472,7 @@ no Docker, is [Install (default: without Docker)](#install-default-without-docke
 - Run the following command
 
 ```bash
-git clone https://github.com/FredHutch/motuz.git
+git clone https://github.com/dirkpetersen/motuz.git
 cd motuz
 ./bin/quickstart.sh
 ```
@@ -1619,7 +1619,7 @@ and `celery` services.
 Clone the repository as follows:
 
 ```bash
-git clone https://github.com/FredHutch/motuz.git
+git clone https://github.com/dirkpetersen/motuz.git
 cd motuz
 ```
 
