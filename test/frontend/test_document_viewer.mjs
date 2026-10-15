@@ -73,6 +73,11 @@ test('CSS from documents loses every url() except the page\'s own blob: URLs', (
     assert.equal(stripCssUrls('background-image: image-set("https://evil/x.png" 1x)', blob), 'background-image: none');
     assert.equal(stripCssUrls('background: \\75 rl(https://evil/x)', blob), 'background: none');
     assert.ok(!/url\(/i.test(stripCssUrls('background: url(https://evil/x', blob)));
+    // escapes of non-hex characters only drop the backslash: u\rl( is url(, @im\port is @import
+    assert.equal(stripCssUrls('background: u\\rl(https://evil/x)', blob), 'background: none');
+    assert.equal(stripCssUrls('background: \\u\\r\\l(https://evil/x)', blob), 'background: none');
+    assert.equal(stripCssUrls('@im\\port "https://evil/x.css"; p{}', blob), ' p{}');
+    assert.equal(stripCssUrls('background: ur\\6c(https://evil/x)', blob), 'background: none');
     assert.equal(stripCssUrls('font-family: x; src: url(data:font/woff2;base64,AAAA)', null), 'font-family: x; src: none');
     assert.equal(stripCssUrls(null), '');
 });

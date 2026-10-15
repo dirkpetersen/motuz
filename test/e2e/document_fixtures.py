@@ -253,6 +253,37 @@ def docx():
     })
 
 
+def docx_polyglot():
+    """
+    A DOCX whose [Content_Types].xml declares text/html for its pictures: image1 is a
+    real PNG with an HTML page appended (a polyglot), image2 is only HTML. docx-preview
+    makes their blob: URLs with the declared type, so the viewer must re-type the first
+    from its bytes (image/png) and not show the second at all.
+    """
+    html = b'<html><body><script>window.__motuzPolyglot = 1</script></body></html>'
+    body = ''.join([
+        _w_para(_w_run('Polyglot test')),
+        _w_para(_w_image('rId4', name='polyglot')),
+        _w_para(_w_image('rId5', name='htmlonly')),
+    ])
+    document = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+                '<w:document xmlns:w="{}" xmlns:r="{}" xmlns:a="{}" xmlns:pic="{}" xmlns:wp="{}"><w:body>{}'
+                '<w:sectPr><w:pgSz w:w="12240" w:h="15840"/></w:sectPr></w:body></w:document>').format(W, REL, A, PIC, WP, body)
+    return _zip({
+        '[Content_Types].xml': _content_types(
+            [('/word/document.xml', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml')],
+            [('dat', 'text/html')]),
+        '_rels/.rels': _root_rels('word/document.xml'),
+        'word/document.xml': document,
+        'word/_rels/document.xml.rels': _rels([
+            ('rId4', 'image', 'media/image1.dat', False),
+            ('rId5', 'image', 'media/image2.dat', False),
+        ]),
+        'word/media/image1.dat': png() + html,
+        'word/media/image2.dat': html,
+    })
+
+
 def xlsx(data_rows=6000, wide_cols=230):
     """
     Sheets Summary (strings, formatted numbers, a date, a formula whose cached value
@@ -406,6 +437,7 @@ def fixtures():
         # 6 MiB, above the e2e stack's MOTUZ_VIEW_DOCUMENT_MAX_BYTES=4M: still opens (ranges)
         'big.pdf': pdf(pages=40, padding=6 * MiB, hostile=False),
         'letter.docx': docx(),
+        'polyglot.docx': docx_polyglot(),
         'numbers.xlsx': xlsx(),
         'slides.pptx': pptx(),
         'legacy.doc': b'\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1' + b'\x00' * 1024,

@@ -38,3 +38,13 @@ export function imageNeighbors(files, currentIndex) {
         nextIndex: at < indexes.length - 1 ? indexes[at + 1] : null,
     };
 }
+
+/**
+ * The index in `files` of the file called `name` (null if it is not there): the pane
+ * may have been refreshed while the viewer was open, so a position remembered from
+ * before is looked up again by name.
+ */
+export function rowIndexOf(files, name) {
+    const index = (files || []).findIndex(file => file && file.name === name);
+    return index < 0 ? null : index;
+}

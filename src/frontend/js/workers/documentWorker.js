@@ -78,11 +78,11 @@ async function sheet(data, container) {
 function pptx(data, container) {
     const {files} = openZip(data, container, 'pptx');
     const {slides, images} = pptxOutline(files);
-    const pictures = {};
+    const pictures = new Map(); // part names are data: never an object's property names
     const transfer = [];
     for (const [part, {mime, bytes}] of Object.entries(images)) {
         const copy = bytes.slice();
-        pictures[part] = {mime, bytes: copy};
+        pictures.set(part, {mime, bytes: copy});
         transfer.push(copy.buffer);
     }
     return {result: {slides, pictures}, transfer};

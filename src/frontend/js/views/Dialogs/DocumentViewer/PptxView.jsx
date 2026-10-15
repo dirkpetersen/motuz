@@ -20,9 +20,9 @@ const UNSUPPORTED_LABELS = {
 export default class PptxView extends React.Component {
     constructor(props) {
         super(props);
-        this.urls = {};
-        for (const [part, {mime, bytes}] of Object.entries(props.pictures || {})) {
-            this.urls[part] = URL.createObjectURL(new Blob([bytes], {type: mime}));
+        this.urls = new Map(); // part name -> blob: URL (part names are data: a Map, not an object)
+        for (const [part, {mime, bytes}] of (props.pictures || new Map())) {
+            this.urls.set(part, URL.createObjectURL(new Blob([bytes], {type: mime})));
         }
         this.cards = {};
         this.stage = null;
@@ -36,7 +36,7 @@ export default class PptxView extends React.Component {
     }
 
     componentWillUnmount() {
-        for (const url of Object.values(this.urls)) {
+        for (const url of this.urls.values()) {
             URL.revokeObjectURL(url);
         }
     }
@@ -136,10 +136,10 @@ export default class PptxView extends React.Component {
                 </div>
             );
         }
-        if (item.type === 'image' && this.urls[item.part]) {
+        if (item.type === 'image' && this.urls.has(item.part)) {
             return (
                 <figure key={index} className='pptx-viewer-picture'>
-                    <img src={this.urls[item.part]} alt={item.part.split('/').pop()} draggable={false} />
+                    <img src={this.urls.get(item.part)} alt={item.part.split('/').pop()} draggable={false} />
                 </figure>
             );
         }
@@ -153,6 +153,6 @@ export default class PptxView extends React.Component {
 
 PptxView.defaultProps = {
     slides: [],
-    pictures: {},
+    pictures: new Map(),
     onInfo: null,
 };

@@ -4,6 +4,7 @@ import createDOMPurify from 'dompurify';
 
 import { SAFE_LINK_REL, fragmentTarget, safeLinkUrl } from 'utils/viewerKind.js';
 import { stripCssUrls } from 'utils/cssSafe.js';
+import { blobUrlsIn, retypeBlobUrl } from 'utils/docxPictures.js';
 
 const RENDER_TIMEOUT_MS = 30000;
 
@@ -134,6 +135,7 @@ export default class DocxView extends React.Component {
         super(props);
         this.state = {status: 'rendering', error: null, removedLinks: 0};
         this.host = null;
+        this.urls = new Set(); // blob: URLs made for this document, revoked on close
         this.unmounted = false;
         this.onClick = (event) => this.handleClick(event);
     }
@@ -147,11 +149,67 @@ export default class DocxView extends React.Component {
         clearTimeout(this.timer);
         if (this.shadow) {
             this.shadow.removeEventListener('click', this.onClick);
-            // docx-preview's blob: URLs (pictures)
-            for (const img of this.shadow.querySelectorAll('img[src^="blob:"]')) {
-                URL.revokeObjectURL(img.getAttribute('src'));
+        }
+        this.revokeAll();
+    }
+
+    /** Every blob: URL this view still owns (pictures, VML pictures, CSS images) */
+    revokeAll() {
+        for (const url of this.urls) {
+            URL.revokeObjectURL(url);
+        }
+        this.urls.clear();
+    }
+
+    /**
+     * Every picture URL docx-preview made carries the content type the document
+     * declared. Re-typed from the bytes (or removed): see utils/docxPictures.js.
+     * Covers img, VML/SVG image elements and the url()s of the document's CSS.
+     */
+    async retypePictures(body, css) {
+        const deps = {
+            fetchBytes: async url => new Uint8Array(await (await fetch(url)).arrayBuffer()),
+            makeUrl: (bytes, mime) => {
+                const url = URL.createObjectURL(new Blob([bytes], {type: mime}));
+                this.urls.add(url);
+                return url;
+            },
+            revoke: url => { URL.revokeObjectURL(url); this.urls.delete(url); },
+        };
+        const cache = new Map();
+        const retype = (url) => {
+            if (!cache.has(url)) cache.set(url, retypeBlobUrl(url, deps));
+            return cache.get(url);
+        };
+        const prefix = blobPrefix();
+        for (const img of body.querySelectorAll('img')) {
+            const src = img.getAttribute('src');
+            if (!src || !src.startsWith(prefix)) continue;
+            const result = await retype(src);
+            if (result) {
+                img.setAttribute('src', result.url);
+            } else {
+                img.removeAttribute('src');
             }
         }
+        for (const image of body.querySelectorAll('image')) {
+            for (const name of ['href', 'xlink:href']) {
+                const value = image.getAttribute(name);
+                if (!value || !value.startsWith(prefix)) continue;
+                const result = await retype(value);
+                if (result) image.setAttribute(name, result.url); else image.removeAttribute(name);
+            }
+        }
+        const texts = [];
+        for (const text of css) {
+            let out = text;
+            for (const url of blobUrlsIn(text)) {
+                const result = await retype(url);
+                out = out.split(url).join(result ? result.url : 'about:blank');
+            }
+            texts.push(out);
+        }
+        return texts;
     }
 
     async renderDocument() {
@@ -163,16 +221,31 @@ export default class DocxView extends React.Component {
             }
         }, RENDER_TIMEOUT_MS);
         try {
-            await renderAsync(this.props.zip, body, styles, DOCX_OPTIONS);
+            // Every blob: URL docx-preview makes is ours to revoke, also after a failure
+            const create = URL.createObjectURL;
+            URL.createObjectURL = (...args) => {
+                const url = create.apply(URL, args);
+                this.urls.add(url);
+                return url;
+            };
+            try {
+                await renderAsync(this.props.zip, body, styles, DOCX_OPTIONS);
+            } finally {
+                URL.createObjectURL = create;
+            }
         } catch (e) {
             clearTimeout(this.timer);
+            this.revokeAll();
             if (!this.unmounted) {
                 this.setState({status: 'error', error: `The document could not be rendered: ${e && e.message ? e.message : e}`});
             }
             return;
         }
         clearTimeout(this.timer);
-        if (this.unmounted || this.state.status !== 'rendering') return;
+        if (this.unmounted || this.state.status !== 'rendering') {
+            this.revokeAll();
+            return;
+        }
 
         // Links first (DOMPurify would drop a javascript: href silently), then the rest
         for (const link of body.querySelectorAll('a')) {
@@ -184,13 +257,27 @@ export default class DocxView extends React.Component {
         purify.sanitize(body, {IN_PLACE: true, FORBID_TAGS, ALLOW_DATA_ATTR: true,
                                ALLOWED_URI_REGEXP: /^(?:blob:|https?:|mailto:|#)/i});
         const prefix = blobPrefix();
-        // Pictures without a source: linked (external) ones, never loaded
+        let css = [...styles.querySelectorAll('style')].map(style => stripCssUrls(style.textContent, prefix));
+        // Pictures typed by their bytes, not by the document's claim (or removed)
+        css = await this.retypePictures(body, css);
+        if (this.unmounted) {
+            this.revokeAll();
+            return;
+        }
+        // Pictures without a source: linked (external) ones, and those that are no image
         for (const img of body.querySelectorAll('img:not([src])')) {
             img.classList.add('docx-image-removed');
-            img.setAttribute('alt', 'Linked picture (not loaded)');
-            img.setAttribute('title', 'Pictures linked from other sites are not loaded');
+            img.setAttribute('alt', 'Picture (not loaded)');
+            img.setAttribute('title', 'Pictures linked from other sites, or that are not images, are not loaded');
         }
-        const css = [...styles.querySelectorAll('style')].map(style => stripCssUrls(style.textContent, prefix));
+        // URLs nothing refers to any more (removed by the sanitizer, unused) are not kept
+        const used = body.innerHTML + css.join('') + [...body.querySelectorAll('image')].map(i => i.outerHTML).join('');
+        for (const url of [...this.urls]) {
+            if (!used.includes(url)) {
+                URL.revokeObjectURL(url);
+                this.urls.delete(url);
+            }
+        }
 
         const shadow = this.host.shadowRoot || this.host.attachShadow({mode: 'open'});
         const base = document.createElement('style');

@@ -30,6 +30,8 @@ export function stripCssUrls(css, blobPrefix = null) {
         const code = parseInt(hex, 16);
         return code > 0x20 && code < 0x7f ? String.fromCharCode(code) : match;
     });
+    // ... and the other escapes, which only drop the backslash (`u\rl(` is `url(`)
+    out = out.replace(/\\([^0-9a-fA-F\r\n])/g, '$1');
     out = out.replace(/@import[^;]*;?/gi, '');
     out = out.replace(/(?:-webkit-)?image-set\s*\([^)]*\)/gi, 'none');
     out = out.replace(/url\s*\(\s*("[^"]*"|'[^']*'|[^)]*)\s*\)/gi,

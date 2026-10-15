@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { imageIndexes, imageNeighbors } from '../../src/frontend/js/utils/imageNeighbors.js';
+import { imageIndexes, imageNeighbors, rowIndexOf } from '../../src/frontend/js/utils/imageNeighbors.js';
 
 const dir = (name) => ({name, type: 'dir'});
 const file = (name) => ({name, type: 'file'});
@@ -51,4 +51,12 @@ test('imageNeighbors: null when the index is not an image (not found, a folder, 
     assert.equal(imageNeighbors(FILES, 6), null); // logo.svg
     assert.equal(imageNeighbors(FILES, 99), null); // out of range
     assert.equal(imageNeighbors([], 0), null);
+});
+
+test('rowIndexOf: a remembered file is found again by name after the listing changed', () => {
+    assert.equal(rowIndexOf(FILES, 'b.JPG'), 4);
+    const refreshed = [dir('..'), file('new.png'), ...FILES.slice(1)]; // a file appeared above it
+    assert.equal(rowIndexOf(refreshed, 'b.JPG'), 5);
+    assert.equal(rowIndexOf(refreshed, 'gone.png'), null);
+    assert.equal(rowIndexOf(null, 'a.png'), null);
 });
