@@ -82,3 +82,59 @@ jobs:
           name: e2e-logs
           path: test/e2e/logs/
           retention-days: 14
+
+  # The default install (README "Install (default: without Docker)"): systemd --user
+  # services of the account motuz, tested in a machine with systemd as PID 1.
+  e2e-systemd-al2027:
+    name: End-to-end (systemd install, Amazon Linux 2027 container)
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v7
+      # install.sh, deploy.sh and all suites run inside a privileged container with systemd
+      # as PID 1 and its own network namespace (test/e2e/systemd/container.sh); the private
+      # PostgreSQL and Valkey, the default on Amazon Linux. The UI suites install chromium
+      # and its libraries (dnf) inside the container.
+      - name: test/e2e/run_systemd.sh --distro=al2027
+        env:
+          MOTUZ_E2E_UI: require
+        run: test/e2e/run_systemd.sh --distro=al2027
+      - name: Upload logs
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-systemd-al2027-logs
+          path: test/e2e/logs-systemd-al2027/
+          retention-days: 14
+
+  e2e-systemd-ubuntu:
+    name: End-to-end (systemd install, Ubuntu 26.04 VM)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+      # QEMU/KVM in a container (test/e2e/systemd/vm.sh) needs /dev/kvm, which the hosted
+      # Linux runners provide once the udev rule gives the runner user access
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          ls -l /dev/kvm
+      - name: Cache the Ubuntu 26.04 cloud image
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/motuz-e2e
+          key: ubuntu-2604-cloudimg-${{ hashFiles('test/e2e/systemd/vm.sh') }}
+      # The default on Ubuntu: the distribution's PostgreSQL 18 and Redis services
+      - name: test/e2e/run_systemd.sh
+        env:
+          MOTUZ_E2E_UI: require
+        run: test/e2e/run_systemd.sh
+      - name: Upload logs
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-systemd-ubuntu-logs
+          path: test/e2e/logs-systemd/
+          retention-days: 14
