@@ -7,6 +7,7 @@ import importlib.util
 import json
 import os
 import pwd
+import re
 import subprocess
 import sys
 import tempfile
@@ -303,7 +304,7 @@ class TestDistroModules(unittest.TestCase):
     VARIABLES = ('DISTRO_NAME', 'PG_BINDIR', 'REDIS_SERVER', 'REDIS_CLI', 'PAM_TEMPLATE', 'DISTRO_SERVICES',
                  'DISTRO_PG_SERVICE', 'DISTRO_REDIS_SERVICE', 'DEFAULT_POSTGRES', 'DEFAULT_REDIS')
     FUNCTIONS = ('distro_supported', 'distro_install_packages', 'distro_install_worker_packages', 'distro_firewall_hint',
-                 'distro_system_postgres_prepare')
+                 'distro_system_postgres_prepare', 'distro_system_postgres_set_port')
 
     def module(self, name, os_id, version):
         script = ('REPO_DIR="$1"; source "$1/bin/systemd/distro/$2.sh"; ID="$3"; VERSION_ID="$4"; '
@@ -550,6 +551,175 @@ class TestAssistantSupport(unittest.TestCase):
         for script in ('bin/systemd/deploy.sh', 'bin/systemd/config.sh', 'bin/systemd/smoke_test.py'):
             self.assertIn(script, text)
             self.assertTrue(os.access(os.path.join(REPO, script), os.X_OK), script)
+
+
+class TestRootSafety(unittest.TestCase):
+    """What root (install.sh) takes from the account's files and writes into its tree"""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(subprocess.run, ['rm', '-rf', self.tmp])
+
+    def lib(self, script):
+        # `runuser -u ACCOUNT -- cmd` stands in as `cmd` (the tests do not run as root)
+        return bash_lib('ACCOUNT=tester; runuser() { shift 3; "$@"; }; ' + script)
+
+    def test_all_scripts_parse(self):
+        scripts = [os.path.join(REPO, 'bin', 'systemd', f) for f in os.listdir(os.path.join(REPO, 'bin', 'systemd')) if f.endswith('.sh')]
+        scripts += [os.path.join(REPO, 'bin', 'systemd', 'distro', f) for f in os.listdir(os.path.join(REPO, 'bin', 'systemd', 'distro'))]
+        self.assertGreater(len(scripts), 8)
+        for script in scripts:
+            out = subprocess.run(['bash', '-n', script], capture_output=True, text=True)
+            self.assertEqual(out.returncode, 0, script + out.stderr)
+
+    def test_validation_of_secrets_and_ports(self):
+        good = 'a' * 64
+        for script, ok in (("valid_secret %s" % good, True), ("valid_secret ''", False), ("valid_secret %s" % ('a' * 63), False),
+                           ("valid_secret '%s'" % (good[:-1] + "'; \\! id #"), False), ("valid_secret 'A%s'" % ('a' * 63), False),
+                           ("valid_port 5432", True), ("valid_port 0", False), ("valid_port 65536", False),
+                           ("valid_port '5432 -c x'", False), ("valid_port ''", False), ("valid_port 5433;", True)):
+            out = bash_lib(script.rstrip(';'))
+            self.assertEqual(out.returncode == 0, ok, script)
+
+    def test_account_env_roundtrip_with_special_characters(self):
+        path = os.path.join(self.tmp, 'x.env')
+        out = self.lib('account_env_set %s A \'q"z\\w $x\'; account_env_set %s B 2; account_env_set %s A new; '
+                       'printf "%%s|%%s" "$(account_env_get %s A)" "$(account_env_get %s B)"' % ((path,) * 5))
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertEqual(out.stdout, 'new|2')
+        out = self.lib('account_env_set %s C \'q"z\\w $x\'; account_env_get %s C' % (path, path))
+        self.assertEqual(out.stdout, 'q"z\\w $x')
+        self.assertEqual(os.stat(path).st_mode & 0o777, 0o600)
+
+    def test_account_env_set_follows_the_symlink_as_the_account_only(self):
+        target = os.path.join(self.tmp, 'target.env')
+        link = os.path.join(self.tmp, 'link.env')
+        with open(target, 'w') as f:
+            f.write('K="1"\n')
+        os.symlink(target, link)
+        out = self.lib('account_env_set %s K 2' % link)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertTrue(os.path.islink(link))  # the link itself is kept, the target updated
+        with open(target) as f:
+            self.assertEqual(f.read(), 'K="2"\n')
+
+    def test_the_sources_use_no_root_writes_inside_the_home(self):
+        # the patterns that followed symlinks as root: install -d -o ACCOUNT, chown and cat/env_set
+        # on files below $HOME_DIR in install.sh and _system_services.sh
+        for name in ('install.sh', '_system_services.sh'):
+            with open(os.path.join(REPO, 'bin', 'systemd', name)) as f:
+                text = f.read()
+            for line in text.splitlines():
+                if line.lstrip().startswith('#'):
+                    continue
+                self.assertFalse('install -d' in line and '-o "$ACCOUNT"' in line and '$HOME_DIR' in line, line)
+                self.assertFalse('chown "$ACCOUNT' in line, line)
+                self.assertIsNone(re.search(r'(?<!account_)env_set "\$(WORKER_ENV|HANDOFF)"', line), line)
+
+    def run_redis_in_use(self, conf_text, **env):
+        conf = os.path.join(self.tmp, 'redis.conf')
+        with open(conf, 'w') as f:
+            f.write(conf_text)
+        out = bash_lib('SYSTEM_REDIS_CONF=%s; DISTRO_REDIS_SERVICE=redis-server.service; systemctl() { return 1; }; redis_in_use' % conf)
+        return out.returncode == 0, out.stdout.strip()
+
+    def test_a_redis_in_use_is_not_taken_over(self):
+        self.assertEqual(self.run_redis_in_use('bind 127.0.0.1 -::1\nport 6379\n# requirepass x\n'), (False, ''))
+        self.assertEqual(self.run_redis_in_use('requirepass secret\n')[0], True)
+        self.assertEqual(self.run_redis_in_use('bind 0.0.0.0\n')[0], True)
+        self.assertEqual(self.run_redis_in_use('bind 127.0.0.1 10.1.2.3\n')[0], True)
+        self.assertEqual(self.run_redis_in_use('port 6380\n')[0], True)
+        self.assertEqual(self.run_redis_in_use('aclfile /etc/redis/users.acl\n')[0], True)
+        self.assertEqual(self.run_redis_in_use('replicaof 10.0.0.1 6379\n')[0], True)
+
+    def test_the_sudoers_rule_excludes_the_service_superusers(self):
+        with open(os.path.join(REPO, 'bin', 'systemd', 'install.sh')) as f:
+            text = f.read()
+        self.assertEqual(text.count('!root, !postgres, !redis, !valkey'), 2)  # ALL form and --sudo-group form
+        with open(os.path.join(REPO, 'README.md')) as f:
+            readme = f.read()
+        self.assertNotIn('(ALL, !root)', readme)
+
+
+class TestSmokeTest(unittest.TestCase):
+
+    def setUp(self):
+        self.home = tempfile.mkdtemp()
+        self.addCleanup(subprocess.run, ['rm', '-rf', self.home])
+        spec = importlib.util.spec_from_file_location('smoke_test', os.path.join(REPO, 'bin', 'systemd', 'smoke_test.py'))
+        self.module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.module)
+        self.password_file = os.path.join(self.home, '.motuz-test-pw')
+        patcher = mock.patch.object(self.module, 'PASSWORD_FILE', self.password_file)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_only_this_host(self):
+        for url in ('https://example.org', 'https://127.0.0.1.evil.org', 'http://127.0.0.1', 'https://localhost@evil.org', 'https://127.0.0.1:80/x'):
+            with self.assertRaises(SystemExit, msg=url):
+                self.module.main(['smoke', 'alice', '/a', '/b', url])
+
+    def test_password_file_must_be_ours_and_private(self):
+        with open(self.password_file, 'w') as f:
+            f.write('pw\n')
+        os.chmod(self.password_file, 0o644)
+        with self.assertRaises(SystemExit):
+            self.module.main(['smoke', 'alice', '/a', '/b'])
+        os.chmod(self.password_file, 0o600)
+        self.assertEqual(self.module.read_password(), 'pw')
+        os.remove(self.password_file)
+        os.symlink('/etc/passwd', self.password_file)
+        with self.assertRaises(SystemExit):
+            self.module.read_password()
+
+    def test_the_copy_job_has_copy_links(self):
+        with open(self.password_file, 'w') as f:
+            f.write('pw')
+        os.chmod(self.password_file, 0o600)
+        calls = []
+
+        class Response:
+            status = 200
+
+            def __init__(self, body):
+                self.body = body
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def read(self):
+                return json.dumps(self.body).encode()
+
+        def urlopen(request, context=None, timeout=None):
+            calls.append((request.get_method(), request.full_url, request.data))
+            if request.full_url.endswith('/system/info/'):
+                return Response({'message': 'healthy'})
+            if request.full_url.endswith('/auth/login/'):
+                return Response({'access': 't'})
+            if request.get_method() == 'POST' and request.full_url.endswith('/copy-jobs/'):
+                return Response({'id': 7})
+            if request.full_url.endswith('/copy-jobs/7'):
+                return Response({'progress_state': 'SUCCESS'})
+            return Response(None)
+
+        with mock.patch.object(self.module.urllib.request, 'urlopen', urlopen):
+            self.assertEqual(self.module.main(['smoke', 'alice', '/a', '/b']), 0)
+        created = [json.loads(c[2]) for c in calls if c[1].endswith('/copy-jobs/') and c[0] == 'POST'][0]
+        self.assertEqual(created['copy_links'], True)
+        self.assertTrue(all(c[1].startswith('https://127.0.0.1/') for c in calls))
+
+    def test_guardrail_settings_after_review(self):
+        with open(os.path.join(REPO, 'deployment', 'systemd', 'claude', 'settings.json')) as f:
+            permissions = json.load(f)['permissions']
+        for rule in permissions['allow']:
+            self.assertNotIn('git diff', rule)  # --no-index reads any file, --output writes
+            self.assertNotIn('git log', rule)
+        for rule in ('Bash(*--no-index*)', 'Bash(*--output*)', 'Bash(*secret*)', 'Bash(*cert.key*)', 'Bash(*acme.json*)',
+                     'Bash(*credentials.json*)', 'Read(~/data/traefik/**)', 'Read(~/.motuz-test-pw)'):
+            self.assertIn(rule, permissions['deny'])
 
 
 if __name__ == '__main__':

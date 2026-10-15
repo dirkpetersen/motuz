@@ -55,6 +55,7 @@ if id "$ACCOUNT" >/dev/null 2>&1; then
         DB_MODE=$(database_mode "$HOME_DIR/.config/motuz/motuz.env" "$HOME_DIR/data/pg")
         BROKER_MODE=$(broker_mode "$HOME_DIR/.config/motuz/motuz.env" "$HOME_DIR/.config/motuz")
         DB_HOST=$(env_get "$HOME_DIR/.config/motuz/motuz.env" MOTUZ_DATABASE_HOST)
+        valid_port "${DB_HOST##*:}" || DB_HOST=127.0.0.1:5432
     fi
     log "stopping Motuz ($ACCOUNT's user services)"
     if [ -d "/run/user/$uid" ]; then
@@ -85,6 +86,7 @@ if [ -f /etc/systemd/system/motuz-auth.socket ]; then
     systemctl daemon-reload
 fi
 
+# the handoff file is only removed after the purge steps above needed it
 log "unmasking $DISTRO_SERVICES"
 for unit in $DISTRO_SERVICES; do
     systemctl unmask "$unit" >/dev/null 2>&1 || true
@@ -105,13 +107,27 @@ if [ "$PURGE" = 1 ] && [ "$DB_MODE" = system ]; then
     fi
 fi
 if [ "$PURGE" = 1 ] && [ "$BROKER_MODE" = system ]; then
-    log "purge: /etc/redis/motuz.conf and the redis-server drop-in (the system Redis stays and restarts with its own configuration)"
+    log "purge: Motuz's keys in the system Redis, /etc/redis/motuz.conf and the redis-server drop-in (the system Redis stays and restarts with its own configuration)"
+    # Celery's queues and bookkeeping (celery*, _kombu.*, unacked*, kombu*): with the ACL user
+    # motuz, which cannot FLUSHALL; anything else in this Redis stays
+    redis_pw=$(env_get "/etc/motuz/handoff-$ACCOUNT.env" MOTUZ_REDIS_PASSWORD)
+    redis_sock=$(env_get "/etc/motuz/handoff-$ACCOUNT.env" MOTUZ_REDIS_SOCKET)
+    if valid_secret "$redis_pw" && [ -S "$redis_sock" ]; then
+        for pattern in 'celery*' '_kombu.*' 'unacked*' 'kombu*'; do
+            REDISCLI_AUTH="$redis_pw" redis-cli --user motuz -s "$redis_sock" --scan --pattern "$pattern" 2>/dev/null \
+                | while IFS= read -r key; do REDISCLI_AUTH="$redis_pw" redis-cli --user motuz -s "$redis_sock" DEL "$key" >/dev/null; done || true
+        done
+    else
+        warn "could not delete Motuz's keys from the system Redis (no handoff file or socket): redis-cli --scan for celery*, _kombu.*, unacked*"
+    fi
     rm -f /etc/redis/motuz.conf /etc/systemd/system/redis-server.service.d/motuz.conf
     rmdir /etc/systemd/system/redis-server.service.d 2>/dev/null || true
     systemctl daemon-reload
     systemctl restart redis-server.service 2>/dev/null || true
 fi
 if [ "$PURGE" = 1 ]; then
+    rm -f "/etc/motuz/handoff-$ACCOUNT.env" /etc/motuz/system-postgres-port-moved
+    rmdir /etc/motuz 2>/dev/null || true
     log "purge: account $ACCOUNT and its home, Motuz data, pinned binaries"
     if [ -n "$HOME_DIR" ]; then
         pkill -KILL -u "$ACCOUNT" 2>/dev/null || true

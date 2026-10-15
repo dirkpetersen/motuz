@@ -5,6 +5,8 @@
 #
 # Usage: bin/systemd/config.sh show               the settings; for secrets only whether they are set
 #        bin/systemd/config.sh set KEY VALUE      a MOTUZ_* setting in motuz.env (not a secret)
+#        bin/systemd/config.sh ask-test-password  reads a user's password the same way into
+#                                                 ~/.motuz-test-pw (mode 600) for smoke_test.py
 #        bin/systemd/config.sh ask-secret KEY     reads the value from the terminal without echo
 #                                                 (/dev/tty, never from arguments or a pipe) and
 #                                                 stores it in secrets.env
@@ -52,6 +54,16 @@ case "${1:-}" in
         env_set "$SECRETS" "$2" "$value"
         unset value
         echo "$2 stored in $SECRETS (run bin/systemd/deploy.sh to apply)"
+        ;;
+    ask-test-password)
+        [ -r /dev/tty ] && [ -w /dev/tty ] || die "no terminal: run this yourself in a terminal of the motuz account (in Claude Code: type ! and the command)"
+        printf 'password of the test user (input hidden): ' > /dev/tty
+        IFS= read -rs value < /dev/tty; echo > /dev/tty
+        [ -n "$value" ] || die "empty value, nothing written"
+        rm -f "$HOME/.motuz-test-pw"
+        (umask 077 && printf '%s' "$value" > "$HOME/.motuz-test-pw")
+        unset value
+        echo "stored in ~/.motuz-test-pw (mode 600); delete it after the test: rm ~/.motuz-test-pw"
         ;;
     *) sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
 esac
