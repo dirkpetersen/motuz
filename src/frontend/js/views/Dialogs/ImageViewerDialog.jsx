@@ -3,12 +3,13 @@ import { Modal, Button } from 'react-bootstrap'
 import upath from 'upath';
 
 import formatBytes from 'utils/formatBytes.jsx'
-import { imageNeighbors } from 'utils/imageNeighbors.js'
+import { imageNeighbors, rowIndexOf } from 'utils/imageNeighbors.js'
+import { convertFirst, describeType, isHeifType, needsConversion } from 'utils/heifConvert.js'
 
 // The types the server sends (utils/image_view.py detects them from the file's first
-// bytes); anything else is not shown, whatever the response says. HEIC/HEIF and AVIF
-// are shown only if the browser itself can decode them (decodeCheck below) — Motuz
-// never bundles a decoder (see README "File viewer").
+// bytes); anything else is not shown, whatever the response says. AVIF is shown if the
+// browser decodes it (decodeCheck below); a HEIC/HEIF image natively (Safari) or, in the
+// other browsers, as the JPEG the server converts it to (utils/heifConvert.js).
 export const IMAGE_TYPES = {
     'image/png': 'PNG',
     'image/jpeg': 'JPEG',
@@ -19,7 +20,9 @@ export const IMAGE_TYPES = {
     'image/avif': 'AVIF',
 };
 
-const HEIF_LIKE = new Set(['image/heic', 'image/heif']);
+// Whether this browser decoded a HEIC/HEIF image itself: null = not known yet. Safari
+// does; the others get a JPEG converted by the server (see utils/heifConvert.js).
+let nativeHeic = null;
 
 const LOAD_ERROR = 'The image could not be loaded. Please try again.';
 const DECODE_TIMEOUT_MS = 15000;
@@ -44,9 +47,8 @@ function withTimeout(promise, ms) {
 }
 
 /**
- * Whether this browser can actually decode `blob` (native decoding only — Motuz never
- * converts or transcodes an image itself): {width, height} of the decoded image, or
- * null. Tries createImageBitmap first (no extra blob: URL needed), then falls back to
+ * Whether this browser can actually decode `blob`: {width, height} of the decoded
+ * image, or null. Tries createImageBitmap first (no extra blob: URL needed), then falls back to
  * Image().decode() for a browser without it.
  */
 export async function decodeCheck(blob) {
@@ -90,20 +92,24 @@ export async function decodeCheck(blob) {
  * this was opened from, in the pane's displayed order (utils/imageNeighbors.js), with
  * no wrap-around at the ends. Every image is checked with decodeCheck before it is
  * shown (createImageBitmap / Image().decode()): the file's actual bytes may be PNG/
- * JPEG/GIF/WebP (always decodable) or HEIC/HEIF/AVIF (decodable only where the browser
- * has its own decoder — Safari for HEIC/HEIF, most current browsers for AVIF); a
- * format the browser cannot decode shows a message instead of a broken image. Fetched
- * images are cached by pane index (`this.cache`) so stepping back is instant and blob:
+ * JPEG/GIF/WebP (always decodable), AVIF (every current browser) or HEIC/HEIF (Safari
+ * only): a HEIC/HEIF image the browser cannot decode is fetched again with
+ * convert=jpeg, i.e. as the JPEG the server makes of it (as the logged-in user, in a
+ * child process: api/utils/heic_convert.py), shown as "HEIC, converted to JPEG"; any
+ * other image the browser cannot decode shows a message, not a broken image. Fetched
+ * images are cached by path (`this.cache`) so stepping back is instant and blob:
  * URLs are revoked as soon as they fall outside the small window kept around the
- * current image (itself and the preloaded next one); a fetch already in flight for an
- * index is shared (`this.pending`), and a `loadSeq` token makes sure a slow, now-stale
+ * current image (itself and the preloaded next one); a fetch already in flight for a
+ * path is shared (`this.pending`), and a `loadSeq` token makes sure a slow, now-stale
  * fetch can never overwrite what is displayed (its result is still cached correctly).
  */
 class ImageViewerDialog extends React.Component {
     constructor(props) {
         super(props);
+        const list = (props.files || []).slice();
+        const opened = rowIndexOf(list, props.data.name);
         this.state = {
-            index: props.data.index,
+            index: opened != null ? opened : props.data.index,
             loading: true,
             error: null,
             status: null,
@@ -114,10 +120,15 @@ class ImageViewerDialog extends React.Component {
             height: null,
             decodeError: false,
             timedOut: false,
+            convertedFrom: null,
             actualSize: false,
         };
-        this.cache = new Map(); // pane index -> resolved entry (see fetchEntry)
-        this.pending = new Map(); // pane index -> Promise of the fetch in flight
+        // The pane's files as they were when the dialog opened: the pane may be refreshed
+        // meanwhile (a finished job), but what is stepped over, shown and cached stays
+        // consistent. Everything is keyed by path, not by position.
+        this.list = list;
+        this.cache = new Map(); // path -> resolved entry (see fetchEntry)
+        this.pending = new Map(); // path -> Promise of the fetch in flight
         this.loadSeq = 0;
         this.unmounted = false;
         this.stage = null;
@@ -138,7 +149,7 @@ class ImageViewerDialog extends React.Component {
     }
 
     pathFor(index) {
-        const file = this.props.files[index];
+        const file = this.list[index];
         if (!file || typeof this.props.data.folder !== 'string') {
             return null;
         }
@@ -147,14 +158,15 @@ class ImageViewerDialog extends React.Component {
 
     /** The resolved entry for `index` (cached, in flight, or freshly fetched) */
     fetchEntry(index) {
-        if (this.cache.has(index)) {
-            return Promise.resolve(this.cache.get(index));
+        const key = this.pathFor(index);
+        if (this.cache.has(key)) {
+            return Promise.resolve(this.cache.get(key));
         }
-        if (this.pending.has(index)) {
-            return this.pending.get(index);
+        if (this.pending.has(key)) {
+            return this.pending.get(key);
         }
-        const promise = this._fetchEntry(index).finally(() => this.pending.delete(index));
-        this.pending.set(index, promise);
+        const promise = this._fetchEntry(index).finally(() => this.pending.delete(key));
+        this.pending.set(key, promise);
         return promise;
     }
 
@@ -163,43 +175,60 @@ class ImageViewerDialog extends React.Component {
         if (!path) {
             return {error: LOAD_ERROR, status: null};
         }
-        let action;
-        try {
-            action = await this.props.fetchImage({connection_id: this.props.data.connectionId, path});
-        } catch (e) {
-            action = {error: true, payload: e};
-        }
-        const result = !this.unmounted && action && !action.error ? action.payload : null;
-        let entry;
-        if (this.unmounted) {
-            entry = null;
-        } else if (!result || !result.blob) {
-            entry = {...imageErrorOf(action && action.payload)};
-        } else if (!IMAGE_TYPES[result.type]) {
-            entry = {status: 415, error: 'The server did not send an image type this viewer knows.'};
-        } else {
-            const outcome = await withTimeout(decodeCheck(result.blob), DECODE_TIMEOUT_MS);
+        const name = this.list[index].name;
+        // HEIC/HEIF: the plain image first (Safari shows it), or the server's JPEG at once
+        // when this browser has already failed to decode one (utils/heifConvert.js)
+        let convert = convertFirst(name, nativeHeic);
+        let entry = null;
+        for (let attempt = 0; attempt < 2 && !entry; attempt++) {
+            const request = {connection_id: this.props.data.connectionId, path};
+            if (convert) {
+                request.convert = 'jpeg';
+            }
+            let action;
+            try {
+                action = await this.props.fetchImage(request);
+            } catch (e) {
+                action = {error: true, payload: e};
+            }
+            const result = !this.unmounted && action && !action.error ? action.payload : null;
             if (this.unmounted) {
-                entry = null;
-            } else if (outcome && !outcome.timedOut) {
-                const url = URL.createObjectURL(new Blob([result.blob], {type: result.type}));
-                entry = {url, type: result.type, size: result.size, width: outcome.width, height: outcome.height};
+                break;
+            } else if (!result || !result.blob) {
+                entry = {...imageErrorOf(action && action.payload)};
+            } else if (!IMAGE_TYPES[result.type]) {
+                entry = {status: 415, error: 'The server did not send an image type this viewer knows.'};
             } else {
-                entry = {decodeError: true, timedOut: !!(outcome && outcome.timedOut), type: result.type, size: result.size};
+                const outcome = await withTimeout(decodeCheck(result.blob), DECODE_TIMEOUT_MS);
+                const decoded = !!(outcome && !outcome.timedOut);
+                if (isHeifType(result.type)) {
+                    nativeHeic = decoded;
+                }
+                if (this.unmounted) {
+                    break;
+                } else if (needsConversion(result.type, decoded) && !convert) {
+                    convert = true; // ask the server for a JPEG
+                } else if (decoded) {
+                    const url = URL.createObjectURL(new Blob([result.blob], {type: result.type}));
+                    entry = {url, type: result.type, size: result.size, width: outcome.width, height: outcome.height,
+                             convertedFrom: result.convertedFrom || null};
+                } else {
+                    entry = {decodeError: true, timedOut: !!(outcome && outcome.timedOut), type: result.type, size: result.size};
+                }
             }
         }
         if (entry && !this.unmounted) {
-            this.cache.set(index, entry);
+            this.cache.set(path, entry);
         }
         return entry || {error: LOAD_ERROR, status: null};
     }
 
     /** Only the current image and the preloaded next one keep a blob: URL alive */
     prune(index) {
-        const keep = new Set([index]);
-        const neighbors = imageNeighbors(this.props.files, index);
+        const keep = new Set([this.pathFor(index)]);
+        const neighbors = imageNeighbors(this.list, index);
         if (neighbors && neighbors.nextIndex != null) {
-            keep.add(neighbors.nextIndex);
+            keep.add(this.pathFor(neighbors.nextIndex));
         }
         for (const [key, entry] of this.cache) {
             if (!keep.has(key)) {
@@ -212,16 +241,17 @@ class ImageViewerDialog extends React.Component {
     }
 
     preloadNext(index) {
-        const neighbors = imageNeighbors(this.props.files, index);
+        const neighbors = imageNeighbors(this.list, index);
         const next = neighbors && neighbors.nextIndex;
-        if (next != null && !this.cache.has(next) && !this.pending.has(next)) {
+        const key = next != null ? this.pathFor(next) : null;
+        if (next != null && !this.cache.has(key) && !this.pending.has(key)) {
             this.fetchEntry(next).then(() => { if (!this.unmounted) this.prune(this.state.index); });
         }
     }
 
     async showIndex(index, {initial = false} = {}) {
         const seq = ++this.loadSeq;
-        const cached = this.cache.get(index);
+        const cached = this.cache.get(this.pathFor(index));
         this.setState({
             index,
             loading: !cached,
@@ -234,9 +264,14 @@ class ImageViewerDialog extends React.Component {
             height: cached && cached.height != null ? cached.height : null,
             decodeError: !!(cached && cached.decodeError),
             timedOut: !!(cached && cached.timedOut),
+            convertedFrom: (cached && cached.convertedFrom) || null,
         });
         if (!initial && this.props.data.side) {
-            this.props.onSelectFile(this.props.data.side, index);
+            // The pane's row of this file now (the listing may have been refreshed)
+            const row = rowIndexOf(this.props.files, this.list[index] && this.list[index].name);
+            if (row != null) {
+                this.props.onSelectFile(this.props.data.side, row);
+            }
         }
         const entry = await this.fetchEntry(index);
         if (seq !== this.loadSeq || this.unmounted) {
@@ -253,6 +288,7 @@ class ImageViewerDialog extends React.Component {
             height: entry.height != null ? entry.height : null,
             decodeError: !!entry.decodeError,
             timedOut: !!entry.timedOut,
+            convertedFrom: entry.convertedFrom || null,
         });
         this.prune(index);
         this.preloadNext(index);
@@ -266,14 +302,14 @@ class ImageViewerDialog extends React.Component {
     }
 
     onPrev() {
-        const neighbors = imageNeighbors(this.props.files, this.state.index);
+        const neighbors = imageNeighbors(this.list, this.state.index);
         if (neighbors && neighbors.prevIndex != null) {
             this.goTo(neighbors.prevIndex);
         }
     }
 
     onNext() {
-        const neighbors = imageNeighbors(this.props.files, this.state.index);
+        const neighbors = imageNeighbors(this.list, this.state.index);
         if (neighbors && neighbors.nextIndex != null) {
             this.goTo(neighbors.nextIndex);
         }
@@ -319,10 +355,10 @@ class ImageViewerDialog extends React.Component {
     render() {
         const {data} = this.props;
         const hostName = data.host && data.host.id ? data.host.name : null;
-        const {loading, error, status, url, type, size, width, height, decodeError, timedOut, actualSize, index} = this.state;
+        const {loading, error, status, url, type, size, width, height, decodeError, timedOut, convertedFrom, actualSize, index} = this.state;
         const shown = url && !decodeError;
-        const neighbors = imageNeighbors(this.props.files, index);
-        const currentFile = this.props.files[index];
+        const neighbors = imageNeighbors(this.list, index);
+        const currentFile = this.list[index];
         const name = (currentFile && currentFile.name) || data.name;
         const path = this.pathFor(index) || data.path;
 
@@ -361,7 +397,7 @@ class ImageViewerDialog extends React.Component {
                     )}
                     {error && this.renderError(error, status)}
                     {loading && <div className='file-viewer-loading text-muted'>Loading...</div>}
-                    {decodeError && this.renderDecodeError(type, timedOut, size)}
+                    {decodeError && this.renderDecodeError(timedOut)}
                     {url && (
                         <React.Fragment>
                             <div className='file-viewer-toolbar'>
@@ -402,7 +438,7 @@ class ImageViewerDialog extends React.Component {
                 <Modal.Footer>
                     {url && (
                         <span className='file-viewer-info image-viewer-info text-muted me-auto'>
-                            {IMAGE_TYPES[type]}
+                            {describeType(IMAGE_TYPES[type], convertedFrom && IMAGE_TYPES[convertedFrom])}
                             {width && height ? ` · ${width} × ${height} px` : ''}
                             {size != null ? ` · ${formatBytes(size, this.props.useSiUnits)}` : ''}
                             {' · read-only'}
@@ -435,23 +471,11 @@ class ImageViewerDialog extends React.Component {
         );
     }
 
-    renderDecodeError(type, timedOut, size) {
+    renderDecodeError(timedOut) {
         if (timedOut) {
             return (
                 <div className='alert alert-warning file-viewer-error image-viewer-decode-error' role='alert'>
                     Decoding this image took too long; it may be damaged or too complex to preview.
-                </div>
-            );
-        }
-        if (HEIF_LIKE.has(type)) {
-            return (
-                <div className='alert alert-warning file-viewer-error image-viewer-decode-error' role='alert'>
-                    <div>This browser cannot display {IMAGE_TYPES[type]} photos.</div>
-                    <div className='small mt-1'>
-                        Motuz does not convert or bundle a decoder for {IMAGE_TYPES[type]} (it is coded with
-                        HEVC/H.265, a patent-licensed video codec) — only a browser with its own decoder, such
-                        as Safari, can show it.{size != null ? ` (${formatBytes(size, this.props.useSiUnits)})` : ''}
-                    </div>
                 </div>
             );
         }

@@ -312,7 +312,7 @@ class TestEndpoint(unittest.TestCase):
 
     def test_headers(self):
         from api.managers import system_manager
-        with mock.patch.object(system_manager, 'view_image', return_value=(PNG_1x1, PNG, '/home/alice/a b.png')):
+        with mock.patch.object(system_manager, 'view_image', return_value=(PNG_1x1, PNG, '/home/alice/a b.png', None)):
             response = self.client.post('/api/system/files/view/image/', json={'connection_id': 0, 'path': '/home/alice/a b.png'})
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data, PNG_1x1)
@@ -363,7 +363,7 @@ class TestManager(unittest.TestCase):
     def test_local(self):
         with mock.patch.object(LocalConnection, 'view_image', return_value=(PNG_1x1, PNG)) as view:
             self.assertEqual(self.view_image({'connection_id': 0, 'path': '/home/alice/a.png'}),
-                             (PNG_1x1, PNG, '/home/alice/a.png'))
+                             (PNG_1x1, PNG, '/home/alice/a.png', None))
         self.assertEqual(view.call_args.kwargs['max_bytes'], 12345)
         self.assertEqual(view.call_args.kwargs['data'].owner, 'alice')
 

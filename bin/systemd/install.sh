@@ -142,6 +142,32 @@ if [ "$WORKER_ONLY" = 0 ] && [ "$(/usr/local/bin/uv --version 2>/dev/null)" != "
     install -m 755 -o root -g root "$TMP/uv-${target}/uv" /usr/local/bin/uv
 fi
 
+# ---------------------------------------------------------------- HEIC/HEIF converter
+# The image viewer converts HEIC/HEIF to JPEG (api/utils/heic_convert.py) in a child process
+# run as the logged-in user. The server's own Python (uv's, in the account's home) is not
+# readable by the users, so the converter runs with the distribution's python3 and
+# pi-heif + Pillow (libheif/libde265, LGPL-3.0, decode only) from a directory every user can
+# read. The pins are those of requirements.txt.
+if [ "$WORKER_ONLY" = 0 ]; then
+    heic_pins=$(grep -iE '^(pi-heif|pillow)==' "$REPO_DIR/requirements.txt" | sort)
+    [ "$(printf '%s\n' "$heic_pins" | wc -l)" = 2 ] || die "pi-heif and Pillow are not pinned in $REPO_DIR/requirements.txt"
+    if [ "$(cat /opt/motuz-heic/PINS 2>/dev/null)" != "$heic_pins" ] || [ ! -d /opt/motuz-heic/site ]; then
+        log "HEIC/HEIF converter: $(echo $heic_pins) for $(/usr/bin/python3 --version)"
+        printf '%s\n' "$heic_pins" > "$TMP/heic-requirements.txt"
+        rm -rf /opt/motuz-heic.new
+        /usr/local/bin/uv pip install --quiet --python /usr/bin/python3 --no-deps --only-binary :all: \
+            --target /opt/motuz-heic.new/site -r "$TMP/heic-requirements.txt" \
+            || die "could not install pi-heif and Pillow for /usr/bin/python3"
+        printf '%s\n' "$heic_pins" > /opt/motuz-heic.new/PINS
+        chown -R root:root /opt/motuz-heic.new
+        chmod -R a+rX,go-w /opt/motuz-heic.new
+        rm -rf /opt/motuz-heic
+        mv /opt/motuz-heic.new /opt/motuz-heic
+        /usr/bin/python3 -I -c "import sys; sys.path.insert(0, '/opt/motuz-heic/site'); import pi_heif, PIL" \
+            || die "pi-heif does not load with /usr/bin/python3"
+    fi
+fi
+
 # ---------------------------------------------------------------- the account
 if ! id "$ACCOUNT" >/dev/null 2>&1; then
     log "account $ACCOUNT ($HOME_DIR)"
@@ -265,6 +291,7 @@ if command -v selinuxenabled >/dev/null && selinuxenabled; then
         [ ! -e "$f" ] || restorecon -F "$f"
     done
     restorecon -RF /var/lib/motuz-aws-config "$HOME_DIR"
+    [ ! -d /opt/motuz-heic ] || restorecon -RF /opt/motuz-heic
     [ ! -d /usr/local/lib/motuz-auth ] || restorecon -RF /usr/local/lib/motuz-auth
 fi
 

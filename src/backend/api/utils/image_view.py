@@ -11,14 +11,11 @@ reading (stat) and again on what was read, against MOTUZ_VIEW_IMAGE_MAX_BYTES (4
 above it). The response headers keep a browser from treating the bytes as anything but
 the detected image. Image contents are never logged.
 
-Motuz sends HEIC/HEIF/AVIF bytes as detected and lets the browser decide whether it can
-show them; it never decodes or transcodes them server- or client-side. AVIF (AV1) is
-royalty-free and decodes natively in current Chrome, Firefox and Safari. HEIC/HEIF
-(HEVC/H.265) decodes natively only where the OS provides an HEVC decoder (currently
-Safari/macOS/iOS); Motuz deliberately does not bundle a software HEVC decoder (HEVC is
-patent pooled across MPEG-LA, Access Advance and Velos Media, unlike AV1 — see README
-"File viewer"), so in a browser without native HEIC support the viewer shows a message
-instead of the picture.
+Motuz sends the bytes as detected and the browser decodes them; AVIF (AV1) decodes in every
+current major browser, HEIC/HEIF (HEVC) only in Safari. For the others the request may
+carry `convert: "jpeg"`: system_manager.view_image then returns a HEIC/HEIF image as a
+JPEG made by heic_convert.py (a child process run as the logged-in user, never in the
+server process), any other image unchanged.
 """
 import os
 import re
@@ -35,15 +32,9 @@ MAX_MAX_BYTES = 256 * MiB # the whole image is held in memory by an app worker
 ENV_MAX_BYTES = 'MOTUZ_VIEW_IMAGE_MAX_BYTES'
 
 # The types the viewer shows: raster formats a browser can decode in an <img>. PNG,
-# JPEG, GIF and WebP decode everywhere. HEIC/HEIF (Apple's photo format, HEVC/H.265
-# coded) and AVIF (AV1 coded) are also served as their detected type — Motuz never
-# decodes or transcodes them itself, so whether one is actually shown depends entirely
-# on the browser: AVIF (royalty-free under AOM's patent cross-license) decodes natively
-# in current Chrome, Firefox and Safari; HEIC/HEIF decodes natively only where the OS
-# provides an HEVC decoder (currently Safari/macOS/iOS). Motuz deliberately does not
-# bundle a software HEVC decoder (see README "File viewer" and CLAUDE.md): HEVC is
-# patent pooled (MPEG-LA, Access Advance, Velos Media) and shipping a decoder would be
-# a licensing decision for the operator, not something to guess at in code.
+# JPEG, GIF and WebP decode everywhere, AVIF (AV1) in every current major browser, HEIC/
+# HEIF (Apple's photo format, HEVC coded) only in Safari; heic_convert.py makes a JPEG of
+# a HEIC/HEIF image for the others.
 PNG = 'image/png'
 JPEG = 'image/jpeg'
 GIF = 'image/gif'

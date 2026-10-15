@@ -188,9 +188,11 @@ export const viewFileChunk = (data) => ({
 });
 
 /**
- * An image for the image viewer, {connection_id, path}: the promise resolves with the
- * SUCCESS action, whose payload is {blob, type, size} (type: the image type the server
- * detected from the file's first bytes), or the FAILURE action (payload.status 413,
+ * An image for the image viewer, {connection_id, path[, convert: 'jpeg']}: the promise
+ * resolves with the SUCCESS action, whose payload is {blob, type, size, convertedFrom}
+ * (type: the image type the server detected from the file's first bytes; with
+ * convert=jpeg a HEIC/HEIF image comes back as a JPEG, convertedFrom its own type,
+ * anything else unchanged), or the FAILURE action (payload.status 413,
  * 415, ...; undefined when logged out). The token goes in the header, never in a URL;
  * the viewer shows the bytes through a blob: URL.
  */
@@ -206,7 +208,9 @@ export const viewImage = (data) => ({
                 type: VIEW_IMAGE_SUCCESS,
                 payload: async (action, state, res) => {
                     const blob = await res.blob();
-                    return {blob, type: (res.headers.get('Content-Type') || '').split(';')[0].trim(), size: blob.size};
+                    // convertedFrom: the server converted a HEIC/HEIF image to this JPEG (data.convert)
+                    return {blob, type: (res.headers.get('Content-Type') || '').split(';')[0].trim(), size: blob.size,
+                            convertedFrom: res.headers.get('X-Motuz-Converted-From') || null};
                 },
             },
             VIEW_IMAGE_FAILURE,

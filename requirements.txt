@@ -79,6 +79,12 @@ markupsafe==3.0.3
     #   werkzeug
 packaging==26.3
     # via kombu
+pi-heif==1.4.0
+    # via -r requirements.in
+pillow==12.3.0
+    # via
+    #   -r requirements.in
+    #   pi-heif
 prompt-toolkit==3.0.53
     # via click-repl
 psycopg==3.3.6

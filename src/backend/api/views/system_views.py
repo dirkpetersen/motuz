@@ -121,32 +121,44 @@ class SystemFilesViewChunk(Resource):
             api.abort(500, str(e))
 
 
+image_dto = api.model('system-file-view-image-request', {
+    'connection_id': fields.Integer(required=True, example=0, description='0 for the local filesystem'),
+    'path': fields.String(required=True, example='/home/alice/photo.heic'),
+    'convert': fields.String(enum=['jpeg'], description='jpeg: a HEIC/HEIF image comes back as a JPEG '
+                             '(converted on the server, as the user); any other image unchanged'),
+})
+
+
 @api.route('/files/view/image/')
 class SystemFilesViewImage(Resource):
-    @api.expect(dto, validate=True)
+    @api.expect(image_dto, validate=True)
     @api.produces(list(image_view.TYPES))
-    @api.response(200, 'The image (image/png, image/jpeg, image/gif, image/webp, image/heic, image/heif or image/avif)')
+    @api.response(200, 'The image (image/png, image/jpeg, image/gif, image/webp, image/heic, image/heif or image/avif); '
+                       'X-Motuz-Converted-From says which type a converted JPEG came from')
     @api.response(400, 'A folder, not a regular file, a relative local path')
     @api.response(403, 'The user cannot read the file')
     @api.response(404, 'No such file (or connection)')
-    @api.response(413, 'Larger than MOTUZ_VIEW_IMAGE_MAX_BYTES')
-    @api.response(415, 'Not a PNG, JPEG, GIF, WebP, HEIC/HEIF or AVIF image (SVG is refused)')
+    @api.response(413, 'Larger than MOTUZ_VIEW_IMAGE_MAX_BYTES (or too large to convert)')
+    @api.response(415, 'Not a PNG, JPEG, GIF, WebP, HEIC/HEIF or AVIF image (SVG is refused), or not convertible')
+    @api.response(504, 'Reading or converting took too long')
     def post(self):
         """
         The bytes of a PNG, JPEG, GIF, WebP, HEIC/HEIF or AVIF image, read as the logged-in
         user (image viewer). The type is detected from the file's first bytes, never from
-        its name; whether HEIC/HEIF or AVIF actually show is up to the browser (Motuz
-        never bundles a decoder).
+        its name. With convert=jpeg a HEIC/HEIF image is converted to a JPEG by a child
+        process run as the user (no metadata, upright); the browser decodes everything else.
         """
         try:
-            content, mime, path = system_manager.view_image(request.json)
+            content, mime, path, converted_from = system_manager.view_image(request.json)
         except HTTP_EXCEPTION as e:
             api.abort(e.code, e.payload)
         except Exception as e:
             logging.exception(e, exc_info=True)
             api.abort(500, str(e))
-        return Response(content, status=200, headers=image_view.response_headers(path, mime),
-                        direct_passthrough=True)
+        headers = image_view.response_headers(path, mime)
+        if converted_from:
+            headers['X-Motuz-Converted-From'] = converted_from
+        return Response(content, status=200, headers=headers, direct_passthrough=True)
 
 
 document_dto = api.model('system-file-view-document-request', {

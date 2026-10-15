@@ -93,6 +93,12 @@ packaging==26.3
     # via
     #   kombu
     #   pytest
+pi-heif==1.4.0
+    # via -r requirements.in
+pillow==12.3.0
+    # via
+    #   -r requirements.in
+    #   pi-heif
 platformdirs==4.11.12
     # via pylint
 pluggy==1.6.0

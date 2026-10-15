@@ -13,3 +13,7 @@ Flask-SQLAlchemy
 psycopg[binary]
 SQLAlchemy
 uWSGI
+# Decode-only HEIC/HEIF (no x265 encoder; libheif + libde265, LGPL-3.0, as bundled shared libraries)
+# for the image viewer, run as the logged-in user in a child process: api/utils/heic_convert.py
+pi-heif
+Pillow

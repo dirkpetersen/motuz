@@ -706,14 +706,27 @@ logged-in user (locally with their permissions, in the cloud with their connecti
   bytes, not its name (an ISO-BMFF `ftyp` box for HEIC/HEIF/AVIF); SVG files open as
   text instead (an SVG can contain scripts). Images above `MOTUZ_VIEW_IMAGE_MAX_BYTES`
   (default `25M`, at most `256M`, set in `.env`) are refused before they are read.
-  Motuz never decodes, converts or transcodes an image itself: PNG, JPEG, GIF and WebP
-  always show; AVIF (the AV1 codec, royalty-free) decodes in every current major
-  browser; HEIC/HEIF (Apple's photo format, HEVC/H.265 coded) shows only in a browser
-  with its own decoder for it, currently Safari — Motuz does not bundle a software HEVC
-  decoder, since HEVC is patent pooled (MPEG-LA, Access Advance, Velos Media) unlike
-  AV1's royalty-free patent cross-license; a browser without one shows a message
-  instead of the picture. (No third-party code is bundled for this: the browser's own
-  decoder does the work, so no LGPL or other license applies to Motuz's code here.)
+  AVIF (the AV1 codec) decodes in every current major browser. HEIC/HEIF (what iPhones
+  take, HEVC coded) is shown by Safari itself; for Chrome, Firefox and Edge the server
+  converts it to a JPEG (quality 85, the primary image only, upright, without EXIF/GPS/XMP;
+  at most 100 megapixels, the long side capped at 8192 px) and the viewer says "HEIC,
+  converted to JPEG". The converter is C code reading an untrusted file, so it runs in a
+  separate process **as the logged-in user** (the same `sudo` rule as every file
+  operation; never as root and never as the service account) with limits on memory
+  (2 GiB), CPU time, open files and no files written, and a 60 s time limit. It uses
+  [pi-heif](https://github.com/bigcat88/pillow_heif) (the decode-only build of
+  pillow-heif) and Pillow, pinned in `requirements.in`. Their wheels bundle **libheif and
+  libde265, licensed LGPL-3.0**, as separate shared libraries that Python loads at run
+  time (`pi_heif.libs/` next to the package: replaceable, nothing is linked into Motuz's
+  MIT-licensed code); no x265 or other GPL encoder is included. HEVC is covered by patent
+  pools (MPEG-LA, Access Advance, Velos Media): decoding happens on your server, so if
+  that matters to your organization decide before you leave this on; delete
+  `/opt/motuz-heic` (systemd) or build the image without the `--target` install and
+  HEIC/HEIF files then answer "not installed" instead. The docker image installs the
+  packages into `/opt/motuz-heic/site`; `install.sh` of the systemd install does the same
+  for the distribution's `python3` (`MOTUZ_HEIC_PYTHON`, `MOTUZ_HEIC_SITE`, set by
+  `deploy.sh`). A HEIC file with several images (bursts, live photos) shows its primary
+  image only. Markdown files show relative `.heic` pictures the same way (converted).
 - `.md`, `.markdown`: rendered in the browser from the first 1 MiB, without raw HTML
   (shown as text). Links open in a new tab and only for http, https and mailto;
   remote images are never loaded, images next to the file (relative paths) are.

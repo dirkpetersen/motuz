@@ -18,6 +18,7 @@ from ..utils.abstract_connection import RcloneException
 from ..utils import file_view
 from ..utils import image_view
 from ..utils import document_view
+from ..utils import heic_convert
 
 
 @token_required
@@ -144,21 +145,31 @@ def view_chunk(data):
 def view_image(data):
     """
     A PNG, JPEG, GIF, WebP, HEIC/HEIF or AVIF image for the viewer, read as the logged-in user:
-    (bytes, type detected from the magic number, path). Anything else is 415 (SVG
-    too), a file larger than VIEW_IMAGE_MAX_BYTES 413. Contents are never logged.
+    (bytes, type detected from the magic number, path, converted_from). Anything else is
+    415 (SVG too), a file larger than VIEW_IMAGE_MAX_BYTES 413. With `convert: "jpeg"` a
+    HEIC/HEIF image is returned as a JPEG (type image/jpeg, converted_from its own type),
+    converted by a child process run as the user (heic_convert); any other image is
+    returned as it is (converted_from None). Contents are never logged.
     """
     path = data.get('path')
     if not isinstance(path, str) or not path:
         raise HTTP_400_BAD_REQUEST('Invalid path')
+    convert = data.get('convert')
+    if convert not in (None, 'jpeg'):
+        raise HTTP_400_BAD_REQUEST("'convert' must be \"jpeg\"")
     max_bytes = current_app.config.get('VIEW_IMAGE_MAX_BYTES') or image_view.DEFAULT_MAX_BYTES
     cloud_connection, connection = _view_connection(data['connection_id'])
+    converted_from = None
     try:
         content, mime = connection.view_image(data=cloud_connection, path=path, max_bytes=max_bytes)
+        if convert and heic_convert.is_convertible(mime):
+            content = heic_convert.convert(content, cloud_connection.owner)
+            converted_from, mime = mime, heic_convert.CONVERTED_TYPE
     except file_view.ViewError as e:
         raise _VIEW_EXCEPTIONS.get(e.status, HTTP_400_BAD_REQUEST)(str(e))
     except RcloneException as e:
         raise HTTP_400_BAD_REQUEST(str(e))
-    return content, mime, path
+    return content, mime, path, converted_from
 
 
 @token_required

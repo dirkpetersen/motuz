@@ -1181,15 +1181,42 @@ os.utime(os.path.join(d, 'dirB'), (now - 86400,) * 2)
         await shot('viewer-image-avif');
         await closeViewer();
 
-        // HEIC (HEVC): Chromium has no native decoder and Motuz does not bundle one
-        // (patent-licensed codec) — a clear message, not a broken image
+        // HEIC (HEVC): Chromium cannot decode it, so the server converts it to a JPEG (a child
+        // process as alice). The first HEIC image of a page is fetched plain, found undecodable
+        // and fetched again with convert=jpeg; from then on the JPEG is asked for at once.
+        const imageBodies = [];
+        const onImageRequest = r => { if (r.url().endsWith('/api/system/files/view/image/')) imageBodies.push(JSON.parse(r.postData() || '{}')); };
+        page.on('request', onImageRequest);
         await row('photo.heic').dblclick();
-        await page.waitForSelector('.image-viewer-decode-error', { timeout: 20000 });
-        let decodeMsg = await page.locator('.image-viewer-decode-error').textContent();
-        check('image: photo.heic: this browser cannot show it, a clear message (not a broken image)',
-            decodeMsg.includes('cannot display HEIC') && decodeMsg.includes('HEVC')
-            && await page.locator('.image-viewer-image').isVisible().catch(() => false) === false, decodeMsg);
-        await shot('viewer-image-heic-unsupported');
+        await imageLoaded();
+        img = await imageState();
+        check('image: photo.heic is shown as the server\'s JPEG (48 x 64, "HEIC, converted to JPEG")',
+            img.natural === '48x64' && img.src.startsWith('blob:') && img.info.startsWith('HEIC, converted to JPEG · 48 × 64 px'), img);
+        check('image: photo.heic was fetched with convert=jpeg (after a plain try, or at once if this browser had failed before)',
+            imageBodies.some(b => b.convert === 'jpeg' && b.path.endsWith('/photo.heic')), imageBodies);
+        check('image: no message about an unsupported browser', await page.locator('.image-viewer-decode-error').count() === 0);
+        await shot('viewer-image-heic');
+        await closeViewer();
+
+        // A phone photo with a rotation (irot): upright, i.e. 64 x 48 with the red bar on the left
+        imageBodies.length = 0;
+        await row('rotated.heic').dblclick();
+        await imageLoaded();
+        img = await imageState();
+        const bar = await page.evaluate(() => {
+            const i = document.querySelector('.image-viewer-image');
+            const c = document.createElement('canvas');
+            c.width = i.naturalWidth; c.height = i.naturalHeight;
+            const g = c.getContext('2d');
+            g.drawImage(i, 0, 0);
+            const px = (x, y) => [...g.getImageData(x, y, 1, 1).data].slice(0, 3);
+            return { left: px(3, 24), topMiddle: px(32, 3) };
+        });
+        check('image: rotated.heic is upright (portrait photo turned: 64 x 48, the bar on the left edge)',
+            img.natural === '64x48' && bar.left[0] > 200 && bar.left[1] < 80 && bar.topMiddle[0] < 200, { img, bar });
+        check('image: the next HEIC image asks for the JPEG at once (this browser cannot decode HEIC)',
+            imageBodies.length >= 1 && imageBodies[0].convert === 'jpeg' && imageBodies[0].path.endsWith('/rotated.heic'), imageBodies);
+        page.off('request', onImageRequest);
         await closeViewer();
 
         await row('fake.heic').dblclick();
@@ -1319,6 +1346,30 @@ os.utime(os.path.join(d, 'dirB'), (now - 86400,) * 2)
         check('image nav: fast stepping past a still-loading image ends on the last one requested (c.webp)',
             nav.position === '3 / 3' && nav.name === 'c.webp' && img.natural === '64x48', nav);
         await page.unroute('**/api/system/files/view/image/');
+        await closeViewer();
+
+        // Previous/Next across a HEIC image (converted) and other images
+        appShell(`sudo -u alice mkdir -p ${VIEWER_DIR}/nav2 && sudo -u alice cp ${VIEWER_DIR}/small.png ${VIEWER_DIR}/nav2/a.png `
+            + `&& sudo -u alice cp ${VIEWER_DIR}/rotated.heic ${VIEWER_DIR}/nav2/b.heic && sudo -u alice cp ${VIEWER_DIR}/pic.jpg ${VIEWER_DIR}/nav2/c.jpg`);
+        await paneGo('left', null, `${VIEWER_DIR}/nav2`);
+        await leftPane.getByText('b.heic', { exact: true }).waitFor({ timeout: 20000 });
+        await row('a.png').dblclick();
+        await imageLoaded();
+        await page.keyboard.press('ArrowRight');
+        await page.waitForFunction(() => ((document.querySelector('.image-viewer-info') || {}).textContent || '').startsWith('HEIC, converted'),
+            null, { timeout: 30000 });
+        nav = await navState();
+        img = await imageState();
+        check('image nav: Next from a PNG to a HEIC image shows its JPEG (2 / 3, 64 x 48)', nav.position === '2 / 3' && nav.name === 'b.heic'
+            && img.natural === '64x48', { nav, img });
+        await page.keyboard.press('ArrowRight');
+        await page.waitForFunction(() => ((document.querySelector('.image-viewer-info') || {}).textContent || '').startsWith('JPEG'), null, { timeout: 30000 });
+        nav = await navState();
+        check('image nav: ... and on to the JPEG after it (3 / 3, Next disabled)', nav.position === '3 / 3' && nav.nextDisabled === true, nav);
+        await page.keyboard.press('ArrowLeft');
+        await page.waitForFunction(() => ((document.querySelector('.image-viewer-info') || {}).textContent || '').startsWith('HEIC, converted'),
+            null, { timeout: 30000 });
+        check('image nav: ... and back to the HEIC image', (await navState()).position === '2 / 3');
         await closeViewer();
         await paneGo('left', null, VIEWER_DIR); // back out of the nav/ subfolder
 
@@ -1570,6 +1621,39 @@ os.utime(os.path.join(d, 'dirB'), (now - 86400,) * 2)
         check('DOCX: the linked (external) picture was never requested', !requests.some(u => u.includes('tracker.invalid')),
             requests.filter(u => u.includes('tracker.invalid')));
         await shot('viewer-docx');
+        await closeViewer();
+
+        // DOCX pictures are typed by their bytes: this one declares text/html for a PNG/HTML
+        // polyglot and for a page that is no picture at all
+        await row('polyglot.docx').dblclick();
+        await page.waitForFunction(() => {
+            const h = document.querySelector('.docx-viewer-host');
+            return h && h.shadowRoot && h.shadowRoot.textContent.includes('Polyglot test');
+        }, null, { timeout: 30000 });
+        await page.waitForTimeout(500);
+        const poly = await page.evaluate(async () => {
+            const root = document.querySelector('.docx-viewer-host').shadowRoot;
+            const imgs = [...root.querySelectorAll('img')];
+            const withSrc = imgs.filter(i => i.getAttribute('src'));
+            const types = [];
+            for (const i of withSrc) {
+                const blob = await (await fetch(i.src)).blob();
+                types.push({ blob: i.src.startsWith('blob:'), type: blob.type, src: i.src });
+            }
+            return { total: imgs.length, types, removed: root.querySelectorAll('img.docx-image-removed').length };
+        });
+        check('DOCX polyglot: the picture is typed image/png from its bytes, not text/html from the document',
+            poly.types.length === 1 && poly.types[0].blob && poly.types[0].type === 'image/png', poly);
+        check('DOCX polyglot: the HTML that is no picture is not shown ("not loaded")', poly.total === 2 && poly.removed === 1, poly);
+        const opened = await page.context().newPage();
+        try {
+            await opened.goto(poly.types[0].src);
+            const kind = await opened.evaluate(() => ({ type: document.contentType, ran: window.__motuzPolyglot === undefined }));
+            check('DOCX polyglot: "open image in a new tab" is an image, nothing runs', kind.type === 'image/png' && kind.ran, kind);
+        } catch (e) {
+            check('DOCX polyglot: "open image in a new tab" is an image, nothing runs', false, String(e).slice(0, 200));
+        }
+        await opened.close();
         await closeViewer();
 
         // XLSX: sheet tabs, formatted values, cached formula result, truncation notice

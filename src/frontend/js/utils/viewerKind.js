@@ -4,9 +4,9 @@
  *
  * - images (.png .jpg .jpeg .gif .webp .heic .heif .avif): the image viewer; the server
  *   decides the type by the file's first bytes, the extension only picks the viewer.
- *   SVG is not an image here (it can carry scripts): it opens in the text pager. HEIC/
- *   HEIF and AVIF are shown only if the browser can decode them itself (see
- *   ImageViewerDialog.jsx and README "File viewer" — Motuz never bundles a decoder).
+ *   SVG is not an image here (it can carry scripts): it opens in the text pager. AVIF
+ *   is decoded by the browser; HEIC/HEIF by Safari, in the other browsers as the JPEG
+ *   the server converts it to (utils/heifConvert.js, README "File viewer").
  * - Markdown (.md .markdown): rendered, with a switch to the pager (Source)
  * - documents (DOCUMENT_EXTENSIONS: PDF, Word, spreadsheets, PowerPoint): the document
  *   viewer, rendered in the browser; legacy binary Office files get "No preview"

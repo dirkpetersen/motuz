@@ -96,6 +96,16 @@ if [ ! -f "$SETTINGS" ]; then
     fi
     echo "    created $SETTINGS (edit it, then run deploy.sh again)"
 fi
+# The HEIC/HEIF converter (api/utils/heic_convert.py) runs as the logged-in user with the
+# distribution's python3 and the packages install.sh put in /opt/motuz-heic
+if [ -d /opt/motuz-heic/site ]; then
+    [ -n "$(env_get "$SETTINGS" MOTUZ_HEIC_PYTHON)" ] || env_set "$SETTINGS" MOTUZ_HEIC_PYTHON /usr/bin/python3
+    [ -n "$(env_get "$SETTINGS" MOTUZ_HEIC_SITE)" ] || env_set "$SETTINGS" MOTUZ_HEIC_SITE /opt/motuz-heic/site
+    [ "$(cat /opt/motuz-heic/PINS 2>/dev/null)" = "$(grep -iE '^(pi-heif|pillow)==' "$CHECKOUT/requirements.txt" | sort)" ] \
+        || warn "pi-heif/Pillow in /opt/motuz-heic differ from requirements.txt: run sudo bin/systemd/install.sh again"
+else
+    warn "no HEIC/HEIF conversion (/opt/motuz-heic): run sudo bin/systemd/install.sh again"
+fi
 [ -f "$SECRETS" ] || (umask 077 && : > "$SECRETS")
 chmod 600 "$SECRETS"
 for key in $REQUIRED_SECRETS; do # generated once (also when an update adds one)

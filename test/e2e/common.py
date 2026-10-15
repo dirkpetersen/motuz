@@ -200,6 +200,19 @@ def api_request(method, path, token=None, body=None):
             return e.code, raw, e.headers
 
 
+def jpeg_size(data):
+    """(width, height) from the first start-of-frame marker of a JPEG, or None"""
+    i = 2
+    while i + 9 < len(data):
+        if data[i] != 0xff:
+            return None
+        marker = data[i + 1]
+        if 0xc0 <= marker <= 0xcf and marker not in (0xc4, 0xc8, 0xcc):
+            return int.from_bytes(data[i + 7:i + 9], 'big'), int.from_bytes(data[i + 5:i + 7], 'big')
+        i += 2 + int.from_bytes(data[i + 2:i + 4], 'big')
+    return None
+
+
 def check_image_view(token, other_token, folder, connection_id, label, other_status):
     """
     POST /api/system/files/view/image/ on the viewer fixtures in `folder`: the images
@@ -208,16 +221,16 @@ def check_image_view(token, other_token, folder, connection_id, label, other_sta
     """
     files = viewer_fixtures()
 
-    def image(name, tok=token, path=None):
+    def image(name, tok=token, path=None, **extra):
         return api_request('POST', '/api/system/files/view/image/', tok,
-                   {'connection_id': connection_id, 'path': path or f'{folder}/{name}'})
+                   {'connection_id': connection_id, 'path': path or f'{folder}/{name}', **extra})
 
     def message(body):
         return body.get('message', '') if isinstance(body, dict) else str(body)
 
     for name, mime in (('pic.png', 'image/png'), ('small.png', 'image/png'), ('pic.jpg', 'image/jpeg'),
                        ('PIC2.JPEG', 'image/jpeg'), ('pic.gif', 'image/gif'), ('pic.webp', 'image/webp'),
-                       ('photo.heic', 'image/heic'), ('photo.avif', 'image/avif')):
+                       ('photo.heic', 'image/heic'), ('rotated.heic', 'image/heic'), ('photo.avif', 'image/avif')):
         status, body, headers = image(name)
         check(f'{label}: {name} served as {mime}', status == 200 and body == files[name]
               and headers.get('Content-Type') == mime and headers.get('Content-Length') == str(len(files[name])),
@@ -230,6 +243,28 @@ def check_image_view(token, other_token, folder, connection_id, label, other_sta
           and headers.get('Content-Disposition') == 'inline; filename="pic.png"; filename*=UTF-8\'\'pic.png', dict(headers))
     status, body, _ = image('fake.png')
     check(f'{label}: a .png that is text is refused (415)', status == 415 and 'not a PNG, JPEG, GIF, WebP, HEIC/HEIF or AVIF' in message(body), (status, body))
+    # HEIC/HEIF converted to JPEG on the server (convert=jpeg): a child process run as the user
+    for name, size in (('photo.heic', (48, 64)), ('rotated.heic', (64, 48))):
+        status, body, headers = image(name, convert='jpeg')
+        check(f'{label}: {name} with convert=jpeg is a JPEG of {size[0]} x {size[1]} (upright, orientation applied)',
+              status == 200 and isinstance(body, bytes) and body[:3] == b'\xff\xd8\xff' and jpeg_size(body) == size
+              and headers.get('Content-Type') == 'image/jpeg' and headers.get('X-Motuz-Converted-From') == 'image/heic'
+              and headers.get('Content-Length') == str(len(body)), (status, jpeg_size(body) if isinstance(body, bytes) else body, dict(headers)))
+    check(f'{label}: the converted JPEG has the same safe headers and no metadata',
+          headers.get('X-Content-Type-Options') == 'nosniff' and headers.get('Content-Security-Policy') == "default-src 'none'; sandbox"
+          and headers.get('Cache-Control') == 'no-store' and b'Exif' not in body and b'ns.adobe.com' not in body, dict(headers))
+    status, body, headers = image('pic.png', convert='jpeg')
+    check(f'{label}: convert=jpeg leaves a PNG alone', status == 200 and body == files['pic.png']
+          and headers.get('Content-Type') == 'image/png' and 'X-Motuz-Converted-From' not in headers, (status, dict(headers)))
+    status, body, headers = image('photo.avif', convert='jpeg')
+    check(f'{label}: ... and an AVIF (the browser decodes it)', status == 200 and body == files['photo.avif']
+          and headers.get('Content-Type') == 'image/avif', (status, dict(headers)))
+    status, body, _ = image('fake.heic', convert='jpeg')
+    check(f'{label}: a .heic that is text is still 415 with convert=jpeg', status == 415, (status, body))
+    status, body, _ = image('photo.heic', convert='png')
+    check(f'{label}: convert accepts only jpeg (400)', status == 400, (status, body))
+    status, body, _ = image('photo.heic', tok=other_token, convert='jpeg')
+    check(f'{label}: another user cannot convert it either ({other_status})', status == other_status and not isinstance(body, bytes), (status, body))
     status, body, _ = image('fake.heic')
     check(f'{label}: a .heic that is text is refused (415), detected by content not name', status == 415
           and 'not a PNG, JPEG, GIF, WebP, HEIC/HEIF or AVIF' in message(body), (status, body))
