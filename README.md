@@ -1321,8 +1321,10 @@ beyond a few Gb/s, however fast the link. Two levels of settings change that:
 
 - **Installation defaults** in `.env` (passed to `app` and `celery` by
   `docker-compose.yml`) or in `motuz.env` (the commented `MOTUZ_RCLONE_*` lines of
-  `deployment/systemd/motuz.env.example`; run `deploy.sh` after changing them). Unset or empty means rclone's default, i.e. no flag at all, so
-  existing installations behave as before.
+  `deployment/systemd/motuz.env.example`; run `deploy.sh` after changing them). Unset or
+  empty means Motuz's default of 16 transfers and 32 checkers (lowered to the `MAX_*`
+  caps, and left out if they would not fit the memory budget), and rclone's own default,
+  i.e. no flag, for everything else.
 - **Per job**, in the collapsed "Performance" section of the New Copy Job dialog: a
   preset or custom values for the destination's type, within the server's caps and
   memory budget. The job detail shows them, Retry keeps them, and "Check Integrity"
