@@ -2,7 +2,8 @@
 rclone performance settings (README, "Performance tuning").
 
 - Installation defaults from the environment (MOTUZ_RCLONE_TRANSFERS, ...). Unset means
-  rclone's own default, i.e. no flag at all.
+  Motuz's own default (MOTUZ_DEFAULTS: 16 transfers, 32 checkers, since rclone's 4/8
+  leave a data mover mostly waiting on round trips), else rclone's default, i.e. no flag.
 - Per-job overrides from the New Copy Job dialog (`performance` of a copy or hashsum
   job): only the parameters in PARAMS with `per_job`, validated, capped by
   MOTUZ_RCLONE_MAX_* and by the memory budget.
@@ -65,6 +66,14 @@ PARAMS = (
 )
 PARAMS_BY_NAME = {p.name: p for p in PARAMS}
 PER_JOB = tuple(p.name for p in PARAMS if p.per_job)
+
+# Motuz's defaults when MOTUZ_RCLONE_<NAME> is unset (lowered to a smaller cap). rclone's
+# 4 transfers / 8 checkers are too few for many files or high-latency object storage;
+# 16 transfers cost at most 16 x the buffer (256 MiB with rclone's 16M) per job.
+MOTUZ_DEFAULTS = {
+    'transfers': 16,
+    'checkers': 32,
+}
 
 # rclone's defaults (rclone help flags, v1.75), only used for the memory estimate
 RCLONE_DEFAULTS = {
@@ -231,6 +240,8 @@ def load_settings(environ=None):
             raise TuningConfigError('{}={} is above {}={}'.format(name, value, cap_env_name(param.cap), caps[param.cap]))
         defaults[param.name] = value
 
+    _add_motuz_defaults(defaults, caps, memory_budget)
+
     extra_flags = parse_extra_flags(_env(environ, 'MOTUZ_RCLONE_EXTRA_FLAGS') or '')
 
     settings = Settings(defaults, caps, memory_budget, extra_flags)
@@ -242,6 +253,21 @@ def load_settings(environ=None):
             'MOTUZ_RCLONE_MEMORY_BUDGET={} (README, "Performance tuning")'.format(
                 _describe_size(needed), worst or 'local', format_size(memory_budget)))
     return settings
+
+
+def _add_motuz_defaults(defaults, caps, memory_budget):
+    """
+    MOTUZ_DEFAULTS for the parameters the environment leaves unset, lowered to their
+    caps. Only if they fit the memory budget with the other settings: they must never
+    stop an installation that worked with rclone's defaults (e.g. a large buffer size).
+    """
+    added = dict(defaults)
+    for name, value in MOTUZ_DEFAULTS.items():
+        if name not in added:
+            cap = PARAMS_BY_NAME[name].cap
+            added[name] = min(value, caps[cap]) if cap else value
+    if all(estimate_memory(added, backend) <= memory_budget for backend in CHUNKED_BACKENDS + (None,)):
+        defaults.update(added)
 
 
 _settings = None

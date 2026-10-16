@@ -19,7 +19,14 @@ def settings(**env):
     return tuning.load_settings({'MOTUZ_RCLONE_' + k.upper(): v for k, v in env.items()})
 
 
+def plain_settings(**env):
+    """Settings without MOTUZ_DEFAULTS: rclone's own defaults for every unset value"""
+    with mock.patch.dict(tuning.MOTUZ_DEFAULTS, clear=True):
+        return settings(**env)
+
+
 DEFAULT = settings()
+PLAIN = plain_settings()
 
 # Every flag rclone_tuning may put on a command line
 ALLOWED_FLAGS = {p.flag for p in tuning.PARAMS} | set(tuning.EXTRA_FLAGS)
@@ -87,19 +94,32 @@ class TestSizes(unittest.TestCase):
 
 class TestInstallationSettings(unittest.TestCase):
 
-    def test_unset_means_rclone_defaults(self):
-        self.assertEqual(DEFAULT.defaults, {})
-        self.assertEqual(DEFAULT.extra_flags, ())
+    def test_unset_means_motuz_defaults(self):
+        self.assertEqual(DEFAULT.defaults, {'transfers': 16, 'checkers': 32})
+        self.assertEqual(tuning.copy_flags(None, 's3', DEFAULT), ['--transfers=16', '--checkers=32'])
+        self.assertEqual(tuning.hashsum_flags(None, DEFAULT), ['--checkers=32'])
+        # a job's own value wins
+        self.assertEqual(tuning.copy_flags({'transfers': 4}, None, DEFAULT), ['--transfers=4', '--checkers=32'])
+
+    def test_motuz_defaults_yield_to_caps_and_budget(self):
+        self.assertEqual(settings(max_transfers='8', max_checkers='10').defaults, {'transfers': 8, 'checkers': 10})
+        self.assertEqual(settings(transfers='2').defaults, {'transfers': 2, 'checkers': 32})
+        # an installation that fits the budget with rclone's 4 transfers still starts
+        self.assertEqual(settings(buffer_size='256M').defaults, {'buffer_size': 256 * MiB})
+
+    def test_without_motuz_defaults_rclone_defaults(self):
+        self.assertEqual(PLAIN.defaults, {})
+        self.assertEqual(PLAIN.extra_flags, ())
         self.assertEqual(DEFAULT.memory_budget, 8 * GiB)
         self.assertEqual(DEFAULT.caps, {'transfers': 64, 'checkers': 128, 'multi_thread_streams': 32,
                                         'upload_concurrency': 64})
-        self.assertEqual(tuning.copy_flags(None, 's3', DEFAULT), [])
-        self.assertEqual(tuning.copy_flags({}, None, DEFAULT), [])
-        self.assertEqual(tuning.hashsum_flags(None, DEFAULT), [])
+        self.assertEqual(tuning.copy_flags(None, 's3', PLAIN), [])
+        self.assertEqual(tuning.copy_flags({}, None, PLAIN), [])
+        self.assertEqual(tuning.hashsum_flags(None, PLAIN), [])
 
     def test_empty_values_are_unset(self):
         # docker-compose passes unset .env variables as empty strings
-        self.assertEqual(settings(transfers='', s3_chunk_size='  ', memory_budget='').defaults, {})
+        self.assertEqual(settings(transfers='', s3_chunk_size='  ', memory_budget='').defaults, DEFAULT.defaults)
 
     def test_values(self):
         s = settings(transfers='16', checkers='32', multi_thread_streams='8', multi_thread_cutoff='128M',
@@ -156,7 +176,7 @@ class TestInstallationSettings(unittest.TestCase):
         self.assertEqual(tuning.estimate_memory(s.defaults, 's3'), 40 * GiB)
 
     def test_extra_flags(self):
-        s = settings(extra_flags='--fast-list --max-buffer-memory=16G --use-mmap=false --low-level-retries=20')
+        s = plain_settings(extra_flags='--fast-list --max-buffer-memory=16G --use-mmap=false --low-level-retries=20')
         self.assertEqual(s.extra_flags, ('--fast-list', '--max-buffer-memory=16Gi', '--use-mmap=false',
                                          '--low-level-retries=20'))
         self.assertEqual(tuning.copy_flags(None, None, s)[-4:], list(s.extra_flags))
@@ -203,7 +223,7 @@ class TestOverrides(unittest.TestCase):
         self.assertEqual(tuning.validate_overrides(raw, None, DEFAULT), {'transfers': 4})
         self.assertEqual(tuning.validate_overrides(raw, 'azureblob', DEFAULT),
                          {'transfers': 4, 'azureblob_chunk_size': 64 * MiB})
-        self.assertEqual(tuning.copy_flags(raw, 'azureblob', DEFAULT), ['--transfers=4', '--azureblob-chunk-size=64Mi'])
+        self.assertEqual(tuning.copy_flags(raw, 'azureblob', PLAIN), ['--transfers=4', '--azureblob-chunk-size=64Mi'])
         # but still validated
         with self.assertRaises(TuningError):
             tuning.validate_overrides({'s3_chunk_size': '64M --rc'}, None, DEFAULT)
@@ -270,7 +290,7 @@ class TestOverrides(unittest.TestCase):
 
     def test_stored_job_revalidated_against_current_caps(self):
         stored = {'transfers': 64}
-        self.assertEqual(tuning.copy_flags(stored, None, DEFAULT), ['--transfers=64'])
+        self.assertEqual(tuning.copy_flags(stored, None, PLAIN), ['--transfers=64'])
         with self.assertRaisesRegex(TuningError, 'at most 16'):
             tuning.copy_flags(stored, None, settings(max_transfers='16'))
 
@@ -308,7 +328,7 @@ class TestMemory(unittest.TestCase):
         self.assertTrue(tuning.validate_overrides(raw, 's3', settings(memory_budget='32G')))
 
     def test_budget_counts_installation_defaults(self):
-        s = settings(buffer_size='256M', memory_budget='8G') # 4 * 4 * 256 MiB = 4 GiB
+        s = plain_settings(buffer_size='256M', memory_budget='8G') # 4 * 4 * 256 MiB = 4 GiB
         tuning.validate_overrides({'transfers': 8}, None, s) # 8 GiB
         with self.assertRaises(TuningError):
             tuning.validate_overrides({'transfers': 9}, None, s)
@@ -419,13 +439,19 @@ class TestRcloneCommand(unittest.TestCase):
                 connection.md5sum(dst, '/bucket/x', 'alice', '1_src', performance=performance)
         return pushed['command'], pushed['env']
 
-    def test_defaults_unset_command_unchanged(self):
+    def test_motuz_defaults_on_the_command(self):
         command, env = self.command(DEFAULT, dst=_s3_connection())
+        self.assertEqual(command[command.index('copyto') - 2:command.index('copyto')], ['--transfers=16', '--checkers=32'])
+        command, env = self.command(DEFAULT, dst=_s3_connection(), method='md5sum')
+        self.assertEqual(command[command.index('md5sum') - 1], '--checkers=32')
+
+    def test_defaults_unset_command_unchanged(self):
+        command, env = self.command(PLAIN, dst=_s3_connection())
         self.assertEqual(command, [
             *sudo_as('alice', env), '/usr/local/bin/rclone', '--config=/dev/null',
             '--s3-disable-checksum', '--s3-no-check-bucket', '--s3-acl', 'bucket-owner-full-control',
             '--exclude=\\.snapshot/', '--contimeout=5m', 'copyto', '/tmp', 'dst:/bucket/x', '--progress', '--stats', '2s'])
-        command, env = self.command(DEFAULT, dst=_s3_connection(), method='md5sum')
+        command, env = self.command(PLAIN, dst=_s3_connection(), method='md5sum')
         self.assertEqual(command, [*sudo_as('alice', env), '/usr/local/bin/rclone', '--config=/dev/null',
                                    'md5sum', 'src:/bucket/x'])
 
