@@ -11,70 +11,242 @@
 
 ![Motuz settings and features](docs/img/mov-settings.gif)
 
-<!--  The TOC below is created from the headings (## and ###)
-      by the `Markdown TOC` extension to the
-      Visual Studio Code editor.
- -->
+## Quick start
 
-<!-- TOC -->
+Motuz runs without Docker as `systemd --user` services of one dedicated account, `motuz`, on
+**Ubuntu 26.04 LTS** or **Amazon Linux 2027** (a VM, bare metal or an EC2 instance with at
+least 4 GiB of memory and 16 GiB of disk: the frontend build and the uWSGI compile run on the
+machine). The install is split in two so that the part that needs root is short and can be
+reviewed:
 
-1. [Install (default: without Docker)](#install-default-without-docker)
-    1. [Root steps (install.sh)](#root-steps-installsh)
-    2. [Root steps without install.sh](#root-steps-without-installsh)
-    3. [Steps as the motuz account](#steps-as-the-motuz-account)
-    4. [Deploy with an AI assistant (Claude Code)](#deploy-with-an-ai-assistant-claude-code)
-    5. [Why a private PostgreSQL cluster?](#why-a-private-postgresql-cluster)
-    6. [Backups and upgrades](#backups-and-upgrades)
-    7. [Why a sudoers rule](#why-a-sudoers-rule)
-    8. [Logins (PAM)](#logins-pam)
-    9. [Storage](#storage)
-    10. [VM or LXC](#vm-or-lxc)
-    11. [Migrating from the docker install](#migrating-from-the-docker-install)
-    12. [Tests of this install](#tests-of-this-install)
-    13. [Uninstall](#uninstall)
-2. [Install on Amazon Linux 2027 (default on EC2)](#install-on-amazon-linux-2027-default-on-ec2)
-    1. [Install on an instance](#install-on-an-instance)
-    2. [Remote workers on AL2027](#remote-workers-on-al2027)
-    3. [Tests on AL2027](#tests-on-al2027)
-3. [Configuration and features](#configuration-and-features)
-    1. [OneDrive: own app registration](#onedrive-own-app-registration)
-    2. [Google Drive](#google-drive)
-    3. [Privacy policy and terms](#privacy-policy-and-terms)
-    4. [Performance tuning](#performance-tuning)
-    5. [File viewer](#file-viewer)
-    6. [Remote workers (HTTPS only)](#remote-workers-https-only)
-    7. [Temporary EC2 workers](#temporary-ec2-workers)
-4. [Alternative: Docker](#alternative-docker)
-    1. [Quickstart](#quickstart)
-    2. [Beyond quickstart](#beyond-quickstart)
-    3. [Customizing your deployment](#customizing-your-deployment)
-    4. [Setting up production](#setting-up-production)
-    5. [Authentication](#authentication)
-    6. [Requirements](#requirements)
-    7. [Docker and docker-compose](#docker-and-docker-compose)
-    8. [Shared Filesystems (optional)](#shared-filesystems-optional)
-    9. [Cloning the Motuz repository](#cloning-the-motuz-repository)
-    10. [Set up HTTPS certificate](#set-up-https-certificate)
-    11. [Running Motuz the first time](#running-motuz-the-first-time)
-    12. [Redeploying](#redeploying)
-    13. [Migrating from nginx to Traefik](#migrating-from-nginx-to-traefik)
-    14. [Using a custom database](#using-a-custom-database)
-5. [Developer Installation](#developer-installation)
-    1. [Initialize](#initialize)
-    2. [Start](#start)
-    3. [Tests](#tests)
-6. [Development Options](#development-options)
-7. [Examples](#examples)
-    1. [How to use the API](#how-to-use-the-api)
-    2. [Authentication](#authentication-1)
-8. [Folder structure](#folder-structure)
-    1. [Overview](#overview)
-    2. [Frontend folder structure (inside `/src/frontend/`)](#frontend-folder-structure-inside-srcfrontend)
-    3. [Backend folder structure (inside `/src/backend/`)](#backend-folder-structure-inside-srcbackend)
-    4. [Temp folders](#temp-folders)
-9. [Other resources](#other-resources)
+| | Who | How often | What |
+| --- | --- | --- | --- |
+| 1 | **root** | once (again only when `deploy.sh` says so) | `sudo bin/systemd/install.sh`: packages, pinned binaries, the account, its sudoers rule, PAM, PostgreSQL and Redis |
+| 2 | **the account `motuz`** | on the first deploy and on every update | `~/motuz/bin/systemd/deploy.sh`: Python environment, frontend, settings, units, database, start |
 
-<!-- /TOC -->
+Before you start, the two things people most often get stuck on:
+
+- **Firewall.** Only Traefik listens beyond the machine, on **TCP 80 and 443** (80 redirects to
+  443 and is needed for Let's Encrypt). Both must be open. Ubuntu: `sudo ufw allow 22/tcp &&
+  sudo ufw allow 80/tcp && sudo ufw allow 443/tcp && sudo ufw enable` (22 first, or you lock
+  yourself out of SSH). Amazon Linux 2027 / EC2: the instance's security group, or with
+  firewalld `sudo firewall-cmd --permanent --add-service=http --add-service=https &&
+  sudo firewall-cmd --reload`. `install.sh` prints this hint at the end; it never changes
+  the firewall.
+- **DNS.** For a first try you can open `https://<ip or host name>/` and accept the
+  self-signed certificate. For a real name and a trusted certificate, a DNS record for
+  the name must point at this machine's public address *before* you ask for a Let's Encrypt
+  certificate (see [HTTPS certificate](#https-certificate-tls-lets-encrypt)); the Let's
+  Encrypt servers connect to port 80 of that name.
+
+### Very quick start
+
+On a fresh machine, from `git clone` to the login page (every line says who runs it):
+
+```bash
+# 1. As root (via sudo), once: root's own clone of the repository, then the root half
+sudo apt-get update && sudo apt-get install -y git      # Amazon Linux 2027: sudo dnf -y install git
+sudo git clone https://github.com/dirkpetersen/motuz.git /root/motuz-install    # or your fork: add --branch NAME
+sudo /root/motuz-install/bin/systemd/install.sh --local-accounts                # drop --local-accounts if users come from Active Directory/SSSD
+
+# 2. As the account motuz: its own clone, then the deploy (a few minutes: it builds the frontend)
+sudo -iu motuz                                           # you are now motuz
+git clone https://github.com/dirkpetersen/motuz.git ~/motuz    # the same repository and branch as above
+~/motuz/bin/systemd/deploy.sh                            # ends with "Motuz is up: https://<host>/"
+exit                                                     # back to your own account
+
+# 3. As an admin (root): open TCP 80 and 443 (Ubuntu shown, see the firewall bullet above)
+sudo ufw allow 22/tcp && sudo ufw allow 80/tcp && sudo ufw allow 443/tcp && sudo ufw enable
+
+# 4. Check, and create a user to log in with (--local-accounts: any local, non-root account)
+curl -sk https://127.0.0.1/api/system/info/              # answers with "healthy"
+sudo useradd -m alice && sudo passwd alice
+```
+
+Then open `https://<host name or address>/`, accept the self-signed certificate, and sign in
+as `alice`. Nothing has to be configured for this first start: `deploy.sh` generates the
+secrets and a self-signed certificate. Do these next when you are ready (all as `motuz`,
+[Settings and secrets](#settings-and-secrets)):
+
+- a real certificate: `~/motuz/bin/systemd/config.sh set MOTUZ_ACME_DOMAIN motuz.example.org`
+  (Let's Encrypt), or your own files in `~/data/certs`
+  ([HTTPS certificate](#https-certificate-tls-lets-encrypt));
+- shared filesystems that must be mounted before jobs run: `MOTUZ_REQUIRED_PATHS`
+  ([Storage](#storage));
+- own OneDrive / Google Drive app registrations, performance defaults, notification emails
+  (see [Configuration and features](#configuration-and-features)).
+
+Apply changes with `~/motuz/bin/systemd/deploy.sh` (or `systemctl --user restart
+motuz.target` for settings that only the app reads).
+
+### What runs as root
+
+`sudo bin/systemd/install.sh [options]`, from a clone that only root can change (never from the
+account's `~/motuz`). It is idempotent, supports only Ubuntu 26.04 and Amazon Linux 2027, and
+does exactly this (every command by hand: [Root steps without
+install.sh](#root-steps-without-installsh)):
+
+- installs packages: PostgreSQL 18, Redis (Ubuntu) or Valkey 9 (Amazon Linux), Node.js and npm,
+  build tools, `git`, `curl`, `openssl`, `python3`, `sudo`;
+- installs the pinned **rclone, Traefik and uv** into `/usr/local/bin` (SHA256 checked) and the
+  HEIC/HEIF converter (`pi-heif` and Pillow) into `/opt/motuz-heic`;
+- creates the account **`motuz`** (system account, locked password, home `/var/lib/motuz`) and
+  turns on `loginctl enable-linger`, so its services start at boot;
+- writes the account's only privilege, the sudoers rule `/etc/sudoers.d/motuz` (run `rclone`,
+  `ls`, `mkdir`, `env` as the logged-in user, never as root:
+  [Why a sudoers rule](#why-a-sudoers-rule));
+- sets two sysctls (`net.ipv4.ip_unprivileged_port_start=80`, so a user service can bind 80 and
+  443; `vm.overcommit_memory=1`), installs the PAM service `/etc/pam.d/motuz` and
+  `/var/lib/motuz-aws-config`;
+- prepares **PostgreSQL and the Celery broker in the distribution's default mode**: Ubuntu uses
+  the distribution's own `postgresql@18-main` and `redis-server` services (role `motuz_user`,
+  database `motuz`, localhost only; a Redis unix socket with its own ACL user), Amazon Linux
+  uses private instances run as user services of `motuz`
+  ([Defaults per distribution](#install-default-without-docker));
+- with `--local-accounts`, installs the root login helper for local `/etc/shadow` accounts
+  ([Logins (PAM)](#logins-pam)); on Amazon Linux (SELinux enforcing) runs `restorecon` on what
+  it wrote.
+
+It does **not** start Motuz, open the firewall, set up DNS or touch the certificate, and it
+writes nothing inside the account's home. Options (details in [Root steps
+(install.sh)](#root-steps-installsh)): `--local-accounts`, `--system-postgres` /
+`--private-postgres`, `--system-redis` / `--private-redis`, `--sudo-group=GROUP`,
+`--user=NAME`, `--home=DIR`, `--worker-only` (a [remote worker](#remote-workers-https-only)
+host). Root is needed again only when `deploy.sh` prints "run bin/systemd/install.sh again as
+root", for the firewall and DNS, for joining a directory (`realm join`), for shared mounts and
+for OS updates.
+
+### What runs as the account `motuz`
+
+`~/motuz/bin/systemd/deploy.sh [--pull]`, run as `motuz` (`sudo -iu motuz`) from its own
+clone `~/motuz`. No root, now or for updates. It:
+
+- creates the Python environment `~/motuz/venv` with uv and installs `requirements.txt`
+  (Python 3.12 from uv on Ubuntu, the system's Python 3.14 on Amazon Linux);
+- builds the frontend (`npm ci && npm run build`);
+- creates `~/.config/motuz/motuz.env` (settings, from `deployment/systemd/motuz.env.example`) and
+  `secrets.env` (mode 600; Flask key, database and Redis passwords are generated) on the first run
+  and never overwrites them, and merges the passwords `install.sh` left in
+  `/etc/motuz/handoff-motuz.env`;
+- makes a self-signed certificate in `~/data/certs` if there is none, and writes Traefik's and
+  (in the private mode) Redis' configuration;
+- installs the `motuz-*` user units in `~/.config/systemd/user`, prepares the database (initializes
+  the private cluster, or checks the login to the system / external one), restarts
+  `motuz.target` (the app runs the migrations on start) and checks
+  `https://127.0.0.1/api/system/info/`.
+
+**Required settings: none.** Optional ones you will probably want are listed above; edit them with
+`bin/systemd/config.sh` (`show`, `set KEY VALUE`, `ask-secret KEY`; secrets are typed hidden and never
+printed), then run `deploy.sh` again.
+
+### One command instead: bootstrap.sh
+
+On a fresh machine, as root, `bootstrap.sh` does both halves: `install.sh`, the account's clone
+`~/motuz` (cloned from `--repo` / `--branch`, or fast-forwarded if it exists) and `deploy.sh` as the
+account. It is idempotent, so it is also the update command; any other option goes to `install.sh`.
+
+```bash
+sudo apt-get update && sudo apt-get install -y git      # Amazon Linux 2027: sudo dnf -y install git
+sudo git clone --branch BRANCH https://github.com/dirkpetersen/motuz.git /root/motuz-install
+sudo /root/motuz-install/bin/systemd/bootstrap.sh --repo=https://github.com/dirkpetersen/motuz.git --branch=BRANCH --local-accounts
+```
+
+(Leave `--branch` out for the default branch.) EC2 user data does the same:
+[Install on an instance](#install-on-an-instance), `deployment/aws/user-data-al2027.sh`.
+
+### Check that it works
+
+```bash
+curl -sk https://127.0.0.1/api/system/info/        # "healthy"
+sudo -iu motuz env XDG_RUNTIME_DIR=/run/user/$(id -u motuz) systemctl --user status motuz.target 'motuz*'
+```
+
+Then open `https://<host>/` and sign in with a Unix account (root and `motuz` are refused). A
+login plus a small local copy job through the API, as the account `motuz`
+(`bin/systemd/smoke_test.py USER SRC_PATH DST_PATH`; both paths must be local paths that user can
+access, `SRC_PATH` must exist; the password is typed hidden into `~/.motuz-test-pw` and never goes on a
+command line):
+
+```bash
+# as motuz
+~/motuz/bin/systemd/config.sh ask-test-password
+~/motuz/bin/systemd/smoke_test.py alice /home/alice/some-folder /home/alice/copy-of-it
+rm ~/.motuz-test-pw
+```
+
+If something is wrong: [Status and logs](#status-and-logs), and the checklist of the usual causes:
+the page does not open (firewall, DNS, the security group), the browser warns about the certificate
+(self-signed until you [configure one](#https-certificate-tls-lets-encrypt)), sign-in fails for a
+local account (installed without `--local-accounts`, or the user has no password), or `deploy.sh`
+stops with a message naming the missing piece (it says when to run `install.sh` again).
+
+## Contents
+
+- [Quick start](#quick-start)
+    - [Very quick start](#very-quick-start)
+    - [What runs as root](#what-runs-as-root)
+    - [What runs as the account `motuz`](#what-runs-as-the-account-motuz)
+    - [One command instead: bootstrap.sh](#one-command-instead-bootstrapsh)
+    - [Check that it works](#check-that-it-works)
+- [Install (default: without Docker)](#install-default-without-docker)
+    - [Root steps (install.sh)](#root-steps-installsh)
+    - [Root steps without install.sh](#root-steps-without-installsh)
+    - [Steps as the motuz account](#steps-as-the-motuz-account)
+    - [Settings and secrets](#settings-and-secrets)
+    - [HTTPS certificate (TLS, Let's Encrypt)](#https-certificate-tls-lets-encrypt)
+    - [Status and logs](#status-and-logs)
+    - [Updating](#updating)
+    - [Deploy with an AI assistant (Claude Code)](#deploy-with-an-ai-assistant-claude-code)
+    - [Why a private PostgreSQL cluster?](#why-a-private-postgresql-cluster)
+    - [Backups and upgrades](#backups-and-upgrades)
+    - [Why a sudoers rule](#why-a-sudoers-rule)
+    - [Logins (PAM)](#logins-pam)
+    - [Storage](#storage)
+    - [VM or LXC](#vm-or-lxc)
+    - [Migrating from the docker install](#migrating-from-the-docker-install)
+    - [Tests of this install](#tests-of-this-install)
+    - [Uninstall](#uninstall)
+- [Install on Amazon Linux 2027 (default on EC2)](#install-on-amazon-linux-2027-default-on-ec2)
+    - [Install on an instance](#install-on-an-instance)
+    - [Remote workers on AL2027](#remote-workers-on-al2027)
+    - [Tests on AL2027](#tests-on-al2027)
+- [Configuration and features](#configuration-and-features)
+    - [OneDrive: own app registration](#onedrive-own-app-registration)
+    - [Google Drive](#google-drive)
+    - [Privacy policy and terms](#privacy-policy-and-terms)
+    - [Performance tuning](#performance-tuning)
+    - [File viewer](#file-viewer)
+    - [Remote workers (HTTPS only)](#remote-workers-https-only)
+    - [Temporary EC2 workers](#temporary-ec2-workers)
+- [Alternative: Docker](#alternative-docker)
+    - [Docker quickstart](#docker-quickstart)
+    - [Beyond quickstart](#beyond-quickstart)
+    - [Customizing your deployment](#customizing-your-deployment)
+    - [Setting up production](#setting-up-production)
+    - [Authentication](#authentication)
+    - [Requirements](#requirements)
+    - [Docker and docker-compose](#docker-and-docker-compose)
+    - [Shared Filesystems (optional)](#shared-filesystems-optional)
+    - [Cloning the Motuz repository](#cloning-the-motuz-repository)
+    - [Set up HTTPS certificate](#set-up-https-certificate)
+    - [Running Motuz the first time](#running-motuz-the-first-time)
+    - [Redeploying](#redeploying)
+    - [Migrating from nginx to Traefik](#migrating-from-nginx-to-traefik)
+    - [Using a custom database](#using-a-custom-database)
+- [Developer Installation](#developer-installation)
+    - [Initialize](#initialize)
+    - [Start](#start)
+    - [Tests](#tests)
+- [Development Options](#development-options)
+- [Examples](#examples)
+    - [How to use the API](#how-to-use-the-api)
+    - [Authentication](#authentication-1)
+- [Folder structure](#folder-structure)
+    - [Overview](#overview)
+    - [Frontend folder structure (inside `/src/frontend/`)](#frontend-folder-structure-inside-srcfrontend)
+    - [Backend folder structure (inside `/src/backend/`)](#backend-folder-structure-inside-srcbackend)
+    - [Temp folders](#temp-folders)
+- [Other resources](#other-resources)
 
 
 ## Install (default: without Docker)
@@ -87,18 +259,12 @@ This is the default way to install Motuz; Docker is the
 dynamic configuration, the same rclone and the same PostgreSQL major version, and
 [move into each other](#migrating-from-the-docker-install).
 
-The install is split in two, so the part that needs root is short and can be reviewed:
-
-1. **As root, once** (and again after updates that change it; `deploy.sh` warns):
-   `sudo bin/systemd/install.sh`. It installs packages and pinned binaries, creates the
-   account and its sudoers rule, prepares the distribution's PostgreSQL and Redis
-   services, and nothing else. Every command it runs is listed under
-   [Root steps without install.sh](#root-steps-without-installsh), for admins who prefer to
-   run them by hand.
-2. **As the account `motuz`**: clone the repository and run `bin/systemd/deploy.sh`
-   ([Steps as the motuz account](#steps-as-the-motuz-account)). This needs no root, now or
-   for updates, and can be done by an AI assistant ([Deploy with an AI assistant
-   (Claude Code)](#deploy-with-an-ai-assistant-claude-code)).
+The install is split in two, root once and the account `motuz` for everything else (the
+[Quick start](#quick-start) has the copy-and-paste version and says what each half does). The
+rest of this chapter is the reference: every root command by hand ([Root steps without
+install.sh](#root-steps-without-installsh)), settings, certificates, updates, the database
+modes, and what the install changes on the machine. The account's half can also be done by an AI
+assistant ([Deploy with an AI assistant (Claude Code)](#deploy-with-an-ai-assistant-claude-code)).
 
 | Service | Unit | Listens on |
 | --- | --- | --- |
@@ -133,6 +299,12 @@ sudo bin/systemd/install.sh --local-accounts   # also local /etc/shadow accounts
 sudo bin/systemd/install.sh --private-postgres --private-redis   # the account's own instances (Ubuntu)
 sudo bin/systemd/install.sh --system-postgres  # the distribution's PostgreSQL (Amazon Linux)
 ```
+
+Other options: `--sudo-group=GROUP` (Motuz may act only as members of that group, default:
+every user but root), `--user=NAME` (the service account, default `motuz`), `--home=DIR` (its
+home, absolute, on local disk, default `/var/lib/motuz`), `--worker-only` (a [remote
+worker](#remote-workers-https-only) host, with `--central-url`, `--pool`, `--credential-file`,
+`--run-as`), `-h` (all options). The README says `motuz` and `/var/lib/motuz` throughout.
 
 `install.sh` checks that it runs on a supported distribution, is idempotent, and
 prints the PostgreSQL/Redis mode it uses. It installs the packages, the pinned rclone
@@ -387,29 +559,80 @@ git clone https://github.com/dirkpetersen/motuz.git ~/motuz        # or your for
 ~/motuz/bin/systemd/deploy.sh            # every update: ~/motuz/bin/systemd/deploy.sh --pull
 ```
 
+(From an admin shell, one command without an interactive session: `sudo -iu motuz
+motuz/bin/systemd/deploy.sh --pull`. The path is relative to the account's home on purpose: a
+`~` would be expanded by your own shell before `sudo` runs.)
+
 `deploy.sh` creates `~/motuz/venv` with uv (Python 3.12, the Python of the Docker image,
-installed by uv; Ubuntu's own 3.14 only runs the scripts), installs `requirements.txt`
+installed by uv; on Ubuntu the system's own Python only runs the scripts, on Amazon Linux the
+venv uses the system's 3.14), installs `requirements.txt`
 (uWSGI is built from source, as in the image), builds the frontend with the distribution's
 Node.js (`npm ci && npm run build`), creates `~/.config/motuz/motuz.env` (settings, from
 `deployment/systemd/motuz.env.example`) and `secrets.env` (mode 600: the Flask key, the
 database and Redis passwords, empty OAuth client secrets) on the first run and never
-overwrites them, merges the passwords and modes `install.sh` left in `handoff.env`, creates
+overwrites them, merges the passwords and modes `install.sh` left in
+`/etc/motuz/handoff-motuz.env`, creates
 a self-signed certificate in `~/data/certs` if there is none, writes Redis' and Traefik's
 generated configuration and the units, prepares the database (the private cluster, or
 checks the login to the system or external one), restarts `motuz.target` and checks
-`https://127.0.0.1/api/system/info/`. Settings are the `MOTUZ_*` variables of `.env`
-and `docker-compose.yml`; edit `motuz.env` (or `bin/systemd/config.sh set KEY VALUE`; secrets:
-`bin/systemd/config.sh ask-secret KEY`, which asks on the terminal and never prints) and
-run `deploy.sh` again (or `systemctl --user restart motuz.target`). Certificates: replace
-`~/data/certs/cert.crt` and `cert.key` and run `systemctl --user restart motuz-traefik`,
-or set `MOTUZ_ACME_DOMAIN` (and `MOTUZ_ACME_EMAIL`) for Let's Encrypt. Open 80/tcp and
-443/tcp in the firewall.
+`https://127.0.0.1/api/system/info/`. It warns when something root installed is older than
+the checkout ("run bin/systemd/install.sh again as root").
+
+### Settings and secrets
+
+Settings are the `MOTUZ_*` variables of `.env` and `docker-compose.yml`, here in
+`~/.config/motuz/motuz.env`; secrets are in `secrets.env` (mode 600). Both use systemd's
+EnvironmentFile syntax (`KEY=value` or `KEY="value"`, no `$` expansion). Use
+`bin/systemd/config.sh` (as `motuz`; it never prints a secret):
+
+```bash
+~/motuz/bin/systemd/config.sh show                        # settings; for secrets only "set" or "empty"
+~/motuz/bin/systemd/config.sh set MOTUZ_ACME_DOMAIN motuz.example.org    # a MOTUZ_* setting that is not a secret
+~/motuz/bin/systemd/config.sh ask-secret MOTUZ_ONEDRIVE_CLIENT_SECRET    # typed hidden; also MOTUZ_GDRIVE_CLIENT_SECRET, MOTUZ_SMTP_PASSWORD
+~/motuz/bin/systemd/deploy.sh                             # apply (or: systemctl --user restart motuz.target)
+```
+
+`config.sh set` refuses secrets and the settings `install.sh` and `deploy.sh` manage (the
+database and broker modes and addresses, `MOTUZ_AUTH_HELPER`, `MOTUZ_PAM_SERVICE`,
+`MOTUZ_SSO_CONFIG_DIR`, `MOTUZ_FRONTEND_DIR`); editing `motuz.env` by hand works for
+everything else. Run `deploy.sh` (not just a restart) after changing the `MOTUZ_ACME_*` settings,
+because it regenerates Traefik's flags. Nothing is required for a first start.
 
 **An external database.** Set `MOTUZ_DATABASE_MODE=external`, `MOTUZ_DATABASE_HOST` (`host:port`),
 `MOTUZ_DATABASE_USER`, `MOTUZ_DATABASE_NAME` in `motuz.env` and `MOTUZ_DATABASE_PASSWORD` in
 `secrets.env` (and `MOTUZ_DATABASE_REQUIRE_SSL=true` for a remote server), create the role
 and the database owned by it on that server, and run `deploy.sh`: it checks the login and
 never installs, enables or waits for `motuz-postgres`.
+
+### HTTPS certificate (TLS, Let's Encrypt)
+
+Traefik (`motuz-traefik`) is the only service that listens beyond loopback: it terminates TLS on
+443 (TLS 1.2 and 1.3), redirects 80 to 443 and forwards everything except `/internal/*` to uWSGI
+on `127.0.0.1:5000`. It gets its certificate in one of two ways (the same two as in the Docker
+install, [Set up HTTPS certificate](#set-up-https-certificate)):
+
+- **Certificate files (default).** `deploy.sh` makes a self-signed certificate in `~/data/certs`
+  (`cert.crt`, `cert.key`) if there is none. Replace both with your certificate (full chain in
+  `cert.crt`, key mode 0400) and run `systemctl --user restart motuz-traefik`; Traefik reads the
+  files only when it starts.
+- **Let's Encrypt.** A public DNS name must point at this host and 80/tcp and 443/tcp must be
+  reachable from the internet (Let's Encrypt connects to port 80). As `motuz`:
+
+  ```bash
+  ~/motuz/bin/systemd/config.sh set MOTUZ_ACME_DOMAIN motuz.example.org
+  ~/motuz/bin/systemd/config.sh set MOTUZ_ACME_EMAIL admin@example.org    # optional, contact of the ACME account
+  ~/motuz/bin/systemd/deploy.sh                                           # writes Traefik's flags and restarts
+  ```
+
+  Traefik requests the certificate on start and renews it about 30 days before it expires. The
+  account and the certificates, with their private keys, are stored in `~/data/traefik/acme.json`
+  (keep it private, include it in backups); `~/data/certs` is not used in this mode.
+  To try without Let's Encrypt's rate limits, first set `MOTUZ_ACME_CA_SERVER` (with `config.sh set`) to the staging CA
+  (`https://acme-staging-v02.api.letsencrypt.org/directory`), which browsers do not trust, run
+  `deploy.sh`, and when it works set it to an empty value (`config.sh set MOTUZ_ACME_CA_SERVER ''`), delete `~/data/traefik/acme.json` and run `deploy.sh` again. To go
+  back to certificate files, set `MOTUZ_ACME_DOMAIN` to an empty value (`config.sh set MOTUZ_ACME_DOMAIN ''`) and run `deploy.sh`.
+
+### Status and logs
 
 Status and logs (as `motuz`; `sudo -iu motuz` sets no session, `deploy.sh` finds the user
 manager itself):
@@ -420,6 +643,25 @@ systemctl --user status 'motuz*'
 sudo journalctl _SYSTEMD_USER_UNIT=motuz-app.service -f   # as an admin: motuz is a system
                                                           # account, its logs are in the system journal
 ```
+
+### Updating
+
+As `motuz`: `~/motuz/bin/systemd/deploy.sh --pull` (a `git pull --ff-only`, then the same steps as
+the first deploy; the migrations run when the app starts, a short downtime). It needs no root.
+When it prints "run bin/systemd/install.sh again as root" (the pinned rclone or Traefik,
+`/etc/pam.d/motuz`, the HEIC converter or the login helper in the checkout differ from what is
+installed), update root's clone and run `install.sh` again with the options you used, or do both
+halves in one step:
+
+```bash
+sudo git -C /root/motuz-install pull --ff-only
+sudo /root/motuz-install/bin/systemd/install.sh --local-accounts      # the options of the first run
+sudo -iu motuz motuz/bin/systemd/deploy.sh --pull
+# or in one step: sudo /root/motuz-install/bin/systemd/bootstrap.sh --local-accounts
+```
+
+OS packages (`apt`/`dnf`) are updated as usual; see [Backups and upgrades](#backups-and-upgrades)
+for PostgreSQL and Redis.
 
 ### Deploy with an AI assistant (Claude Code)
 
@@ -652,7 +894,7 @@ docker-compose down            # if the new install is on the same host (ports 8
 # 2. On the new host: install.sh, the clone and a first deploy.sh (above); the import goes into the
 #    database mode that is configured (system, private or external), then
 sudo install -o motuz -m 600 /root/motuz-export.tar.gz /var/lib/motuz/
-sudo -iu motuz ~/motuz/bin/systemd/migrate_from_docker.sh import ~/motuz-export.tar.gz
+sudo -iu motuz motuz/bin/systemd/migrate_from_docker.sh import motuz-export.tar.gz   # relative to the home of motuz
 ```
 
 The export holds the database as a `pg_dump` dump with the row count of every table, the
@@ -791,7 +1033,7 @@ connect with `aws ssm start-session --target <instance id>`.
 
 **Updates**: `sudo git -C /root/motuz-install pull && sudo /root/motuz-install/bin/systemd/bootstrap.sh
 --local-accounts` (idempotent: `install.sh` again, `git pull --ff-only` of `~/motuz`,
-`deploy.sh`), or only `sudo -iu motuz ~/motuz/bin/systemd/deploy.sh --pull` when the
+`deploy.sh`), or only `sudo -iu motuz motuz/bin/systemd/deploy.sh --pull` when the
 installed pieces did not change (`deploy.sh` warns otherwise). `dnf upgrade` keeps
 PostgreSQL 18 and Python 3.14; after a Python minor change `deploy.sh` rebuilds the venv.
 
@@ -844,7 +1086,31 @@ same on the server itself (e.g. on the instance).
 
 ## Configuration and features
 
-These apply to both installs (settings in `motuz.env`/`secrets.env`, or `.env` and `/docker/secrets`).
+These apply to both installs. The settings are the same `MOTUZ_*` variables; where they live
+differs:
+
+| | Install without Docker (default) | Docker |
+| --- | --- | --- |
+| Settings | `~/.config/motuz/motuz.env`: `bin/systemd/config.sh set KEY VALUE` | `.env` (or the environment that runs `./start.sh`) |
+| Secrets | `~/.config/motuz/secrets.env`: `bin/systemd/config.sh ask-secret KEY` (typed hidden) | files in `/docker/secrets` |
+| Apply | `bin/systemd/deploy.sh` (or `systemctl --user restart motuz.target`) | `bin/redeploy.sh` (or `./start.sh`) |
+| `manage.py` commands | the `motuz_manage` function below | `docker exec motuz_app bash -c 'source ./load-secrets.sh >/dev/null && python3 manage.py ...'` |
+
+`manage.py` commands on the install without Docker (as `motuz`; the same environment as the
+units, one transient user service per call):
+
+```bash
+export XDG_RUNTIME_DIR=/run/user/$(id -u)
+motuz_manage() { systemd-run --user --wait --pipe --quiet \
+    -p WorkingDirectory=$HOME/motuz/src/backend -E PYTHON_ENVIRONMENT=prod \
+    -p EnvironmentFile=$HOME/.config/motuz/motuz.env -p EnvironmentFile=$HOME/.config/motuz/secrets.env \
+    -p EnvironmentFile=$HOME/.config/motuz/broker.env \
+    $HOME/motuz/venv/bin/python manage.py "$@"; }
+motuz_manage workers list
+```
+
+The docker-specific lines in the sections below (`.env`, `/docker/secrets`, `bin/redeploy.sh`)
+are the Docker column of this table; use the other column for the default install.
 
 ### OneDrive: own app registration
 
@@ -890,6 +1156,15 @@ throttling quota.
    (umask 077 && printf '%s' '<secret value>' > /docker/secrets/MOTUZ_ONEDRIVE_CLIENT_SECRET)
    ```
 6. Redeploy with `bin/redeploy.sh` (or `./start.sh`).
+
+Without Docker, as `motuz` (instead of steps 5 and 6):
+
+```bash
+~/motuz/bin/systemd/config.sh set MOTUZ_ONEDRIVE_CLIENT_ID <Application (client) ID>
+~/motuz/bin/systemd/config.sh set MOTUZ_ONEDRIVE_REDIRECT_URI https://motuz.example.org/api/oauth/onedrive/callback
+~/motuz/bin/systemd/config.sh ask-secret MOTUZ_ONEDRIVE_CLIENT_SECRET     # typed hidden
+~/motuz/bin/systemd/deploy.sh
+```
 
 `bin/prod/start.sh` creates `/docker/secrets/MOTUZ_ONEDRIVE_CLIENT_SECRET` as
 an empty file (mode 600) if it does not exist, because docker-compose does not
@@ -977,7 +1252,10 @@ production.
    ```
 5. Redeploy with `bin/redeploy.sh` (or `./start.sh`). `bin/prod/start.sh`
    creates an empty `MOTUZ_GDRIVE_CLIENT_SECRET` if it is missing; empty or
-   unset values mean "not configured" (rclone's app).
+   unset values mean "not configured" (rclone's app). Without Docker, as `motuz`:
+   `bin/systemd/config.sh set MOTUZ_GDRIVE_CLIENT_ID <client id>.apps.googleusercontent.com`,
+   `config.sh set MOTUZ_GDRIVE_REDIRECT_URI https://motuz.example.org/api/oauth/gdrive/callback`,
+   `config.sh ask-secret MOTUZ_GDRIVE_CLIENT_SECRET`, then `bin/systemd/deploy.sh`.
 
 Google's restrictions on the `drive` scope, which Google classifies as
 *restricted*:
@@ -1023,7 +1301,7 @@ exactly these: the home page `https://<host>/`, the privacy policy link and the
 terms of service link, all on a domain you have verified in Google Search
 Console.
 
-Set who runs the installation in `.env` (all optional; without them the pages
+Set who runs the installation in `.env` (without Docker: `motuz.env`, e.g. `bin/systemd/config.sh set MOTUZ_OPERATOR_NAME "Example Research Institute"`, then `deploy.sh`; all optional; without them the pages
 refer to "the administrator of this Motuz installation"):
 ```bash
 MOTUZ_OPERATOR_NAME=Example Research Institute
@@ -1042,14 +1320,15 @@ streams per file above 256 MiB, S3 parts of 5 MiB with 4 in flight) one job rare
 beyond a few Gb/s, however fast the link. Two levels of settings change that:
 
 - **Installation defaults** in `.env` (passed to `app` and `celery` by
-  `docker-compose.yml`). Unset or empty means rclone's default, i.e. no flag at all, so
+  `docker-compose.yml`) or in `motuz.env` (the commented `MOTUZ_RCLONE_*` lines of
+  `deployment/systemd/motuz.env.example`; run `deploy.sh` after changing them). Unset or empty means rclone's default, i.e. no flag at all, so
   existing installations behave as before.
 - **Per job**, in the collapsed "Performance" section of the New Copy Job dialog: a
   preset or custom values for the destination's type, within the server's caps and
   memory budget. The job detail shows them, Retry keeps them, and "Check Integrity"
   passes the checkers on.
 
-| Setting (`.env`) | rclone flag | rclone default | Per job |
+| Setting (`.env`, or `motuz.env` without Docker) | rclone flag | rclone default | Per job |
 |---|---|---|---|
 | `MOTUZ_RCLONE_TRANSFERS` | `--transfers` | 4 | yes |
 | `MOTUZ_RCLONE_CHECKERS` | `--checkers` (also for integrity checks) | 8 | yes |
@@ -1208,10 +1487,10 @@ access, open no ports and need no VPN. Typical setups:
 - Temporary EC2 workers, one per large cloud-to-cloud job (see "Temporary EC2 workers").
 
 A worker runs the same job code as the Motuz server's Celery worker: rclone as the job's
-owner (`sudo -E -u <owner>`), the same output parsing, Stop, progress and final state in
+owner (`sudo -n --preserve-env=<names> -u <owner>`), the same output parsing, Stop, progress and final state in
 the UI. Local paths are the worker's own mounts.
 
-**Which jobs go where** (`.env` of the Motuz server, passed to the `app` container):
+**Which jobs go where** (`.env` of the Motuz server, passed to the `app` container; `motuz.env` without Docker):
 
 | Variable | Default | Meaning |
 |---|---|---|
@@ -1258,7 +1537,9 @@ pool without workers waits ("Waiting for a worker of pool ..." in its details).
 - Sign-in, claims and the broker are rate limited; sign-ins, claims, ticket and broker use
   are logged (logger `motuz.audit`) without secrets.
 
-**On the Motuz server**
+**On the Motuz server** (without Docker: `bin/systemd/config.sh set MOTUZ_LOCAL_JOB_POOL onprem`,
+`deploy.sh`, and `motuz_manage workers add|list|revoke|bootstrap ...` with the function from
+[Configuration and features](#configuration-and-features))
 
 ```bash
 # .env: send jobs with local paths to the on-prem workers, then ./bin/prod/start.sh
@@ -1270,8 +1551,17 @@ docker exec motuz_app bash -c 'source ./load-secrets.sh >/dev/null && python3 ma
 docker exec motuz_app bash -c 'source ./load-secrets.sh >/dev/null && python3 manage.py workers revoke proxmox-1'
 ```
 
-**Installing a worker** (Ubuntu; the same Motuz release and rclone version as the server,
-the same users (SSSD/LDAP) and mounts as the other workers):
+**Installing a worker** (Ubuntu or Amazon Linux; the same Motuz release and rclone version as the
+server, the same users (SSSD/LDAP) and mounts as the other workers). The short way is
+`install.sh --worker-only` from a readable clone such as `/opt/motuz` (see [Remote workers on
+AL2027](#remote-workers-on-al2027) for the options and a temporary worker):
+
+```bash
+sudo git clone https://github.com/dirkpetersen/motuz /opt/motuz        # check out the server's release
+sudo /opt/motuz/bin/systemd/install.sh --worker-only --central-url=https://motuz.example.org --pool=onprem --credential-file=/root/credential
+```
+
+The same by hand (Ubuntu):
 
 ```bash
 sudo apt-get install -y python3 sudo unzip curl
@@ -1434,7 +1724,10 @@ skips the downloads when rclone and Motuz at the right version are already insta
 hook for a prebuilt AMI or the Amazon Linux 2027 installer's worker-only mode. Booting
 to a running worker takes about 20 seconds.
 
-**Commands** (in the `motuz_app` or `motuz_celery` container):
+**Commands** (in the `motuz_app` or `motuz_celery` container; without Docker `motuz_manage ec2 check|status|reap`.
+The reaper loop (`manage.py ec2 reap --loop`) is started only by the Docker `celery` container's
+entrypoint: the systemd units do not start it, so on the install without Docker run it yourself
+(for example as a user service) before enabling `MOTUZ_EC2_WORKERS`):
 
 ```bash
 docker exec motuz_celery bash -c 'source ./load-secrets.sh >/dev/null && python3 manage.py ec2 check'   # IAM: RunInstances dry run per type
@@ -1463,10 +1756,10 @@ settings are the same `MOTUZ_*` variables (`.env` and `/docker/secrets` here, `m
 `secrets.env` there). To move to the default install, or to see what differs, read
 [Migrating from the docker install](#migrating-from-the-docker-install); `make quickstart`,
 `bin/quickstart.sh` and `bin/redeploy.sh` keep working. The default install, which needs
-no Docker, is [Install (default: without Docker)](#install-default-without-docker)
+no Docker, is the [Quick start](#quick-start) and [Install (default: without Docker)](#install-default-without-docker)
 (`sudo bin/systemd/bootstrap.sh` does all of it on a fresh machine).
 
-### Quickstart
+### Docker quickstart
 
 - Install [`docker` and `docker-compose`](https://docs.docker.com/install/linux/docker-ce/ubuntu/)
 - Run the following command
@@ -1704,8 +1997,8 @@ To go back to certificate files, unset `MOTUZ_ACME_DOMAIN` and restart.
 
 ### Running Motuz the first time
 
-First, initialize the database as described
-the "Initializing the Database" [section](README.md#initializing-the-database) of the README.
+First, initialize the database as described in step 4 of
+[Beyond quickstart](#beyond-quickstart) (`./bin/_utils/database_install.sh`).
 (At some point, we expect this step to go away.)
 
 
@@ -1916,7 +2209,8 @@ MOTUZ_HOST='0.0.0.0' ./bin/dev/backend_start.sh
 #### API Endpoint
 
 * `http://localhost:5000/api/` if you followed the [developer installation](#developer-installation) instructions.
-* `https://localhost/api/` if you followed the [Quickstart](#quickstart) instructions.
+* `https://<host>/api/` if you followed the [Quick start](#quick-start) (the install without Docker).
+* `https://localhost/api/` if you followed the [Docker quickstart](#docker-quickstart) instructions.
 * `https://example.com/api/` if you followed the [Setting up production](#setting-up-production) instructions. Replace `example.com` with your actual domain name.
 
 In the following examples, we'll use `https://example.com/api/` as the API endpoint.
@@ -1940,10 +2234,10 @@ curl -X POST "https://example.com/api/auth/login/" \
 
 - The `access_token` can be provided to Swagger using the "Authorize" button an the top-right and inserting `Bearer $access_token` in the box, where $access_token is the value returned for key "access" in step 1
 
-- The `access_token` is only valid for a limited amount of time (1 day). Upon expiration, a new `access_token` can be obtained by issuing a POST request to `/api/auth/refresh/` using the `refresh_token` in the Authorization field. Example:
+- The `access_token` is only valid for a limited amount of time (15 minutes). Upon expiration, a new `access_token` can be obtained by issuing a POST request to `/api/auth/refresh/` using the `refresh_token` in the Authorization field. Example:
     - Authorization: Bearer `refresh_token`
 
-- The `refresh_token` has longer validity, say T days. Please note that the `POST /api/auth/refresh/` endpoint issues a new `refresh_token` as well, so if the users login at least once every T days, they will never be logged out.
+- The `refresh_token` has longer validity (30 days). Please note that the `POST /api/auth/refresh/` endpoint issues a new `refresh_token` as well, so if the users login at least once every 30 days, they will never be logged out.
 
 ## Folder structure
 
