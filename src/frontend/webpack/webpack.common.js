@@ -103,6 +103,19 @@ module.exports = {
         },
     },
 
+    // Size hints only for what every visitor downloads at start. The viewer chunks
+    // (viewer-*, sheetjs, the pdf.js worker), the pdf.js assets copied by
+    // PdfjsAssetsPlugin (wasm, cmaps, standard fonts) are loaded on demand when a file
+    // is opened (see .claude/rules/file-viewers.md), so their size is by design.
+    // The app bundle includes bootstrap CSS and react-dom and is cached for 30 days
+    // under a content hash; the limits are above its size so only a real regression
+    // warns. No runtimeChunk: the UI tests and the page expect a single start script.
+    performance: {
+        maxAssetSize: 1.5 * 1024 * 1024,
+        maxEntrypointSize: 1.5 * 1024 * 1024,
+        assetFilter: (name) => /^js\/app-[0-9a-f]+\.bundle\.js$/.test(name),
+    },
+
     stats: {
         colors: true
     },
