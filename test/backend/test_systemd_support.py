@@ -344,8 +344,8 @@ class TestDistroModules(unittest.TestCase):
         with open(values['PAM_TEMPLATE']) as f:
             pam = [line.split() for line in f if line.strip() and not line.startswith('#')]
         self.assertEqual(pam, [['auth', 'include', 'password-auth'], ['account', 'include', 'password-auth']])
-        # Ubuntu keeps uv's Python 3.12 (versions.env)
-        self.assertEqual(self.module('ubuntu', 'ubuntu', '26.04')['DISTRO_PYTHON'], '')
+        # Ubuntu 26.04 uses its own Python 3.14 as well
+        self.assertEqual(self.module('ubuntu', 'ubuntu', '26.04')['DISTRO_PYTHON'], '/usr/bin/python3.14')
 
     def test_defaults_per_distribution(self):
         # Ubuntu uses the distribution's PostgreSQL and Redis services, Amazon Linux its private instances

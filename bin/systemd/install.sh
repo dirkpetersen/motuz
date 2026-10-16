@@ -176,7 +176,7 @@ fi
 
 # ---------------------------------------------------------------- HEIC/HEIF converter
 # The image viewer converts HEIC/HEIF to JPEG (api/utils/heic_convert.py) in a child process
-# run as the logged-in user. The server's own Python (uv's, in the account's home) is not
+# run as the logged-in user. The server's own Python (the venv in the account's home) is not
 # readable by the users, so the converter runs with the distribution's python3 and
 # pi-heif + Pillow (libheif/libde265, LGPL-3.0, decode only) from a directory every user can
 # read, installed with the hashes of requirements-heic.txt (the versions of requirements.txt).

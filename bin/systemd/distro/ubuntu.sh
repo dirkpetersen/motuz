@@ -25,6 +25,11 @@ SYSTEM_REDIS_GROUP=redis
 SYSTEM_REDIS_CONF=/etc/redis/redis.conf
 SYSTEM_REDIS_BINARY=/usr/bin/redis-server
 
+# The venv's interpreter (bin/systemd/deploy.sh): Ubuntu's own Python 3.14 instead of uv's
+# 3.12 (versions.env). It gets the distribution's security updates and needs no download.
+# python3-dev has the headers to build uWSGI (uv makes the venv itself, no python3-venv).
+DISTRO_PYTHON=/usr/bin/python3.14
+
 distro_supported() { # after `. /etc/os-release`
     [ "${ID:-}" = ubuntu ] && [ "${VERSION_ID:-}" = 26.04 ]
 }
@@ -43,7 +48,7 @@ distro_install_packages() {
         || echo 'create_main_cluster = false' >> /etc/postgresql-common/createcluster.conf
     apt-get install -y -q --no-install-recommends \
         postgresql-18 postgresql-client-18 redis-server \
-        nodejs npm build-essential git curl ca-certificates unzip openssl python3 \
+        nodejs npm build-essential git curl ca-certificates unzip openssl python3 python3-dev \
         sudo iproute2 libpam-modules
     mask_private_services
     if [ "$POSTGRES_MODE" = private ] && command -v pg_lsclusters >/dev/null && [ -n "$(pg_lsclusters -h 2>/dev/null)" ]; then

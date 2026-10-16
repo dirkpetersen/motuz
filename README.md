@@ -122,7 +122,7 @@ for OS updates.
 clone `~/motuz`. No root, now or for updates. It:
 
 - creates the Python environment `~/motuz/venv` with uv and installs `requirements.txt`
-  (Python 3.12 from uv on Ubuntu, the system's Python 3.14 on Amazon Linux);
+  (the system's Python 3.14 on Ubuntu and Amazon Linux);
 - builds the frontend (`npm ci && npm run build`);
 - creates `~/.config/motuz/motuz.env` (settings, from `deployment/systemd/motuz.env.example`) and
   `secrets.env` (mode 600; Flask key, database and Redis passwords are generated) on the first run
@@ -563,9 +563,8 @@ git clone https://github.com/dirkpetersen/motuz.git ~/motuz        # or your for
 motuz/bin/systemd/deploy.sh --pull`. The path is relative to the account's home on purpose: a
 `~` would be expanded by your own shell before `sudo` runs.)
 
-`deploy.sh` creates `~/motuz/venv` with uv (Python 3.12, the Python of the Docker image,
-installed by uv; on Ubuntu the system's own Python only runs the scripts, on Amazon Linux the
-venv uses the system's 3.14), installs `requirements.txt`
+`deploy.sh` creates `~/motuz/venv` with uv (the system's own Python 3.14 on Ubuntu and
+Amazon Linux, so nothing is downloaded; Docker uses Python 3.12), installs `requirements.txt`
 (uWSGI is built from source, as in the image), builds the frontend with the distribution's
 Node.js (`npm ci && npm run build`), creates `~/.config/motuz/motuz.env` (settings, from
 `deployment/systemd/motuz.env.example`) and `secrets.env` (mode 600: the Flask key, the
@@ -951,7 +950,7 @@ and work with SELinux enforcing. What differs is in `bin/systemd/distro/amzn.sh`
 | --- | --- | --- |
 | PostgreSQL 18 | `postgresql18-server` (binaries in `/usr/bin`) | `postgresql-18` |
 | Celery broker (`motuz-redis`) | **Valkey 9** (`valkey-server`; AL2027 has neither RabbitMQ nor Redis) | Redis 8 |
-| Python of `~/motuz/venv` | the system's **Python 3.14** (`python3`, `python3-devel` for uWSGI) | Python 3.12 from uv |
+| Python of `~/motuz/venv` | the system's **Python 3.14** (`python3`, `python3-devel` for uWSGI) | the system's **Python 3.14** (`python3`, `python3-dev` for uWSGI) |
 | Node.js (frontend build) | `nodejs24`, `nodejs24-npm` | `nodejs` 22 |
 | `/etc/pam.d/motuz` | `password-auth` (authselect) | `common-auth`, `common-account` |
 | SELinux | enforcing, nothing to change | (AppArmor, nothing to change) |
@@ -971,10 +970,11 @@ Stopping a job (`revoke(terminate=True)`) goes through Celery's remote control, 
 Redis transport supports (pub/sub on the same socket).
 
 **Python.** `requirements.txt` is compiled for 3.12, the Python of the Docker image. On
-AL2027 all backend unit tests and the end-to-end suites pass on its Python 3.14 with these
-pins (uWSGI 2.0.31 builds), so `deploy.sh` uses `/usr/bin/python3.14`
-(`DISTRO_PYTHON`): it gets the distribution's security updates and needs no download. On
-Ubuntu, `deploy.sh` keeps uv's 3.12.
+AL2027 and Ubuntu 26.04 all backend unit tests (and on AL2027 the end-to-end suites) pass on
+their Python 3.14 with these pins (uWSGI 2.0.31 builds), so `deploy.sh` uses
+`/usr/bin/python3.14` (`DISTRO_PYTHON`): it gets the distribution's security updates and
+needs no download. Run `install.sh` again after an update so `python3-dev` (headers for
+uWSGI) is installed before `deploy.sh`.
 
 **SELinux** stays enforcing; no booleans, file contexts or policy modules are needed.
 `install.sh` runs `restorecon` on everything it writes. The account's user services
