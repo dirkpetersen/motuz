@@ -355,7 +355,7 @@ if (PHASE === 'paste') {
             ['Preset', 'Parallel transfers', 'Parallel checkers', 'Multi-thread streams', 'Multi-thread cutoff']), labels);
         check('performance: server defaults as placeholders',
             await page.getAttribute('#performance-checkers', 'placeholder') === 'default 16'
-            && await page.getAttribute('#performance-transfers', 'placeholder') === 'default 4');
+            && await page.getAttribute('#performance-transfers', 'placeholder') === 'default 16');
         await page.selectOption('#performance-preset', 'small_files');
         check('performance: "Many small files" fills the fields',
             await page.inputValue('#performance-transfers') === '32' && await page.inputValue('#performance-checkers') === '64'
