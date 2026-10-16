@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-Motuz is a web UI + REST API for large data transfers between on-prem filesystems and cloud storage (S3, Azure Blob, Swift, GCS, SFTP, Dropbox, OneDrive, Google Drive, WebDAV). All actual data movement is done by shelling out to `rclone`. Backend: Python 3.12, Flask 3 + flask-restx + Flask-SQLAlchemy 3 / SQLAlchemy 2 (psycopg 3) + Alembic + Celery 5 (RabbitMQ broker in docker, Redis/Valkey in the systemd install; results stored in the database). The **default install is without Docker** (`systemd --user` services of one account on Ubuntu 26.04 or Amazon Linux 2027, `bin/systemd/`); Docker (`docker-compose.yml`) is the alternative. Frontend: React 18 + Redux + redux-api-middleware 3 + react-router 5, bundled with webpack 5 (Node >= 22.15).
+Motuz is a web UI + REST API for large data transfers between on-prem filesystems and cloud storage (S3, Azure Blob, Swift, GCS, SFTP, Dropbox, OneDrive, Google Drive, WebDAV). All actual data movement is done by shelling out to `rclone`. Backend: Python 3.12 (Docker image) or the distribution's 3.14 (systemd install), Flask 3 + flask-restx + Flask-SQLAlchemy 3 / SQLAlchemy 2 (psycopg 3) + Alembic + Celery 5 (RabbitMQ broker in docker, Redis/Valkey in the systemd install; results stored in the database). The **default install is without Docker** (`systemd --user` services of one account on Ubuntu 26.04 or Amazon Linux 2027, `bin/systemd/`); Docker (`docker-compose.yml`) is the alternative. Frontend: React 18 + Redux + redux-api-middleware 3 + react-router 5, bundled with webpack 5 (Node >= 22.15).
 
 ## Rules
 

@@ -28,7 +28,7 @@ DEFAULT_POSTGRES=private
 DEFAULT_REDIS=private
 SYSTEM_REDIS_SOCKET=""
 # The venv's interpreter (bin/systemd/deploy.sh): AL2027's own Python 3.14 instead of uv's
-# 3.12 (versions.env). The backend unit tests and the e2e suites pass on it with the
+# 3.12 (versions.env; Ubuntu does the same). The backend unit tests and the e2e suites pass on it with the
 # pinned requirements.txt; it gets the distribution's security updates and SELinux's
 # label for system binaries. python3-devel has the headers to build uWSGI.
 DISTRO_PYTHON=/usr/bin/python3.14

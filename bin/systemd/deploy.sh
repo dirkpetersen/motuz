@@ -63,13 +63,17 @@ fi
 
 # ---------------------------------------------------------------- Python
 # uv's Python $PYTHON_VERSION (versions.env), or the distribution's own interpreter when
-# its module sets DISTRO_PYTHON (Amazon Linux 2027: /usr/bin/python3.14)
+# its module sets DISTRO_PYTHON (Ubuntu 26.04, Amazon Linux 2027: /usr/bin/python3.14)
 export UV_NO_PROGRESS=1
 if [ -n "${DISTRO_PYTHON:-}" ]; then
     [ -x "$DISTRO_PYTHON" ] || die "$DISTRO_PYTHON not found: run bin/systemd/install.sh again as root"
     export UV_PYTHON_PREFERENCE=only-system
     PYTHON="$DISTRO_PYTHON"
     PYTHON_VERSION=$("$DISTRO_PYTHON" -c 'import sys; print("%d.%d" % sys.version_info[:2])')
+    # uWSGI is compiled against the interpreter's headers. Check before the old venv is
+    # removed, so a host where install.sh has not added them yet keeps a working venv.
+    [ -f "$("$DISTRO_PYTHON" -c 'import sysconfig; print(sysconfig.get_path("include"))')/Python.h" ] \
+        || die "no Python.h for $DISTRO_PYTHON (python3-dev): run bin/systemd/install.sh again as root, then deploy.sh"
 else
     export UV_PYTHON_PREFERENCE=only-managed
     PYTHON="$PYTHON_VERSION"
