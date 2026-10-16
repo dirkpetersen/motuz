@@ -925,13 +925,22 @@ def _without_tls_verification(credentials, name):
     return result
 
 
+# The ModTime rclone gives directories of bucket storage (S3 prefixes and the like),
+# which have no modification time of their own; a pane would show "26 years ago"
+_PLACEHOLDER_DIR_TIME = '2000-01-01T00:00:00Z'
+
+
 def _with_modified(files):
     """
     rclone lsjson entries plus `modified`: their ModTime (RFC 3339 with any offset)
-    in ISO 8601 UTC, or None if unknown (see file_times)
+    in ISO 8601 UTC, or None if unknown (see file_times), also for a directory with
+    rclone's placeholder time
     """
     for entry in files:
-        entry['modified'] = rfc3339_to_iso_utc(entry.get('ModTime'))
+        modified = rfc3339_to_iso_utc(entry.get('ModTime'))
+        if entry.get('IsDir') and modified == _PLACEHOLDER_DIR_TIME:
+            modified = None
+        entry['modified'] = modified
     return files
 
 
