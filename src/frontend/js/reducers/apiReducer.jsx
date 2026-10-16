@@ -231,25 +231,35 @@ export default (state=initialState, action) => {
     }
 
     case api.VERIFY_CLOUD_CONNECTION_REQUEST: {
+        const {attempt = 1, run = null} = action.meta || {};
         return {
             ...state,
             cloudConnectionVerification: {
                 loading: true,
                 success: null,
+                attempt,
+                run,
+                // the previous attempt's error stays visible while trying again
+                message: attempt > 1 ? state.cloudConnectionVerification.message : null,
             },
             cloudErrors: initialState.cloudErrors,
             cloudErrorMessage: null,
         }
     }
     case api.VERIFY_CLOUD_CONNECTION_SUCCESS: {
-        // HTTP 200 with {result: false, message} when rclone could not connect
+        // HTTP 200 with {result: false, message, retryable} when rclone could not connect
         const payload = action.payload || {};
+        const {attempt = 1, run = null} = action.meta || {};
+        const failed = payload.result === false;
         return {
             ...state,
             cloudConnectionVerification: {
                 loading: false,
-                success: payload.result !== false,
-                message: payload.result === false ? payload.message : null,
+                success: !failed,
+                message: failed ? payload.message : null,
+                attempt,
+                run,
+                willRetry: failed && payload.retryable !== false && attempt < api.VERIFY_ATTEMPTS,
             },
         }
     }

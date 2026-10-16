@@ -33,6 +33,9 @@ class CloudConnection(db.Model):
     # S3 compatible fields
     s3_endpoint = db.Column(db.String, nullable=True)
     s3_v2_auth = db.Column(db.String, nullable=True)
+    # Do not verify the TLS certificate of this connection's server (e.g. on-prem S3
+    # whose certificate does not match its host name); rclone's other remote still does
+    skip_tls_verify = db.Column(db.Boolean, nullable=False, default=False, server_default=db.false())
 
     # Azure fields
     azure_account = db.Column(db.String, nullable=True)

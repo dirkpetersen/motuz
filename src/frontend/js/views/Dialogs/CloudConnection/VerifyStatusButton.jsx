@@ -1,19 +1,31 @@
 import React from 'react';
 
 import Icon from 'components/Icon.jsx'
+import { VERIFY_ATTEMPTS } from 'actions/apiActions.jsx'
 
 
 // Result of "Test connection", next to the button. Why a test failed is shown by
 // DialogError above the dialog's buttons.
 class VerifyStatusButton extends React.PureComponent {
     render() {
-        const {loading, success} = this.props;
+        const {loading, success, attempt, willRetry} = this.props;
 
         if (loading) {
-            return <span className='ms-2 text-muted verify-status'>Testing...</span>;
+            return (
+                <span className='ms-2 text-muted verify-status'>
+                    {attempt > 1 ? `Testing... (attempt ${attempt} of ${VERIFY_ATTEMPTS})` : 'Testing...'}
+                </span>
+            );
         }
         if (success == null) {
             return null;
+        }
+        if (!success && willRetry) {
+            return (
+                <span className='ms-2 text-warning verify-status'>
+                    <Icon name='x'/> Attempt {attempt} of {VERIFY_ATTEMPTS} failed, trying again...
+                </span>
+            );
         }
         if (success) {
             return (
@@ -60,7 +72,11 @@ export const dialogErrorMessage = (ownError, cloudErrorMessage, verification) =>
     if (cloudErrorMessage) {
         return cloudErrorMessage;
     }
-    if (verification && verification.success === false && verification.message) {
+    if (verification && verification.message && verification.success !== true) {
+        if (verification.willRetry || verification.loading) {
+            // shown at once; the test goes on (VerifyStatusButton shows the attempt)
+            return 'Attempt failed: ' + verification.message;
+        }
         return 'The test failed: ' + verification.message;
     }
     return null;

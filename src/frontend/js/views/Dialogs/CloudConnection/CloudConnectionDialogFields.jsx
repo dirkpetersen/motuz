@@ -340,6 +340,25 @@ class CloudConnectionDialogFields extends React.Component {
                             error={this.props.errors.s3_endpoint}
                             isValid={this.props.verifySuccess}
                         />
+                        <CloudConnectionField label='TLS certificate' input={{}}>
+                            <div className='form-check mt-2'>
+                                <input
+                                    type='checkbox'
+                                    className='form-check-input'
+                                    id='skip_tls_verify'
+                                    name='skip_tls_verify'
+                                    defaultChecked={!!this.props.data.skip_tls_verify}
+                                />
+                                <label className='form-check-label' htmlFor='skip_tls_verify'>
+                                    Ignore certificate errors
+                                </label>
+                                <div className='form-text'>
+                                    Only for storage you trust whose certificate does not match
+                                    its name or is self-signed: the connection is then not
+                                    protected against an impostor server.
+                                </div>
+                            </div>
+                        </CloudConnectionField>
                     </React.Fragment>
                 )}
             </React.Fragment>
