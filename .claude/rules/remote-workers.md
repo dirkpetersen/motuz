@@ -1,0 +1,30 @@
+---
+paths:
+  - "src/backend/api/managers/worker_manager.py"
+  - "src/backend/api/views/worker_views.py"
+  - "src/backend/api/managers/job_routing.py"
+  - "src/backend/api/models/worker.py"
+  - "src/backend/api/utils/rate_limit.py"
+  - "src/backend/api/utils/job_runner.py"
+  - "src/backend/api/utils/node_check.py"
+  - "src/backend/api/version.py"
+  - "src/worker/**"
+  - "bin/systemd/worker_once.sh"
+  - "test/backend/test_workers.py"
+  - "test/e2e/worker_*"
+  - "test/e2e/connect_proxy.py"
+  - "test/e2e/systemd/worker_host_test.sh"
+---
+
+# Remote workers (HTTPS only)
+
+Detail for jobs that run on remote workers. Summary is in CLAUDE.md.
+
+Jobs can run on remote workers that reach the central node only by outbound HTTPS (optionally via an HTTP proxy); no database access, no inbound ports. README "Remote workers (HTTPS only)" is the operator documentation.
+- **Routing** (`managers/job_routing.py`, called by the copy/hashsum managers' `create`): a job with a local path goes to `LOCAL_JOB_POOL`, a cloud-to-cloud job whose source is large (`estimate_size`: `RcloneConnection.size` = `rclone size --json` with `JOB_SIZE_TIMEOUT`, a timeout counts as large; the phase-4 hook) to `LARGE_JOB_POOL`, the rest to `central`. Defaults (`MOTUZ_LOCAL_JOB_POOL` / `MOTUZ_LARGE_JOB_POOL` unset) are `central` = Celery as before. Any other pool gets a `remote_job` row (`models/worker.py`, migration `d9e2f4a6b8c1`) instead of a Celery task. `job_routing.rclone_flags(job_type, job)` puts the job's performance flags (`rclone_tuning.copy_flags` / `hashsum_flags`, computed on the central node where the `MOTUZ_RCLONE_*` settings are) into the ticket; the worker passes them unchanged as `extra_flags` (checked to be `--` options), at the same place in the command line as `copy`/`md5sum` do.
+- **Auth** (`managers/worker_manager.py`): `worker` rows (`manage.py workers add|list|revoke|bootstrap`, click group in `manage.py`) hold SHA-256 hashes of `mzw1.<id>.<random>` secrets; `worker_bootstrap_token` single-use `mzb1.` tokens create an ephemeral worker (optionally `bound_job` `copy:<id>`/`hashsum:<id>`, revoked when that job ends). Worker access tokens are PyJWT HS256 with a key derived from `SECRET_KEY` (HMAC, never `JWT_SECRET_KEY`), `aud=motuz-worker`, `typ=worker`, `pool`; `authenticate()` also checks the row is not revoked. So user endpoints (`flask_jwt_extended`) never accept worker tokens and `/api/workers` never accepts user tokens. All secret comparisons go through `_hash_matches` (`hmac.compare_digest`).
+- **API** (`views/worker_views.py`, a plain Blueprint at `/api/workers`, not flask-restx/Swagger): `auth`, `auth/refresh`, `claim` (long poll up to 25 s, 204 if nothing), `jobs/<remote_job id>/progress` and `/finish` (worker token + `X-Motuz-Ticket`), `oauth/token`. In-memory rate limits (`utils/rate_limit.py`; one uWSGI process). Audit lines go to the `motuz.audit` logger, never with secrets.
+- **Claim**: `SELECT ... FOR UPDATE SKIP LOCKED` then an `UPDATE ... WHERE state='QUEUED'` compare-and-set (atomic on SQLite too); `QUEUED -> RUNNING -> DONE`. The ticket (`build_ticket`) has the job (type, id, owner, options, src/dst with path, `local`, and for connections `rclone_env` from `_formatCredentials` or, for `subtype='profile'`, `profile_connection` (non-secret fields, resolved on the worker as the owner)), `rclone_flags`, `ticket_token` `mzt1.<remote_job id>.<random>`, expiry, lease. Hashsum tickets name both sides' remote `src` (md5sum reads `src`). Stored: hashes only; the ticket hash stays after DONE so late calls get 410.
+- **Lease**: `WORKER_LEASE_SECONDS` (120), renewed by progress; `expire_leases()` (claims, and user list/retrieve, throttled to every 5 s) marks expired jobs FAILED with the reason in `progress_error` (never requeued); `revoke_worker` fails the worker's running jobs at once. Stop: `request_stop` drops a queued job or sets `stop_requested`, returned as `action: stop` by the next progress call. `retrieve` takes live text from `remote_job.progress_text/error_text` (`apply_remote_progress`) instead of Celery. `finish` sets the final state (STOPPED stays STOPPED), hashsum trees, and sends the emails.
+- **HTTPS token broker**: for brokered connections the ticket's token has refresh token `mzr1.<remote_job id>.<side>.<random>` (not the handle) and `token_url` `MOTUZ_PUBLIC_URL` or the request's host + `/api/workers/oauth/token` (`_formatCredentials(..., token_broker=fn)` -> `broker_token(via=fn)`). `handle_worker_token_request` checks the broker hash, job RUNNING, lease, worker not revoked, and that the side's connection is brokered and the owner's, locks it and calls `token_broker_manager.serve_locked_connection` (the loopback broker's code after its handle lookup). rclone gets this narrower token, not the ticket, because the job's owner can read rclone's environment.
+- **Agent** (`src/worker/motuz_worker.py`, stdlib only, imports `api.utils.*` and `api.version` from `src/backend`: `api/__init__.py` loads the Flask app lazily (PEP 562 `__getattr__`), so `api.utils` must never import the application or config): sign in, `check_host` (required mounts, rclone), version check against `api/version.py` (`VERSION`, `WORKER_PROTOCOL`; bump them when the job code or worker API changes), claim, then `RcloneConnection.copy_with_credentials` / `md5sum_with_credentials` (same command builders as `copy`/`md5sum`; `extra_env` adds the proxy variables and `SSL_CERT_FILE`, which `user_process_env` would otherwise drop) and `utils/job_runner.py` (`watch_copy`, `run_hashsum`, `exit_state`, shared with `tasks/celery_tasks.py`). Unit `src/worker/motuz-worker.service` (systemd --user of the `motuz` account, exit 78 = no restart), `src/worker/worker.env.example`; the app image contains `/app/src/worker`.
