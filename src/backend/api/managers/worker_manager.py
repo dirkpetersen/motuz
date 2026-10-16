@@ -67,6 +67,7 @@ REMOTE_NAMES = {'copy': {'src': 'src', 'dst': 'dst'}, 'hashsum': {'src': 'src', 
 PROFILE_FIELDS = (
     'type', 'subtype', 'owner', 'profile_source', 'profile_name',
     's3_region', 's3_endpoint', 's3_v2_auth', 'kms_encryption_key_arn', 'azure_account',
+    'skip_tls_verify',
 )
 
 TOKEN_AUDIENCE = 'motuz-worker'

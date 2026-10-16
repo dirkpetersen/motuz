@@ -399,22 +399,55 @@ export const createCloudConnection = (data) => {
     }
 };
 
-export const verifyCloudConnection = (data) => {
-    // An id (Edit dialog) makes the backend test with the stored secrets and token;
-    // the New dialog's form has an empty one, which the API would reject
-    if (!data.id) {
-        delete data.id;
-    }
+// "Test connection": each request is one quick rclone attempt (the backend's
+// VERIFY_FLAGS); a failure is shown at once and, unless the backend says a retry cannot
+// help (certificate, credentials, ...), tried again, at most VERIFY_ATTEMPTS times.
+export const VERIFY_ATTEMPTS = 5;
+export const VERIFY_RETRY_DELAY_MS = 2000;
+let verifyRun = 0;
 
+const _verifyCloudConnection = (data, attempt, run) => {
+    const meta = {attempt, run};
     return {
         [RSAA]: {
             endpoint: `/api/connections/verify/`, // TODO: Why is there a trailing slash here?
             method: 'POST',
             body: JSON.stringify(data),
             headers: withAuth({ 'Content-Type': 'application/json' }),
-            types: [ VERIFY_CLOUD_CONNECTION_REQUEST, VERIFY_CLOUD_CONNECTION_SUCCESS, VERIFY_CLOUD_CONNECTION_FAILURE ],
+            types: [
+                {type: VERIFY_CLOUD_CONNECTION_REQUEST, meta},
+                {type: VERIFY_CLOUD_CONNECTION_SUCCESS, meta},
+                {type: VERIFY_CLOUD_CONNECTION_FAILURE, meta},
+            ],
         }
     }
+};
+
+export const verifyCloudConnection = (data) => {
+    // An id (Edit dialog) makes the backend test with the stored secrets and token;
+    // the New dialog's form has an empty one, which the API would reject
+    if (!data.id) {
+        delete data.id;
+    }
+    verifyRun += 1;
+    const run = verifyRun;
+
+    return async (dispatch, getState) => {
+        let result;
+        for (let attempt = 1; attempt <= VERIFY_ATTEMPTS; attempt++) {
+            result = await dispatch(_verifyCloudConnection(data, attempt, run));
+            const payload = result && !result.error ? result.payload : null;
+            if (!payload || payload.result !== false || payload.retryable === false || attempt === VERIFY_ATTEMPTS) {
+                return result;
+            }
+            await new Promise(resolve => setTimeout(resolve, VERIFY_RETRY_DELAY_MS));
+            // Stop when the dialog was closed or reopened, or another test started
+            if (run !== verifyRun || getState().api.cloudConnectionVerification.run !== run) {
+                return result;
+            }
+        }
+        return result;
+    };
 };
 
 export const updateCloudConnection = (data) => {

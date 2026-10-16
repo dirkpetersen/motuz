@@ -55,6 +55,7 @@ class RcloneConnection(AbstractConnection):
             RCLONE,
             '--config=/dev/null',
             *_rate_limit_flags(credentials),
+            *VERIFY_FLAGS,
             'lsjson',
             'current:{}'.format(bucket),
         ]
@@ -72,11 +73,14 @@ class RcloneConnection(AbstractConnection):
             return {
                 'result': False,
                 'message': 'Exit status {}'.format(returncode),
+                'retryable': True,
             }
         except RcloneException as e: # rclone failed and explained why on stderr
+            message = str(e)[-1000:]
             return {
                 'result': False,
-                'message': str(e)[-1000:],
+                'message': message,
+                'retryable': not is_permanent_error(message),
             }
 
 
@@ -830,6 +834,9 @@ class RcloneConnection(AbstractConnection):
         else:
             logging.error("Connection type unknown: {}".format(data.type))
 
+        if getattr(data, 'skip_tls_verify', None) is True:
+            credentials = _without_tls_verification(credentials, name)
+
         return credentials
 
 
@@ -859,6 +866,63 @@ class RcloneConnection(AbstractConnection):
             if len(stderr) == 0:
                 raise
             raise RcloneException(stderr)
+
+
+# "Test connection" makes one quick attempt: the dialog repeats it (at most 5 times,
+# showing each error at once) only while the error may be transient. rclone's default
+# of 10 low-level retries with backoff took minutes to report e.g. a certificate error.
+VERIFY_FLAGS = ('--low-level-retries=1', '--retries=1', '--contimeout=15s', '--timeout=30s')
+
+# Errors a retry cannot fix (wrong certificate, credentials, bucket or host name)
+_PERMANENT_ERRORS = (
+    'x509:',
+    'tls:',
+    'certificate',
+    'InvalidAccessKeyId',
+    'SignatureDoesNotMatch',
+    'AccessDenied',
+    'NoSuchBucket',
+    'StatusCode: 401',
+    'StatusCode: 403',
+    'StatusCode: 404',
+    'no such host',
+    'invalid_grant',
+    'AuthenticationFailed',
+    'AuthorizationFailure',
+)
+
+
+def is_permanent_error(message):
+    """True if rclone's error message names an error that trying again cannot fix"""
+    return any(marker in message for marker in _PERMANENT_ERRORS)
+
+
+# Suffix of the remote that holds a connection's real configuration when its TLS
+# certificate is not verified (see _without_tls_verification)
+_TLS_SKIPPING_SUFFIX = 'tlsoff'
+
+
+def _without_tls_verification(credentials, name):
+    """
+    The configuration of remote `name` with TLS certificate verification turned off for
+    that remote only. rclone's --no-check-certificate is global (a copy would also stop
+    checking the other side), and an RCLONE_CONFIG_<NAME>_OVERRIDE.<FLAG> variable has a
+    dot in its name. So the configuration moves to the remote `<name>tlsoff`, and `name`
+    becomes an alias of it with a per-remote override (rclone connection string), so
+    paths like `src:bucket/key` keep working: everything is still plain RCLONE_CONFIG_*
+    variables, also in a remote worker's ticket.
+    """
+    prefix = 'RCLONE_CONFIG_{}_'.format(name.upper())
+    inner = name + _TLS_SKIPPING_SUFFIX
+    inner_prefix = 'RCLONE_CONFIG_{}_'.format(inner.upper())
+    result = {}
+    for key, value in credentials.items():
+        if key.startswith(prefix):
+            key = inner_prefix + key[len(prefix):]
+        result[key] = value
+    result[prefix + 'TYPE'] = 'alias'
+    result[prefix + 'REMOTE'] = '{},override.no_check_certificate=true:'.format(inner)
+    return result
 
 
 def _with_modified(files):
@@ -1012,6 +1076,9 @@ def should_log_full_credential(key):
         # webdav
         '_URL',
         '_USER',
+
+        # alias (a connection that skips TLS verification, _without_tls_verification)
+        '_REMOTE',
     ]
 
     return key in _LOGGABLE_VARIABLES or any(key.endswith(suffix) for suffix in suffix_allowlist)
