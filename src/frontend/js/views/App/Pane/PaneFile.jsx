@@ -3,7 +3,7 @@ import classnames from 'classnames';
 
 import Icon from 'components/Icon.jsx'
 import formatBytes from 'utils/formatBytes.jsx'
-import {formatAge, formatLocalDateTime, UNKNOWN} from 'utils/fileAge.js'
+import {formatAge, formatLocalDateTime, parseModified, UNKNOWN} from 'utils/fileAge.js'
 
 
 class PaneFile extends React.Component {
@@ -39,7 +39,8 @@ class PaneFile extends React.Component {
         } else if (!isPlaceholder) {
             sizeText = typeof size === 'number' ? formatBytes(size, useSiUnits) : UNKNOWN
         }
-        const hasAge = !isPlaceholder && name !== '..'
+        // Unknown times (e.g. folders of bucket storage) stay blank: a dash says nothing more
+        const hasAge = !isPlaceholder && name !== '..' && parseModified(modified) !== null
 
         return (
             <React.Fragment>
@@ -56,7 +57,7 @@ class PaneFile extends React.Component {
                 </div>
                 <div
                     className={cellClasses({'grid-file-age': true})}
-                    title={hasAge ? formatLocalDateTime(modified) || 'Modification time unknown' : undefined}
+                    title={hasAge ? formatLocalDateTime(modified) || undefined : undefined}
                     {...rowProps}
                 >
                     {hasAge ? formatAge(modified, now) : ''}

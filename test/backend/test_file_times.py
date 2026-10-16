@@ -53,3 +53,12 @@ class TestFileTimes(unittest.TestCase):
         ])
         self.assertEqual([f['modified'] for f in files], ['2026-09-27T06:15:44Z', None, None])
         self.assertEqual(files[0]['ModTime'], '2026-09-26T23:15:44.1-07:00')  # passed through
+
+    def test_bucket_directories_have_no_time(self):
+        # rclone gives S3 prefixes 2000-01-01; a file with that time keeps it
+        files = _with_modified([
+            {'Path': 'csv', 'Name': 'csv', 'Size': 0, 'ModTime': '2000-01-01T00:00:00.000000000Z', 'IsDir': True},
+            {'Path': 'f', 'Name': 'f', 'Size': 3, 'ModTime': '2000-01-01T00:00:00Z', 'IsDir': False},
+            {'Path': 'b', 'Name': 'b', 'Size': -1, 'ModTime': '2024-05-01T10:00:00Z', 'IsDir': True},
+        ])
+        self.assertEqual([f['modified'] for f in files], [None, '2000-01-01T00:00:00Z', '2024-05-01T10:00:00Z'])
