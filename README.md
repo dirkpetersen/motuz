@@ -1172,15 +1172,15 @@ these options, proposed upstream): `--md5-simd` computes MD5s with
 Check Integrity, S3 upload parts), and `--s3-part-checksum md5|crc32c|none` chooses the checksum
 of each upload part. Motuz passes both as rclone variables (`RCLONE_MD5_SIMD*`,
 `RCLONE_S3_PART_CHECKSUM`), which a stock rclone ignores, so they are safe with either. Measured
-on 8 vCPUs, AWS us-west-2, 10 GB of 100 MB files, 32 transfers, chunked uploads, rclone's check
+on 8 vCPUs, AWS us-west-2, 33 GB of 100 MB files, 32 transfers, chunked uploads, rclone's check
 after the copy skipped:
 
 | Part checksum | Upload | CPU per GB |
 |---|---|---|
-| MD5, Go's crypto/md5 (stock rclone) | 1.6 GB/s | 2.9 core-s |
-| MD5 with md5-simd (2-3 servers) | 2.4 GB/s | 2.3 core-s |
-| CRC32C | 3.1 GB/s | 1.8 core-s |
-| none | 3.3 GB/s | 1.7 core-s |
+| MD5, Go's crypto/md5 (stock rclone) | 2.5 GB/s | 2.8 core-s |
+| MD5 with md5-simd (2 / 3 servers) | 2.8 / 3.0 GB/s | 2.2 core-s |
+| CRC32C | 3.7 GB/s | 1.8 core-s |
+| none | 3.9 GB/s | 1.7 core-s |
 
 Without any hashing the CPU goes to the kernel (sockets, file reads), memory copies and TLS, so
 about 1.7 core-seconds per GB remain whatever the checksum. `rclone md5sum` of the same files:
