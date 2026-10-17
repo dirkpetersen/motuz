@@ -98,6 +98,10 @@ install.sh](#root-steps-without-installsh)):
 - sets two sysctls (`net.ipv4.ip_unprivileged_port_start=80`, so a user service can bind 80 and
   443; `vm.overcommit_memory=1`), installs the PAM service `/etc/pam.d/motuz` and
   `/var/lib/motuz-aws-config`;
+- tunes the network for the data mover in `/etc/sysctl.d/61-motuz-network.conf`, also on worker
+  hosts: TCP buffers of up to 128 MiB (Ubuntu's 4 MiB send buffer limits one connection to
+  0.5 Gb/s at 70 ms round trip) and BBR with the `fq` qdisc if the kernel has it; larger
+  values the machine already has are kept. `--no-network-tuning` leaves this out;
 - prepares **PostgreSQL and the Celery broker in the distribution's default mode**: Ubuntu uses
   the distribution's own `postgresql@18-main` and `redis-server` services (role `motuz_user`,
   database `motuz`, localhost only; a Redis unix socket with its own ACL user), Amazon Linux
@@ -434,6 +438,17 @@ visudo -c -q
 ```bash
 printf 'net.ipv4.ip_unprivileged_port_start = 80\nvm.overcommit_memory = 1\n' > /etc/sysctl.d/60-motuz.conf
 sysctl -q -p /etc/sysctl.d/60-motuz.conf
+# network tuning (optional; install.sh only raises values, never lowers them)
+modprobe tcp_bbr && echo tcp_bbr > /etc/modules-load.d/motuz-bbr.conf
+cat > /etc/sysctl.d/61-motuz-network.conf <<'EOF'
+net.core.rmem_max = 134217728
+net.core.wmem_max = 134217728
+net.ipv4.tcp_rmem = 4096 131072 134217728
+net.ipv4.tcp_wmem = 4096 16384 134217728
+net.core.default_qdisc = fq
+net.ipv4.tcp_congestion_control = bbr
+EOF
+sysctl -q -p /etc/sysctl.d/61-motuz-network.conf
 install -m 644 deployment/systemd/pam.d/motuz.ubuntu /etc/pam.d/motuz      # Amazon Linux: motuz.amzn
 install -d -m 711 -o motuz -g motuz /var/lib/motuz-aws-config
 ```

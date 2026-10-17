@@ -8,6 +8,7 @@
 #
 # Usage: sudo bin/systemd/install.sh [--local-accounts] [--sudo-group=GROUP] [--user=NAME] [--home=DIR]
 #                                    [--system-postgres|--private-postgres] [--system-redis|--private-redis]
+#                                    [--no-network-tuning]
 #        sudo bin/systemd/install.sh --worker-only [--central-url=URL] [--pool=NAME]
 #                                    [--credential-file=FILE] [--run-as=NAME] [--sudo-group=GROUP] [--user=NAME] [--home=DIR]
 #   --local-accounts    install the login helper (motuz-auth.socket), needed when users
@@ -32,6 +33,8 @@
 #                       account's runtime directory; default on Amazon Linux)
 #                       The generated passwords go to /etc/motuz/handoff-<account>.env (root:
 #                       the account's group, mode 640), which deploy.sh merges into secrets.env.
+#   --no-network-tuning do not write /etc/sysctl.d/61-motuz-network.conf (and remove it
+#                       if an earlier run wrote it; its values stay until the next reboot)
 #   --worker-only       a remote worker host (README, "Remote workers (HTTPS only)"); no
 #                       database, broker, web server or login helper:
 #                       python3, sudo, rclone, the account and its sudoers rule, and the
@@ -57,6 +60,10 @@
 #   - the account, `loginctl enable-linger`, its sudoers rule (checked with visudo -c)
 #   - sysctl: net.ipv4.ip_unprivileged_port_start=80 (Traefik is a user service on
 #     :80/:443), vm.overcommit_memory=1 (Redis) (not with --worker-only)
+#   - network tuning for the data mover, also with --worker-only (/etc/sysctl.d/61-motuz-network.conf,
+#     _lib.sh network_tuning_conf): TCP buffers up to 128 MiB, BBR with fq if the kernel
+#     has it (tcp_bbr loaded at boot by /etc/modules-load.d/motuz-bbr.conf); never lowers
+#     larger values the machine already has
 #   - /etc/pam.d/motuz (not with --worker-only), /var/lib/motuz-aws-config (AWS SSO
 #     configs for rclone)
 #   - with SELinux (Amazon Linux: enforcing): restorecon of all of the above, so every
@@ -79,6 +86,7 @@ CREDENTIAL_FILE=""
 RUN_AS=""
 PG_OPTION=""
 REDIS_OPTION=""
+NETWORK_TUNING=1
 while [ $# -gt 0 ]; do
     opt="$1"; value=""
     case "$opt" in
@@ -95,6 +103,7 @@ while [ $# -gt 0 ]; do
         --system-redis) REDIS_OPTION=system ;;
         --private-redis) REDIS_OPTION=private ;;
         --worker-only) WORKER_ONLY=1 ;;
+        --no-network-tuning) NETWORK_TUNING=0 ;;
         --central-url) CENTRAL_URL="$value" ;;
         --pool) POOL="$value" ;;
         --credential-file) CREDENTIAL_FILE="$value" ;;
@@ -263,6 +272,24 @@ if [ "$WORKER_ONLY" = 0 ]; then
     install -m 644 -o root -g root "$PAM_TEMPLATE" /etc/pam.d/motuz
 fi
 
+# Fast links with long round trips (cloud regions far away): one TCP connection is limited
+# to its buffer / round-trip time, so Ubuntu's 4 MiB send buffer allows 0.5 Gb/s at 70 ms
+if [ "$NETWORK_TUNING" = 1 ]; then
+    log "sysctl /etc/sysctl.d/61-motuz-network.conf (TCP buffers up to 128 MiB, BBR if available)"
+    modprobe tcp_bbr 2>/dev/null || true
+    network_tuning_conf > "$TMP/61-motuz-network.conf"
+    install -m 644 -o root -g root "$TMP/61-motuz-network.conf" /etc/sysctl.d/61-motuz-network.conf
+    if grep -q '^net.ipv4.tcp_congestion_control = bbr$' /etc/sysctl.d/61-motuz-network.conf; then
+        echo tcp_bbr > /etc/modules-load.d/motuz-bbr.conf
+    else
+        rm -f /etc/modules-load.d/motuz-bbr.conf
+    fi
+    sysctl -q -p /etc/sysctl.d/61-motuz-network.conf
+elif [ -e /etc/sysctl.d/61-motuz-network.conf ]; then
+    log "--no-network-tuning: removing /etc/sysctl.d/61-motuz-network.conf (its values stay until the next reboot)"
+    rm -f /etc/sysctl.d/61-motuz-network.conf /etc/modules-load.d/motuz-bbr.conf
+fi
+
 # Secret-free AWS SSO configs that the app writes and rclone reads as the user
 # (MOTUZ_SSO_CONFIG_DIR): traversable, not listable, owned by the account
 install -d -m 711 -o "$ACCOUNT" -g "$GROUP" /var/lib/motuz-aws-config
@@ -339,7 +366,7 @@ fi
 if command -v selinuxenabled >/dev/null && selinuxenabled; then
     log "SELinux ($(getenforce)): restorecon"
     for f in /usr/local/bin/rclone /usr/local/bin/traefik /usr/local/bin/uv /etc/sudoers.d/motuz \
-            /etc/sysctl.d/60-motuz.conf /etc/pam.d/motuz /etc/systemd/system/motuz-auth.socket \
+            /etc/sysctl.d/60-motuz.conf /etc/sysctl.d/61-motuz-network.conf /etc/modules-load.d/motuz-bbr.conf /etc/pam.d/motuz /etc/systemd/system/motuz-auth.socket \
             /etc/systemd/system/motuz-auth@.service; do
         [ ! -e "$f" ] || restorecon -F "$f"
     done

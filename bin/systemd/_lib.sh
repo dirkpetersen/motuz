@@ -262,3 +262,27 @@ load_versions() {
     RCLONE_SHA256_ARM64=$(sed -n 's/^ARG RCLONE_SHA256_ARM64=//p' "$dockerfile")
     [ -n "$RCLONE_VERSION" ] && [ -n "$RCLONE_SHA256_AMD64" ] || die "no rclone version in $dockerfile"
 }
+
+# The data mover's TCP settings (install.sh, /etc/sysctl.d/61-motuz-network.conf): send and
+# receive buffers of up to 128 MiB, so one connection can fill a fast link with a long round
+# trip (Ubuntu's 4 MiB send buffer allows 4 MiB / 70 ms = 0.5 Gb/s per connection), and BBR
+# with the fq qdisc when the kernel has it. Never lowers what the machine already has.
+network_tuning_conf() { # [/proc/sys, for tests]
+    local sys="${1:-/proc/sys}" target=134217728 name value min def max
+    echo "# Motuz (bin/systemd/install.sh): TCP buffers for fast links with long round trips"
+    for name in net.core.rmem_max net.core.wmem_max; do
+        value=$(cat "$sys/${name//.//}" 2>/dev/null || echo 0)
+        [ "$value" -ge "$target" ] 2>/dev/null || value=$target
+        echo "$name = $value"
+    done
+    for name in net.ipv4.tcp_rmem net.ipv4.tcp_wmem; do
+        min=4096; def=131072; max=0
+        read -r min def max 2>/dev/null < "$sys/${name//.//}" || true
+        [ "$max" -ge "$target" ] 2>/dev/null || max=$target
+        echo "$name = $min $def $max"
+    done
+    if grep -qw bbr "$sys/net/ipv4/tcp_available_congestion_control" 2>/dev/null; then
+        echo "net.core.default_qdisc = fq"
+        echo "net.ipv4.tcp_congestion_control = bbr"
+    fi
+}

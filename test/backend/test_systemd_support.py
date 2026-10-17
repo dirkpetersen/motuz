@@ -363,6 +363,54 @@ def bash_lib(script, **env):
     return subprocess.run(['bash', '-c', code], capture_output=True, text=True, env=dict(os.environ, **env))
 
 
+class TestNetworkTuning(unittest.TestCase):
+    """install.sh's /etc/sysctl.d/61-motuz-network.conf (_lib.sh network_tuning_conf)"""
+
+    def conf(self, **files):
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(subprocess.run, ['rm', '-rf', tmp])
+        for name, value in files.items():
+            path = os.path.join(tmp, *name.split('__'))
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, 'w') as f:
+                f.write(value + '\n')
+        out = bash_lib('network_tuning_conf %s' % tmp)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        return dict(line.split(' = ', 1) for line in out.stdout.splitlines() if not line.startswith('#'))
+
+    def test_raises_ubuntu_defaults_and_enables_bbr(self):
+        values = self.conf(net__core__rmem_max='4194304', net__core__wmem_max='4194304',
+                           net__ipv4__tcp_rmem='4096\t131072\t33554432', net__ipv4__tcp_wmem='4096\t16384\t4194304',
+                           net__ipv4__tcp_available_congestion_control='reno cubic bbr')
+        self.assertEqual(values, {
+            'net.core.rmem_max': '134217728', 'net.core.wmem_max': '134217728',
+            'net.ipv4.tcp_rmem': '4096 131072 134217728', 'net.ipv4.tcp_wmem': '4096 16384 134217728',
+            'net.core.default_qdisc': 'fq', 'net.ipv4.tcp_congestion_control': 'bbr'})
+
+    def test_never_lowers_and_no_bbr_without_the_module(self):
+        values = self.conf(net__core__rmem_max='536870912', net__core__wmem_max='4194304',
+                           net__ipv4__tcp_rmem='8192 262144 536870912', net__ipv4__tcp_wmem='4096 16384 4194304',
+                           net__ipv4__tcp_available_congestion_control='reno cubic')
+        self.assertEqual(values['net.core.rmem_max'], '536870912')
+        self.assertEqual(values['net.ipv4.tcp_rmem'], '8192 262144 536870912')
+        self.assertEqual(values['net.ipv4.tcp_wmem'], '4096 16384 134217728')
+        self.assertNotIn('net.ipv4.tcp_congestion_control', values)
+        self.assertNotIn('net.core.default_qdisc', values)
+
+    def test_missing_files(self):
+        values = self.conf()
+        self.assertEqual(values['net.ipv4.tcp_wmem'], '4096 131072 134217728')
+
+    def test_install_and_uninstall_use_it(self):
+        with open(os.path.join(REPO, 'bin', 'systemd', 'install.sh')) as f:
+            install = f.read()
+        with open(os.path.join(REPO, 'bin', 'systemd', 'uninstall.sh')) as f:
+            uninstall = f.read()
+        self.assertIn('network_tuning_conf > "$TMP/61-motuz-network.conf"', install)
+        self.assertIn('--no-network-tuning) NETWORK_TUNING=0', install)
+        self.assertIn('rm -f /etc/sysctl.d/61-motuz-network.conf /etc/modules-load.d/motuz-bbr.conf', uninstall)
+
+
 class TestServiceModes(unittest.TestCase):
     """Where PostgreSQL and the broker live: private (the account's), system (the distribution's), external"""
 

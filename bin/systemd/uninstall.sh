@@ -73,6 +73,8 @@ fi
 
 log "sudoers rule, PAM service, sysctl"
 rm -f /etc/sudoers.d/motuz /etc/pam.d/motuz /etc/sysctl.d/60-motuz.conf
+# The network tuning's values stay in the running kernel until the next reboot
+rm -f /etc/sysctl.d/61-motuz-network.conf /etc/modules-load.d/motuz-bbr.conf
 visudo -c -q || warn "sudoers is invalid (not caused by /etc/sudoers.d/motuz, which is gone)"
 # The kernel's defaults, then whatever other sysctl files set
 sysctl -q -w net.ipv4.ip_unprivileged_port_start=1024 vm.overcommit_memory=0 >/dev/null 2>&1 || true
