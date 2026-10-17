@@ -80,9 +80,11 @@ def _apply_s3_rules(cloud_connection):
         cloud_connection.s3_chunked = True
     skip = (cloud_connection.s3_skip_checks or '').strip() or None
     if skip is not None and skip not in s3_providers.SKIP_CHECKS_VALUES:
-        raise HTTP_400_BAD_REQUEST('s3_skip_checks must be empty, post_copy or all')
+        raise HTTP_400_BAD_REQUEST('s3_skip_checks must be empty, post_copy, crc32c or all')
     if provider not in s3_providers.CHECK_SKIPPING_PROVIDERS:
         skip = None
+    if skip == s3_providers.SKIP_CRC32C and provider not in s3_providers.CRC32C_PROVIDERS:
+        raise HTTP_400_BAD_REQUEST('CRC32C part checksums are only available for Amazon S3')
     cloud_connection.s3_skip_checks = skip
 
 

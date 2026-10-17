@@ -150,9 +150,10 @@ def rclone_flags(job_type, job):
 
 def rclone_job_env(job_type, job):
     """
-    Process variables for the job's rclone that are not remote configuration (skipping
-    S3's request checksums, RcloneConnection.destination_checks), for the ticket
+    Process variables for the job's rclone that are not remote configuration (md5-simd,
+    rclone_tuning.md5_env; skipping S3's checksums, RcloneConnection.destination_checks),
+    for the ticket
     """
     if job_type == 'copy':
-        return destination_checks(job.dst_cloud)[1]
-    return {}
+        return {**rclone_tuning.md5_env(), **destination_checks(job.dst_cloud)[1]}
+    return rclone_tuning.md5_env()

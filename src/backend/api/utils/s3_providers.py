@@ -71,8 +71,13 @@ CHECK_SKIPPING_PROVIDERS = frozenset(('AWS', 'Ceph'))
 
 # s3_skip_checks: None = rclone's full checks
 SKIP_POST_COPY = 'post_copy' # --ignore-checksum: no MD5 comparison after the copy
-SKIP_ALL = 'all'             # also AWS_REQUEST_CHECKSUM_CALCULATION=when_required
-SKIP_CHECKS_VALUES = frozenset((SKIP_POST_COPY, SKIP_ALL))
+SKIP_CRC32C = 'crc32c'       # also a CRC32C instead of an MD5 with each part (AWS only)
+SKIP_ALL = 'all'             # also no checksum with the parts and
+                             # AWS_REQUEST_CHECKSUM_CALCULATION=when_required
+SKIP_CHECKS_VALUES = frozenset((SKIP_POST_COPY, SKIP_CRC32C, SKIP_ALL))
+
+# Providers known to verify the x-amz-checksum-crc32c of upload parts
+CRC32C_PROVIDERS = frozenset(('AWS',))
 
 # s3_chunked (default true): files from this size on are uploaded in parts (multipart);
 # false: in one piece up to S3's limit of 5 GiB for one upload, so that S3 keeps their

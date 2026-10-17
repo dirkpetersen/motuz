@@ -38,6 +38,9 @@ class TestProviderList(unittest.TestCase):
         self.assertEqual(len(values), len(set(values)))
         self.assertIn('Minio', values)
         self.assertEqual(s3_providers.CHECK_SKIPPING_PROVIDERS, {'AWS', 'Ceph'})
+        self.assertEqual(s3_providers.CRC32C_PROVIDERS, {'AWS'})
+        with open(os.path.join(REPO, 'src', 'frontend', 'js', 'utils', 's3Providers.js')) as f:
+            self.assertIn("export const CRC32C_PROVIDERS = ['AWS'];", f.read())
 
     def test_frontend_has_the_same_list(self):
         with open(os.path.join(REPO, 'src', 'frontend', 'js', 'utils', 's3Providers.js')) as f:
@@ -81,7 +84,14 @@ class TestDestinationChecks(unittest.TestCase):
     def test_post_copy_and_all(self):
         self.assertEqual(destination_checks(s3(s3_provider='AWS', s3_skip_checks='post_copy')), (['--ignore-checksum'], {}))
         self.assertEqual(destination_checks(s3(s3_provider='Ceph', s3_skip_checks='all')),
-                         (['--ignore-checksum'], {'AWS_REQUEST_CHECKSUM_CALCULATION': 'when_required'}))
+                         (['--ignore-checksum'], {'AWS_REQUEST_CHECKSUM_CALCULATION': 'when_required',
+                                                  'RCLONE_S3_PART_CHECKSUM': 'none'}))
+
+    def test_crc32c_only_on_aws(self):
+        self.assertEqual(destination_checks(s3(s3_provider='AWS', s3_skip_checks='crc32c')),
+                         (['--ignore-checksum'], {'RCLONE_S3_PART_CHECKSUM': 'crc32c'}))
+        # stored before the provider changed: full checks, never a silent weaker one
+        self.assertEqual(destination_checks(s3(s3_provider='Ceph', s3_skip_checks='crc32c')), ([], {}))
 
     def test_only_aws_and_ceph(self):
         for provider in ('Minio', 'Other', None):
@@ -126,7 +136,11 @@ class TestDestinationChecks(unittest.TestCase):
         self.assertEqual(checked_job_env(None), {})
         self.assertEqual(checked_job_env({'AWS_REQUEST_CHECKSUM_CALCULATION': 'when_required'}),
                          {'AWS_REQUEST_CHECKSUM_CALCULATION': 'when_required'})
-        for bad in ({'AWS_REQUEST_CHECKSUM_CALCULATION': 'x'}, {'LD_PRELOAD': '/tmp/x.so'}, {'PATH': '/tmp'}):
+        accepted = {'RCLONE_S3_PART_CHECKSUM': 'crc32c', 'RCLONE_MD5_SIMD': 'true', 'RCLONE_MD5_SIMD_SERVERS': '16'}
+        self.assertEqual(checked_job_env(accepted), accepted)
+        for bad in ({'AWS_REQUEST_CHECKSUM_CALCULATION': 'x'}, {'LD_PRELOAD': '/tmp/x.so'}, {'PATH': '/tmp'},
+                    {'RCLONE_S3_PART_CHECKSUM': 'md5 --config=/x'}, {'RCLONE_MD5_SIMD_SERVERS': '0'},
+                    {'RCLONE_MD5_SIMD_SERVERS': '17'}, {'RCLONE_CONFIG': '/etc/shadow'}):
             with self.assertRaises(RcloneException):
                 checked_job_env(bad)
 
@@ -147,6 +161,13 @@ class TestValidation(unittest.TestCase):
         self.assertEqual(self.apply(s3_provider='Ceph', s3_skip_checks='post_copy').s3_skip_checks, 'post_copy')
         self.assertIsNone(self.apply(s3_provider='Minio', s3_skip_checks='all').s3_skip_checks)
         self.assertIsNone(self.apply(s3_provider='AWS', s3_skip_checks='').s3_skip_checks)
+
+    def test_crc32c_only_for_aws(self):
+        self.assertEqual(self.apply(s3_provider='AWS', s3_skip_checks='crc32c').s3_skip_checks, 'crc32c')
+        with self.assertRaises(HTTP_400_BAD_REQUEST):
+            self.apply(s3_provider='Ceph', s3_skip_checks='crc32c')
+        # providers that skip no checks drop it like the others
+        self.assertIsNone(self.apply(s3_provider='Minio', s3_skip_checks='crc32c').s3_skip_checks)
 
     def test_invalid_values(self):
         with self.assertRaises(HTTP_400_BAD_REQUEST):

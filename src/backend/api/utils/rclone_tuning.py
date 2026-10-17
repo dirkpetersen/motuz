@@ -107,6 +107,15 @@ _MEMORY_BUDGET_BOUNDS = (64 * MiB, 64 * TiB)
 # Backends whose chunk size / upload concurrency are in the estimate and the flags
 CHUNKED_BACKENDS = ('s3', 'azureblob')
 
+# MOTUZ_RCLONE_MD5_SIMD_SERVERS: rclone computes MD5s (local files, S3 upload parts) with
+# md5-simd, which hashes up to 16 streams at once on one core (--md5-simd of the rclone
+# build at github.com/dirkpetersen/rclone, branch s3-md5-simd). Each server uses up to
+# one core; 0 = Go's crypto/md5. 2 measured best on 8 vCPUs with 16-32 transfers.
+# Passed as RCLONE_MD5_SIMD* variables (md5_env), which an rclone without the option
+# ignores, so the setting is harmless with a stock rclone.
+DEFAULT_MD5_SIMD_SERVERS = 2
+_MD5_SIMD_SERVERS_BOUNDS = (0, 16)
+
 
 # --- values ---------------------------------------------------------------------------
 
@@ -182,7 +191,8 @@ def _parse(param, value, error, source):
 
 # --- installation settings --------------------------------------------------------------
 
-Settings = namedtuple('Settings', 'defaults caps memory_budget extra_flags')
+Settings = namedtuple('Settings', 'defaults caps memory_budget extra_flags md5_simd_servers',
+                      defaults=(DEFAULT_MD5_SIMD_SERVERS,))
 
 
 def env_name(name):
@@ -244,7 +254,17 @@ def load_settings(environ=None):
 
     extra_flags = parse_extra_flags(_env(environ, 'MOTUZ_RCLONE_EXTRA_FLAGS') or '')
 
-    settings = Settings(defaults, caps, memory_budget, extra_flags)
+    name = 'MOTUZ_RCLONE_MD5_SIMD_SERVERS'
+    raw = _env(environ, name)
+    md5_simd_servers = DEFAULT_MD5_SIMD_SERVERS
+    if raw is not None:
+        md5_simd_servers = parse_int(raw)
+        lo, hi = _MD5_SIMD_SERVERS_BOUNDS
+        if md5_simd_servers is None or not lo <= md5_simd_servers <= hi:
+            raise TuningConfigError('{}={!r} must be a whole number between {} and {} (0: no md5-simd)'.format(
+                name, raw, lo, hi))
+
+    settings = Settings(defaults, caps, memory_budget, extra_flags, md5_simd_servers)
     worst = max(CHUNKED_BACKENDS + (None,), key=lambda backend: estimate_memory(defaults, backend))
     needed = estimate_memory(defaults, worst)
     if needed > memory_budget:
@@ -436,6 +456,16 @@ def hashsum_flags(overrides, tuning=None):
     checkers = overrides.get('checkers', tuning.defaults.get('checkers'))
     flags = [] if checkers is None else ['--checkers={}'.format(checkers)]
     return flags + list(tuning.extra_flags)
+
+
+def md5_env(tuning=None):
+    """
+    rclone's process variables for md5-simd (MOTUZ_RCLONE_MD5_SIMD_SERVERS), for copy and
+    md5sum jobs: rclone reads every option from RCLONE_<OPTION> too, and one that does not
+    know --md5-simd ignores them
+    """
+    servers = (tuning or settings()).md5_simd_servers
+    return {'RCLONE_MD5_SIMD': 'true', 'RCLONE_MD5_SIMD_SERVERS': '{:d}'.format(servers)} if servers else {}
 
 
 # --- presets ---------------------------------------------------------------------------------

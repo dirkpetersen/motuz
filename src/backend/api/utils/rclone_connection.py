@@ -370,7 +370,7 @@ class RcloneConnection(AbstractConnection):
             # One argv item per flag (--transfers=32), formatted from parsed values
             extra_flags=rclone_tuning.copy_flags(performance, dst_data.type if dst_data is not None else None)
                 + check_flags,
-            extra_env=check_env,
+            extra_env={**rclone_tuning.md5_env(), **check_env},
         )
 
 
@@ -491,6 +491,7 @@ class RcloneConnection(AbstractConnection):
             job_id=job_id,
             download=download,
             extra_flags=rclone_tuning.hashsum_flags(performance), # --checkers
+            extra_env=rclone_tuning.md5_env(),
         )
 
 
@@ -889,8 +890,16 @@ def destination_checks(dst_data):
     Content-MD5 on every request themselves (s3_providers):
     - 'post_copy': --ignore-checksum, no MD5 comparison after each file (rclone's
       flag is global, so only ever for this destination's copy jobs)
-    - 'all': also AWS_REQUEST_CHECKSUM_CALCULATION=when_required, i.e. no CRC32 and, for
-      uploads in one piece, no Content-MD5: S3 no longer verifies the data
+    - 'crc32c' (AWS): also RCLONE_S3_PART_CHECKSUM=crc32c, each part of a multipart
+      upload carries its CRC32C instead of its MD5, which S3 verifies just the same and
+      which costs almost no CPU
+    - 'all': also RCLONE_S3_PART_CHECKSUM=none and AWS_REQUEST_CHECKSUM_CALCULATION=
+      when_required, i.e. no checksum with the parts, no CRC32 and, for uploads in one
+      piece, no Content-MD5: S3 no longer verifies the data
+    --s3-part-checksum is an option of the rclone build at github.com/dirkpetersen/rclone
+    (branch s3-md5-simd); a stock rclone ignores the variable and sends the parts' MD5s.
+    It applies to every S3 remote, but only uploads use it, and a copy uploads only to
+    the destination.
     """
     if dst_data is None or getattr(dst_data, 'type', None) != 's3':
         return [], {}
@@ -899,14 +908,22 @@ def destination_checks(dst_data):
     skip = getattr(dst_data, 's3_skip_checks', None)
     if skip == s3_providers.SKIP_POST_COPY:
         return ['--ignore-checksum'], {}
+    if skip == s3_providers.SKIP_CRC32C and dst_data.s3_provider in s3_providers.CRC32C_PROVIDERS:
+        return ['--ignore-checksum'], {'RCLONE_S3_PART_CHECKSUM': 'crc32c'}
     if skip == s3_providers.SKIP_ALL:
-        return ['--ignore-checksum'], {'AWS_REQUEST_CHECKSUM_CALCULATION': 'when_required'}
+        return ['--ignore-checksum'], {'AWS_REQUEST_CHECKSUM_CALCULATION': 'when_required',
+                                       'RCLONE_S3_PART_CHECKSUM': 'none'}
     return [], {}
 
 
-# Process variables a job ticket may carry for rclone (destination_checks), with the
-# values a worker accepts
-JOB_ENV_VALUES = {'AWS_REQUEST_CHECKSUM_CALCULATION': ('when_required',)}
+# Process variables a job ticket may carry for rclone (destination_checks,
+# rclone_tuning.md5_env), with the values a worker accepts
+JOB_ENV_VALUES = {
+    'AWS_REQUEST_CHECKSUM_CALCULATION': ('when_required',),
+    'RCLONE_S3_PART_CHECKSUM': ('crc32c', 'none'),
+    'RCLONE_MD5_SIMD': ('true',),
+    'RCLONE_MD5_SIMD_SERVERS': tuple(str(n) for n in range(1, 17)),
+}
 
 
 def checked_job_env(env):

@@ -1155,9 +1155,36 @@ Advanced options:
     this connection): S3 still verifies every request. Measured on 8 vCPUs, AWS us-west-2,
     100 MB files: 1.1 GB/s with rclone's defaults, 2.2 GB/s with chunked uploads and this option,
     because about two thirds of rclone's CPU time went into MD5.
-  - *Skip all checks* (not recommended): additionally
-    `AWS_REQUEST_CHECKSUM_CALCULATION=when_required`, so S3 no longer verifies uploads sent in one
-    piece. With rclone 1.75 it is not faster, because rclone still computes the MD5 of every part.
+  - *CRC32C instead of MD5 for parts* (Amazon S3 only): like the previous option, and each part of
+    a chunked upload carries its CRC32C instead of its MD5 (`RCLONE_S3_PART_CHECKSUM=crc32c`). S3
+    verifies it just the same and stores a composite CRC32C of the object; it costs almost no CPU.
+  - *Skip all checks* (not recommended): additionally no checksum with the parts
+    (`RCLONE_S3_PART_CHECKSUM=none`) and `AWS_REQUEST_CHECKSUM_CALCULATION=when_required`, so S3
+    no longer verifies uploads sent in one piece either.
+
+  The part checksums need the rclone build with `--s3-part-checksum` (below); a stock rclone
+  ignores the variable and sends each part's MD5, i.e. behaves like the option before.
+
+**Faster MD5 and part checksums (rclone build).** Two options of the rclone branch
+[`s3-md5-simd`](https://github.com/dirkpetersen/rclone/tree/s3-md5-simd) (rclone master plus
+these options, proposed upstream): `--md5-simd` computes MD5s with
+[md5-simd](https://github.com/minio/md5-simd), up to 16 streams at once per core (local files,
+Check Integrity, S3 upload parts), and `--s3-part-checksum md5|crc32c|none` chooses the checksum
+of each upload part. Motuz passes both as rclone variables (`RCLONE_MD5_SIMD*`,
+`RCLONE_S3_PART_CHECKSUM`), which a stock rclone ignores, so they are safe with either. Measured
+on 8 vCPUs, AWS us-west-2, 10 GB of 100 MB files, 32 transfers, chunked uploads, rclone's check
+after the copy skipped:
+
+| Part checksum | Upload | CPU per GB |
+|---|---|---|
+| MD5, Go's crypto/md5 (stock rclone) | 1.6 GB/s | 2.9 core-s |
+| MD5 with md5-simd (2-3 servers) | 2.4 GB/s | 2.3 core-s |
+| CRC32C | 3.1 GB/s | 1.8 core-s |
+| none | 3.3 GB/s | 1.7 core-s |
+
+Without any hashing the CPU goes to the kernel (sockets, file reads), memory copies and TLS, so
+about 1.7 core-seconds per GB remain whatever the checksum. `rclone md5sum` of the same files:
+8.7 instead of 14.2 CPU-seconds with md5-simd.
 
 ### OneDrive: own app registration
 
@@ -1392,7 +1419,9 @@ beyond a few Gb/s, however fast the link. Two levels of settings change that:
 Caps for the per-job values: `MOTUZ_RCLONE_MAX_TRANSFERS` (default 64),
 `MOTUZ_RCLONE_MAX_CHECKERS` (128), `MOTUZ_RCLONE_MAX_MULTI_THREAD_STREAMS` (32),
 `MOTUZ_RCLONE_MAX_UPLOAD_CONCURRENCY` (64, S3 and Azure), and the memory budget per job
-`MOTUZ_RCLONE_MEMORY_BUDGET` (default `8G`). Numbers are whole numbers, sizes use
+`MOTUZ_RCLONE_MEMORY_BUDGET` (default `8G`). `MOTUZ_RCLONE_MD5_SIMD_SERVERS` (default 2, 0 to
+16, 0 = off) sets the md5-simd servers of copy and Check Integrity jobs, each using up to
+one core (README "S3 connections"; ignored by a stock rclone). Numbers are whole numbers, sizes use
 rclone's binary units and need a unit (`64M`, `1.5G`, `64Mi`). An invalid value, an
 installation default above its cap or defaults above the memory budget stop the app and
 the worker at startup, with a message that names the variable.

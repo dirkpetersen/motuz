@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import {S3_PROVIDERS, isAws, canSkipChecks, canCheckIntegrity, NON_AWS_DEFAULT_REGION}
+import {S3_PROVIDERS, isAws, canSkipChecks, canUseCrc32c, canCheckIntegrity, NON_AWS_DEFAULT_REGION}
     from '../../src/frontend/js/utils/s3Providers.js';
 
 test('Amazon S3 first, Ceph second, Other last', () => {
@@ -24,6 +24,13 @@ test('skipping checks only for AWS and Ceph', () => {
     assert.equal(canSkipChecks(null), true);
     assert.equal(canSkipChecks('Minio'), false);
     assert.equal(canSkipChecks('Other'), false);
+});
+
+test('CRC32C part checksums only for AWS', () => {
+    assert.equal(canUseCrc32c('AWS'), true);
+    assert.equal(canUseCrc32c(undefined), true);
+    assert.equal(canUseCrc32c('Ceph'), false);
+    assert.equal(canUseCrc32c('Minio'), false);
 });
 
 test('Check Integrity: not for chunked uploads to S3', () => {

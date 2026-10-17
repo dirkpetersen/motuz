@@ -16,6 +16,8 @@ from api.utils.abstract_connection import sudo_as
 
 
 def settings(**env):
+    """Settings from MOTUZ_RCLONE_* (without md5-simd unless md5_simd_servers is given)"""
+    env.setdefault('md5_simd_servers', '0')
     return tuning.load_settings({'MOTUZ_RCLONE_' + k.upper(): v for k, v in env.items()})
 
 
@@ -249,7 +251,7 @@ class TestOverrides(unittest.TestCase):
         """Whatever valid values: one argv item per parameter, an allowlisted --flag=value"""
         rng = random.Random(1)
         s = tuning.Settings({}, {'transfers': 1024, 'checkers': 1024, 'multi_thread_streams': 256,
-                                 'upload_concurrency': 256}, 2 ** 80, ())
+                                 'upload_concurrency': 256}, 2 ** 80, (), 0)
         for _ in range(500):
             dst = rng.choice([None, 's3', 'azureblob', 'onedrive'])
             raw = {}
@@ -462,6 +464,26 @@ class TestRcloneCommand(unittest.TestCase):
         self.assertEqual(flags, ['--transfers=10', '--checkers=128', '--multi-thread-streams=16',
                                  '--multi-thread-cutoff=64Mi', '--s3-upload-concurrency=16', '--s3-chunk-size=32Mi'])
         self.assertEqual(command[-6:], ['copyto', '/tmp', 'dst:/bucket/x', '--progress', '--stats', '2s'])
+
+    def test_md5_simd(self):
+        """md5-simd as rclone variables (an rclone without the option ignores them), never flags"""
+        s = tuning.load_settings({})
+        self.assertEqual(s.md5_simd_servers, tuning.DEFAULT_MD5_SIMD_SERVERS)
+        for method in ('copy', 'md5sum'):
+            command, env = self.command(s, dst=_s3_connection(), method=method)
+            self.assertEqual((env['RCLONE_MD5_SIMD'], env['RCLONE_MD5_SIMD_SERVERS']), ('true', '2'), method)
+            self.assertFalse([a for a in command if 'md5-simd' in a], method)
+            self.assertIn('RCLONE_MD5_SIMD_SERVERS', command[command.index('sudo') + 2], method)
+        _, env = self.command(settings(md5_simd_servers='4'), dst=None)
+        self.assertEqual(env['RCLONE_MD5_SIMD_SERVERS'], '4')
+        for off in (settings(), settings(md5_simd_servers=' 0 ')):
+            _, env = self.command(off, dst=_s3_connection())
+            self.assertNotIn('RCLONE_MD5_SIMD', env)
+            self.assertEqual(tuning.md5_env(off), {})
+        for bad in ('17', '-1', 'two', '2 --config=/etc/shadow', '1.5'):
+            with self.assertRaises(TuningConfigError, msg=bad) as caught:
+                settings(md5_simd_servers=bad)
+            self.assertIn('MOTUZ_RCLONE_MD5_SIMD_SERVERS', str(caught.exception))
 
     def test_installation_defaults_and_hashsum_checkers(self):
         s = settings(checkers='64', extra_flags='--fast-list')

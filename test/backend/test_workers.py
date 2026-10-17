@@ -348,7 +348,9 @@ class TestTicketScope(WorkerTestBase):
         worker, _ = self.worker()
         ticket = self.claim(worker)
         self.assertIn('--ignore-checksum', ticket['rclone_flags'])
-        self.assertEqual(ticket['rclone_job_env'], {'AWS_REQUEST_CHECKSUM_CALCULATION': 'when_required'})
+        self.assertEqual(ticket['rclone_job_env'], {'AWS_REQUEST_CHECKSUM_CALCULATION': 'when_required',
+                                                    'RCLONE_S3_PART_CHECKSUM': 'none',
+                                                    'RCLONE_MD5_SIMD': 'true', 'RCLONE_MD5_SIMD_SERVERS': '2'})
         env = ticket['job']['dst']['rclone_env']
         self.assertEqual((env['RCLONE_CONFIG_DST_PROVIDER'], env['RCLONE_CONFIG_DST_UPLOAD_CUTOFF']), ('Ceph', '5Gi'))
 
@@ -400,6 +402,7 @@ class TestTicketScope(WorkerTestBase):
         self.assertEqual(ticket['job']['dst']['remote'], 'src')
         self.assertIn('RCLONE_CONFIG_SRC_ACCESS_KEY_ID', ticket['job']['dst']['rclone_env'])
         self.assertEqual(ticket['job']['options'], {'download': True})
+        self.assertEqual(ticket['rclone_job_env'], {'RCLONE_MD5_SIMD': 'true', 'RCLONE_MD5_SIMD_SERVERS': '2'})
 
 
 class TestTicketCalls(WorkerTestBase):

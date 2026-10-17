@@ -3,7 +3,7 @@ import GdriveSection from 'views/Dialogs/CloudConnection/GdriveSection.jsx';
 import LocalCredentialPicker, { describeProfile, profileKey } from 'views/Dialogs/CloudConnection/LocalCredentialPicker.jsx';
 import React from 'react';
 import classnames from 'classnames';
-import { S3_PROVIDERS, DEFAULT_S3_PROVIDER, NON_AWS_DEFAULT_REGION, isAws, canSkipChecks } from 'utils/s3Providers.js';
+import { S3_PROVIDERS, DEFAULT_S3_PROVIDER, NON_AWS_DEFAULT_REGION, isAws, canSkipChecks, canUseCrc32c } from 'utils/s3Providers.js';
 
 // rclone's public OneDrive app (oauth_manager.RCLONE_CLIENT_ID)
 const RCLONE_ONEDRIVE_CLIENT_ID = 'b15665d9-eda6-4092-8539-0eec376afd59';
@@ -59,9 +59,11 @@ const S3_CONNECTION_TYPES = [
 ]
 
 // Checksum checks of uploads to the connection (s3_skip_checks), offered for AWS and Ceph
+// crc32c: only where canUseCrc32c(provider)
 const S3_CHECK_OPTIONS = [
     {value: '', label: 'Full checks (rclone compares the MD5 of every file after the copy)'},
     {value: 'post_copy', label: "Skip rclone's check after the copy (recommended for speed)"},
+    {value: 'crc32c', label: "CRC32C instead of MD5 for parts, skip rclone's check after the copy (fastest with checks)"},
     {value: 'all', label: 'Skip all checks (not recommended)'},
 ]
 
@@ -296,7 +298,9 @@ class CloudConnectionDialogFields extends React.Component {
     }
 
     _s3SkipChecks() {
-        return this.state.s3SkipChecks === null ? (this.props.data.s3_skip_checks || '') : this.state.s3SkipChecks;
+        const value = this.state.s3SkipChecks === null ? (this.props.data.s3_skip_checks || '') : this.state.s3SkipChecks;
+        // CRC32C is not offered for this provider: the closest choice that is
+        return value === 'crc32c' && !canUseCrc32c(this._s3Provider()) ? 'post_copy' : value;
     }
 
     // Directly below Type: which S3 implementation (rclone's provider)
@@ -445,7 +449,7 @@ class CloudConnectionDialogFields extends React.Component {
                                     value={skipChecks}
                                     onChange={event => this.setState({s3SkipChecks: event.target.value})}
                                 >
-                                    {S3_CHECK_OPTIONS.map(d => (
+                                    {S3_CHECK_OPTIONS.filter(d => d.value !== 'crc32c' || canUseCrc32c(provider)).map(d => (
                                         <option key={d.value} value={d.value}>{d.label}</option>
                                     ))}
                                 </select>
@@ -456,13 +460,20 @@ class CloudConnectionDialogFields extends React.Component {
                                         left out. About twice as fast with chunked uploads.
                                     </div>
                                 }
+                                {skipChecks === 'crc32c' &&
+                                    <div className='form-text'>
+                                        Each part of a chunked upload carries its CRC32C instead of
+                                        its MD5. S3 verifies it just the same, and it costs almost no
+                                        CPU, so uploads are about as fast as without any checks
+                                        (needs Motuz's rclone build; otherwise the parts keep their
+                                        MD5).
+                                    </div>
+                                }
                                 {skipChecks === 'all' &&
                                     <div className='alert alert-warning py-2 mt-2 mb-0 s3-skip-all-warning'>
-                                        Not recommended: S3 no longer verifies uploads sent in one
-                                        piece, so damaged data can be stored unnoticed. With the
-                                        current rclone this is not faster than skipping only the
-                                        check after the copy, because rclone still computes the
-                                        MD5 of every part.
+                                        Not recommended: S3 no longer verifies what it receives
+                                        (no checksum with the parts, none with uploads sent in one
+                                        piece), so damaged data can be stored unnoticed.
                                     </div>
                                 }
                             </CloudConnectionField>

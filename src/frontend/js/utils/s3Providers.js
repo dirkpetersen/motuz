@@ -64,6 +64,9 @@ export const DEFAULT_S3_PROVIDER = 'AWS';
 // Providers for which the dialog offers skipping checksum checks
 export const CHECK_SKIPPING_PROVIDERS = ['AWS', 'Ceph'];
 
+// Providers known to verify CRC32C part checksums (s3_providers.CRC32C_PROVIDERS)
+export const CRC32C_PROVIDERS = ['AWS'];
+
 // Region filled in for a new connection to storage that is not AWS
 export const NON_AWS_DEFAULT_REGION = 'us-east-1';
 
@@ -73,6 +76,10 @@ export function isAws(provider) {
 
 export function canSkipChecks(provider) {
     return CHECK_SKIPPING_PROVIDERS.includes(provider || DEFAULT_S3_PROVIDER);
+}
+
+export function canUseCrc32c(provider) {
+    return CRC32C_PROVIDERS.includes(provider || DEFAULT_S3_PROVIDER);
 }
 
 /**

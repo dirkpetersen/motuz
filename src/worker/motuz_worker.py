@@ -455,7 +455,7 @@ class JobRun:
                 job_id=run_id,
                 download=bool(options.get('download')),
                 extra_flags=self.ticket.get('rclone_flags') or [],
-                extra_env=self.config.rclone_env,
+                extra_env={**self.config.rclone_env, **checked_job_env(self.ticket.get('rclone_job_env'))},
             )
 
         def tick(side, percent, tree, error_text):
