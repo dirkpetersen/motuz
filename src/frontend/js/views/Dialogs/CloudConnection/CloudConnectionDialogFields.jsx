@@ -63,7 +63,7 @@ const S3_CONNECTION_TYPES = [
 const S3_CHECK_OPTIONS = [
     {value: '', label: 'Full checks (rclone compares the MD5 of every file after the copy)'},
     {value: 'post_copy', label: "Skip rclone's check after the copy (recommended for speed)"},
-    {value: 'crc32c', label: "CRC32C instead of MD5 for parts, skip rclone's check after the copy (fastest with checks)"},
+    {value: 'crc32c', label: "CRC32C instead of MD5 for parts, skip rclone's check after the copy (fastest, recommended)"},
     {value: 'all', label: 'Skip all checks (not recommended)'},
 ]
 

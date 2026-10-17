@@ -1172,18 +1172,24 @@ these options, proposed upstream): `--md5-simd` computes MD5s with
 Check Integrity, S3 upload parts), and `--s3-part-checksum md5|crc32c|none` chooses the checksum
 of each upload part. Motuz passes both as rclone variables (`RCLONE_MD5_SIMD*`,
 `RCLONE_S3_PART_CHECKSUM`), which a stock rclone ignores, so they are safe with either. Measured
-on 8 vCPUs, AWS us-west-2, 33 GB of 100 MB files, 32 transfers, chunked uploads, rclone's check
-after the copy skipped:
+on 8 vCPUs, AWS us-west-2, 33 GB of 100 MB files, 32 transfers, upload concurrency 16, chunked
+uploads, rclone's check after the copy skipped (release
+[v1.76.0-md5simd.2](https://github.com/dirkpetersen/rclone/releases/tag/v1.76.0-md5simd.2)):
 
 | Part checksum | Upload | CPU per GB |
 |---|---|---|
-| MD5, Go's crypto/md5 (stock rclone) | 2.5 GB/s | 2.8 core-s |
-| MD5 with md5-simd (2 / 3 servers) | 2.8 / 3.0 GB/s | 2.2 core-s |
-| CRC32C | 3.7 GB/s | 1.8 core-s |
-| none | 3.9 GB/s | 1.7 core-s |
+| MD5, Go's crypto/md5 (stock rclone) | 2.6 GB/s | 2.7 core-s |
+| MD5 with md5-simd (3 servers) | 3.1 GB/s | 2.0 core-s |
+| CRC32C | 3.8 GB/s | 1.7 core-s |
+| CRC32C and `MOTUZ_RCLONE_BUFFER_SIZE=0` | 4.2-4.5 GB/s (34-36 Gb/s) | 1.4-1.5 core-s |
+| none and `MOTUZ_RCLONE_BUFFER_SIZE=0` | 4.3-4.4 GB/s | 1.4 core-s |
 
-Without any hashing the CPU goes to the kernel (sockets, file reads), memory copies and TLS, so
-about 1.7 core-seconds per GB remain whatever the checksum. `rclone md5sum` of the same files:
+With CRC32C the SDK computes the checksum while it sends each part (an `aws-chunked` trailer), so it
+costs as little as no checksum while S3 still verifies every part: the recommended choice for
+Amazon S3. `MOTUZ_RCLONE_BUFFER_SIZE=0` saves the copy through rclone's read-ahead buffer, about 10%
+for local sources served from the page cache (test it for slow or network file systems, where the
+read-ahead may help). At that point the 8 vCPUs are busy (28% user, 29% system, 27% softirq):
+the rest is the kernel's sending and file reading, and TLS. `rclone md5sum` of the same files:
 8.7 instead of 14.2 CPU-seconds with md5-simd.
 
 ### OneDrive: own app registration
