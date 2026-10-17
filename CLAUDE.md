@@ -65,6 +65,7 @@ cd src/backend && python -m unittest discover -s ../../test/backend -p 'test_rcl
 cd src/backend/api/utils && python -m unittest file_utils_test   # legacy test next to the code, not picked up by manage.py test
 ./bin/ci/frontend_unittest.sh                     # node --test test/frontend/*.mjs, with TZ=UTC and TZ=America/New_York: plain-JS helpers only (e.g. utils/parentDirectory.js, fileSort.js, fileAge.js, viewerChunks.js, viewerFollow.js, viewerKind.js, copyPerformance.js), not JSX
 ```
+When setting the variables by hand, use a realistic secret (`MOTUZ_FLASK_SECRET_KEY=$(openssl rand -hex 32)`): with a one-character value `test_ec2_launcher` fails because that character occurs in the user-data script. `test_heic_convert ... test_timeout_is_504_and_kills_the_process_group` is timing-sensitive and can fail once under load; rerun it alone before chasing it.
 
 End-to-end tests (`test/e2e/`, needs docker and free ports 80, 443, 5000, 5001, 5432, 5672, 5999, 10000): `run.sh` builds the images, starts the production stack (`test/e2e/compose.yml`), runs the suites on a fresh database and tears everything down. Suites print `PASS`/`FAIL`/`SKIP` lines and `<passed>/<total> passed`. Suite internals, the UI suites and the worker suite: `.claude/rules/e2e-tests.md`.
 ```bash
@@ -85,6 +86,7 @@ Frontend production build: `npm run build` (outputs to `./build/`). The app imag
 Migrations (Flask-Migrate/Alembic; filenames are timestamp-prefixed via `alembic.ini` `file_template`):
 ```bash
 ./bin/dev/migrate.sh   # `manage.py db migrate` (autogenerate), then prompts before `db upgrade`
+```
 The production app container runs `manage.py db upgrade` on every start (`deployment/docker/app/app-entrypoint.sh`).
 
 Docker alternative (`make quickstart`, `./bin/quickstart.sh`, `./bin/prod/build.sh`, `./bin/redeploy.sh`; `prod` branch is synced with `git reset --hard master` + force push): `.claude/rules/docker-deployment.md`.
@@ -124,7 +126,7 @@ Double-click on a file in a pane opens a read-only viewer: pager (text, with fol
 
 Hashsum jobs run md5sum on src then dst, build file trees (`utils/file_utils.py`), and store only the differing branches (`remove_identical_branches`) as JSON.
 
-**rclone performance** (`utils/rclone_tuning.py`, stdlib only): installation defaults `MOTUZ_RCLONE_*`, caps `MOTUZ_RCLONE_MAX_*`, a memory budget, and validated per-job overrides in `copy_job.performance` / `hashsum_job.performance`; an invalid setting stops the app with a `TuningConfigError`. Details: `.claude/rules/rclone-tuning.md`.
+**rclone performance** (`utils/rclone_tuning.py`, stdlib only): installation defaults `MOTUZ_RCLONE_*` (unset transfers/checkers mean Motuz's 16/32, `MOTUZ_DEFAULTS`, so every copy carries `--transfers=16 --checkers=32` unless configured otherwise), caps `MOTUZ_RCLONE_MAX_*`, a memory budget, and validated per-job overrides in `copy_job.performance` / `hashsum_job.performance`; an invalid setting stops the app with a `TuningConfigError`. Details: `.claude/rules/rclone-tuning.md`.
 
 ### Remote workers (HTTPS only)
 Jobs can run on remote workers that reach the central node only by outbound HTTPS (optionally via an HTTP proxy); no database access, no inbound ports. README "Remote workers (HTTPS only)" is the operator documentation.
@@ -143,7 +145,7 @@ Top to bottom: Type, the only "Connection Name" field, the type's own part, adva
 Follow the pattern of the `kms_encryption_key_arn` commits (`8a8988f`, `0a02274`):
 1. Add a column in `models/cloud_connection.py` and an Alembic migration.
 2. Add it to the DTO in `views/cloud_connection_views.py` (use `PrivateString` for secrets).
-3. Map it to an rclone env var in `RcloneConnection._formatCredentials`, and add its suffix to the logging allowlist if it is safe to log.
+3. Map it to an rclone env var in `RcloneConnection._formatCredentials`, and add its suffix to the logging allowlist if it is safe to log. A global rclone flag for one connection only (e.g. `skip_tls_verify` → `no_check_certificate`) goes through `_without_tls_verification`'s pattern: the configuration moves to `<remote>tlsoff` and the remote becomes an `alias` with `override.<flag>=...`, so the other side of a copy is unaffected and everything stays plain `RCLONE_CONFIG_*` variables (also in worker tickets).
 4. Add the form field in `src/frontend/js/views/Dialogs/CloudConnection/CloudConnectionDialogFields.jsx`.
 
 ### Frontend (`src/frontend/js/`)
