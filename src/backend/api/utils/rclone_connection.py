@@ -13,6 +13,7 @@ from . import file_view
 from . import image_view
 from . import document_view
 from . import rclone_tuning
+from . import s3_providers
 from .copy_job_queue import CopyJobQueue
 from .hashsum_job_queue import HashsumJobQueue
 
@@ -356,6 +357,7 @@ class RcloneConnection(AbstractConnection):
             credentials.update(self._formatCredentials(src_data, name='src'))
         if dst_data is not None:
             credentials.update(self._formatCredentials(dst_data, name='dst'))
+        check_flags, check_env = destination_checks(dst_data)
         return self.copy_with_credentials(
             credentials,
             src_resource_path=src_resource_path,
@@ -366,7 +368,9 @@ class RcloneConnection(AbstractConnection):
             copy_links=copy_links,
             job_id=job_id,
             # One argv item per flag (--transfers=32), formatted from parsed values
-            extra_flags=rclone_tuning.copy_flags(performance, dst_data.type if dst_data is not None else None),
+            extra_flags=rclone_tuning.copy_flags(performance, dst_data.type if dst_data is not None else None)
+                + check_flags,
+            extra_env=check_env,
         )
 
 
@@ -665,12 +669,22 @@ class RcloneConnection(AbstractConnection):
                 '{}_V2_AUTH'.format(prefix),
                 's3_v2_auth'
             )
-            if '{}_PROVIDER'.format(prefix) in credentials: # from an rclone remote
-                pass
-            elif '{}_ENDPOINT'.format(prefix) not in credentials:
-                credentials['{}_PROVIDER'.format(prefix)] = 'AWS'
+            provider = getattr(data, 's3_provider', None)
+            if provider not in s3_providers.PROVIDER_VALUES:
+                provider = None
+            if '{}_PROVIDER'.format(prefix) in credentials and data.subtype == 'profile' \
+                    and provider in (None, 'AWS', 'Other'):
+                pass # from an rclone remote, which knows better than the defaults
+            elif provider is not None:
+                credentials['{}_PROVIDER'.format(prefix)] = provider
             else:
-                credentials['{}_PROVIDER'.format(prefix)] = 'Other'
+                credentials['{}_PROVIDER'.format(prefix)] = s3_providers.legacy_provider(
+                    credentials.get('{}_ENDPOINT'.format(prefix)))
+            # Chunked uploads (multipart) from 32 MiB on, or in one piece up to 5 GiB so
+            # that S3 keeps the MD5 (ETag) Check Integrity needs (s3_providers)
+            credentials['{}_UPLOAD_CUTOFF'.format(prefix)] = (
+                s3_providers.UNCHUNKED_UPLOAD_CUTOFF if getattr(data, 's3_chunked', None) is False
+                else s3_providers.CHUNKED_UPLOAD_CUTOFF)
 
         elif data.type == 'azureblob':
             if data.subtype == 'profile':
@@ -868,6 +882,42 @@ class RcloneConnection(AbstractConnection):
             raise RcloneException(stderr)
 
 
+def destination_checks(dst_data):
+    """
+    rclone flags and process variables for skipping checksum checks of uploads to the
+    destination connection `dst_data` (None: local), only S3 on AWS or Ceph, which verify
+    Content-MD5 on every request themselves (s3_providers):
+    - 'post_copy': --ignore-checksum, no MD5 comparison after each file (rclone's
+      flag is global, so only ever for this destination's copy jobs)
+    - 'all': also AWS_REQUEST_CHECKSUM_CALCULATION=when_required, i.e. no CRC32 and, for
+      uploads in one piece, no Content-MD5: S3 no longer verifies the data
+    """
+    if dst_data is None or getattr(dst_data, 'type', None) != 's3':
+        return [], {}
+    if getattr(dst_data, 's3_provider', None) not in s3_providers.CHECK_SKIPPING_PROVIDERS:
+        return [], {}
+    skip = getattr(dst_data, 's3_skip_checks', None)
+    if skip == s3_providers.SKIP_POST_COPY:
+        return ['--ignore-checksum'], {}
+    if skip == s3_providers.SKIP_ALL:
+        return ['--ignore-checksum'], {'AWS_REQUEST_CHECKSUM_CALCULATION': 'when_required'}
+    return [], {}
+
+
+# Process variables a job ticket may carry for rclone (destination_checks), with the
+# values a worker accepts
+JOB_ENV_VALUES = {'AWS_REQUEST_CHECKSUM_CALCULATION': ('when_required',)}
+
+
+def checked_job_env(env):
+    """A job ticket's process variables for rclone, only those of JOB_ENV_VALUES"""
+    env = dict(env or {})
+    for key, value in env.items():
+        if value not in JOB_ENV_VALUES.get(key, ()):
+            raise RcloneException('Invalid rclone environment in the job ticket: {}'.format(key))
+    return env
+
+
 # "Test connection" makes one quick attempt: the dialog repeats it (at most 5 times,
 # showing each error at once) only while the error may be transient. rclone's default
 # of 10 low-level retries with backoff took minutes to report e.g. a certificate error.
@@ -1048,6 +1098,7 @@ def should_log_full_credential(key):
         '_PROFILE',
         '_SHARED_CREDENTIALS_FILE',
         '_FORCE_PATH_STYLE',
+        '_UPLOAD_CUTOFF',
 
         # azureblob
         '_ACCOUNT',

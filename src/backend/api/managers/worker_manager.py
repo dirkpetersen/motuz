@@ -67,7 +67,7 @@ REMOTE_NAMES = {'copy': {'src': 'src', 'dst': 'dst'}, 'hashsum': {'src': 'src', 
 PROFILE_FIELDS = (
     'type', 'subtype', 'owner', 'profile_source', 'profile_name',
     's3_region', 's3_endpoint', 's3_v2_auth', 'kms_encryption_key_arn', 'azure_account',
-    'skip_tls_verify',
+    'skip_tls_verify', 's3_provider', 's3_chunked',
 )
 
 TOKEN_AUDIENCE = 'motuz-worker'
@@ -716,6 +716,7 @@ def build_ticket(remote_job, job, ticket_token, broker_secret):
             'dst': sides['dst'],
         },
         'rclone_flags': job_routing.rclone_flags(remote_job.job_type, job),
+        'rclone_job_env': job_routing.rclone_job_env(remote_job.job_type, job),
     }
 
 

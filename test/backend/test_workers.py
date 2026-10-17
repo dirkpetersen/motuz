@@ -29,6 +29,7 @@ from api.models.worker import utcnow
 from api.utils import job_runner
 from api.utils.rate_limit import RateLimiter
 from api.views import worker_views
+from api.version import VERSION
 
 
 BASE_URL = 'https://motuz.test'
@@ -113,7 +114,7 @@ class TestWorkerAuthentication(WorkerTestBase):
 
     def test_sign_in_with_secret(self):
         worker, secret = self.worker()
-        answer = worker_manager.sign_in({'secret': secret, 'version': '0.3.0'})
+        answer = worker_manager.sign_in({'secret': secret, 'version': VERSION})
         self.assertEqual(answer['worker']['name'], 'w1')
         self.assertEqual(answer['server']['protocol'], worker_manager.WORKER_PROTOCOL)
         self.assertEqual(worker_manager.authenticate('Bearer ' + answer['access_token']).id, worker.id)
@@ -339,6 +340,17 @@ class TestTicketScope(WorkerTestBase):
         self.assertTrue(ticket['ticket_token'].startswith('mzt1.{}.'.format(ticket['ticket_id'])))
         remote_job = db.session.get(RemoteJob, ticket['ticket_id'])
         self.assertNotIn(ticket['ticket_token'], (remote_job.ticket_hash, remote_job.broker_hash))
+
+    def test_skipped_checks_of_the_destination_travel_in_the_ticket(self):
+        dst = self.connection('alice', type='s3', s3_access_key_id='AKIAALICE', s3_secret_access_key='alice-secret',
+                              s3_provider='Ceph', s3_endpoint='https://s3.example', s3_skip_checks='all', s3_chunked=False)
+        self.copy_job(dst=dst, dst_path='bucket/data')
+        worker, _ = self.worker()
+        ticket = self.claim(worker)
+        self.assertIn('--ignore-checksum', ticket['rclone_flags'])
+        self.assertEqual(ticket['rclone_job_env'], {'AWS_REQUEST_CHECKSUM_CALCULATION': 'when_required'})
+        env = ticket['job']['dst']['rclone_env']
+        self.assertEqual((env['RCLONE_CONFIG_DST_PROVIDER'], env['RCLONE_CONFIG_DST_UPLOAD_CUTOFF']), ('Ceph', '5Gi'))
 
     def test_oauth_connections_get_the_job_scoped_https_broker(self):
         token = {'access_token': 'ACCESS', 'refresh_token': REAL_REFRESH, 'expiry': '2020-01-01T00:00:00Z'}

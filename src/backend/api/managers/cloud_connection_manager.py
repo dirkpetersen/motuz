@@ -9,6 +9,7 @@ from ..models import CloudConnection
 from ..exceptions import *
 from ..utils.rclone_connection import RcloneConnection
 from ..utils import local_credentials as local_credentials_utils
+from ..utils import s3_providers
 from ..managers.auth_manager import token_required, get_logged_in_user
 from ..managers import token_broker_manager
 
@@ -55,6 +56,34 @@ _PROFILE_REPLACES = {
 
 def _writable(data):
     return {key: value for key, value in data.items() if key in _WRITABLE_FIELDS}
+
+
+def _apply_s3_rules(cloud_connection):
+    """
+    S3 options: rclone's provider (from the list in utils/s3_providers.py; empty: AWS
+    without an endpoint, else Other), chunked uploads (default on) and skipping
+    checksum checks, which only AWS and Ceph allow (they verify Content-MD5 on every
+    request themselves). Other types keep none of them.
+    """
+    if cloud_connection.type != 's3':
+        cloud_connection.s3_provider = None
+        cloud_connection.s3_skip_checks = None
+        cloud_connection.s3_chunked = True
+        return
+    provider = (cloud_connection.s3_provider or '').strip()
+    if not provider:
+        provider = s3_providers.legacy_provider((cloud_connection.s3_endpoint or '').strip())
+    if provider not in s3_providers.PROVIDER_VALUES:
+        raise HTTP_400_BAD_REQUEST('Unknown S3 provider: {}'.format(provider))
+    cloud_connection.s3_provider = provider
+    if cloud_connection.s3_chunked is None:
+        cloud_connection.s3_chunked = True
+    skip = (cloud_connection.s3_skip_checks or '').strip() or None
+    if skip is not None and skip not in s3_providers.SKIP_CHECKS_VALUES:
+        raise HTTP_400_BAD_REQUEST('s3_skip_checks must be empty, post_copy or all')
+    if provider not in s3_providers.CHECK_SKIPPING_PROVIDERS:
+        skip = None
+    cloud_connection.s3_skip_checks = skip
 
 
 def _apply_profile_rules(cloud_connection):
@@ -124,6 +153,7 @@ def create(data):
 
     cloud_connection = CloudConnection(**_writable(data))
     cloud_connection.owner = owner
+    _apply_s3_rules(cloud_connection)
     _apply_profile_rules(cloud_connection)
 
     db.session.add(cloud_connection)
@@ -169,6 +199,7 @@ def update(id, data):
         if key in _TOKEN_CLIENT_COLUMNS:
             # A pasted token comes from `rclone config`, i.e. rclone's app
             setattr(cloud_connection, _TOKEN_CLIENT_COLUMNS[key], None)
+    _apply_s3_rules(cloud_connection)
     _apply_profile_rules(cloud_connection)
 
     db.session.commit()
@@ -203,6 +234,7 @@ def verify(data):
 
     cloud_connection = CloudConnection(**fields)
     cloud_connection.owner = owner
+    _apply_s3_rules(cloud_connection)
 
     # The stored OAuth token is managed by the token broker, so use it through the broker
     brokered = token_broker_manager.BROKERED_TYPES.get(cloud_connection.type)

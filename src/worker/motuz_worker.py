@@ -57,7 +57,7 @@ sys.path.insert(0, os.environ.get('MOTUZ_BACKEND_DIR') or os.path.join(HERE, '..
 
 from api.utils import job_runner  # noqa: E402  (Flask-free, see api/__init__.py)
 from api.utils.abstract_connection import RcloneException  # noqa: E402
-from api.utils.rclone_connection import RcloneConnection  # noqa: E402
+from api.utils.rclone_connection import RcloneConnection, checked_job_env  # noqa: E402
 from api.version import VERSION, WORKER_PROTOCOL  # noqa: E402
 
 EXIT_ERROR = 1
@@ -426,7 +426,8 @@ class JobRun:
             copy_links=bool(options.get('copy_links')),
             job_id=run_id,
             extra_flags=self.ticket.get('rclone_flags') or [],
-            extra_env=self.config.rclone_env,
+            # skipping S3's request checksums for this destination (destination_checks)
+            extra_env={**self.config.rclone_env, **checked_job_env(self.ticket.get('rclone_job_env'))},
         )
 
         def tick(percent, text, error_text):

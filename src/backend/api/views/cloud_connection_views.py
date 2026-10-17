@@ -44,6 +44,9 @@ dto = api.model('connection', {
     's3_endpoint': OptionalString(required=False, example='https://hello.swiftstack.com'),
     's3_v2_auth': fields.String(required=False, example='true'),
     'skip_tls_verify': fields.Boolean(required=False, default=False, example=False),
+    's3_provider': OptionalString(required=False, example='Ceph'),
+    's3_chunked': fields.Boolean(required=False, default=True, example=True),
+    's3_skip_checks': OptionalString(required=False, example='post_copy'),
 
     'azure_account': fields.String(required=False, example='my_azure_account'),
     'azure_key': PrivateOptionalString(required=False, example='qe21euoidjlkadj283u2398rudy8d87adh3dasdkahsd23ey239eaduhawd812e1uidhwdkjdh2es_asdASDAS=='),

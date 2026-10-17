@@ -33,6 +33,13 @@ class CloudConnection(db.Model):
     # S3 compatible fields
     s3_endpoint = db.Column(db.String, nullable=True)
     s3_v2_auth = db.Column(db.String, nullable=True)
+    # rclone's provider (utils/s3_providers.py); NULL: AWS without an endpoint, else Other
+    s3_provider = db.Column(db.String, nullable=True)
+    # Uploads in parts from 32 MiB on (fast) or in one piece up to 5 GiB, so that S3 keeps
+    # each object's MD5 and Check Integrity can verify it
+    s3_chunked = db.Column(db.Boolean, nullable=False, default=True, server_default=db.true())
+    # AWS and Ceph only: None (rclone's checks), 'post_copy' or 'all' (s3_providers)
+    s3_skip_checks = db.Column(db.String, nullable=True)
     # Do not verify the TLS certificate of this connection's server (e.g. on-prem S3
     # whose certificate does not match its host name); rclone's other remote still does
     skip_tls_verify = db.Column(db.Boolean, nullable=False, default=False, server_default=db.false())

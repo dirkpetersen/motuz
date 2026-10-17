@@ -3,13 +3,14 @@ import GdriveSection from 'views/Dialogs/CloudConnection/GdriveSection.jsx';
 import LocalCredentialPicker, { describeProfile, profileKey } from 'views/Dialogs/CloudConnection/LocalCredentialPicker.jsx';
 import React from 'react';
 import classnames from 'classnames';
+import { S3_PROVIDERS, DEFAULT_S3_PROVIDER, NON_AWS_DEFAULT_REGION, isAws, canSkipChecks } from 'utils/s3Providers.js';
 
 // rclone's public OneDrive app (oauth_manager.RCLONE_CLIENT_ID)
 const RCLONE_ONEDRIVE_CLIENT_ID = 'b15665d9-eda6-4092-8539-0eec376afd59';
 
 const CONNECTION_TYPES = [
     {
-        label: 'Amazon S3 (or S3 compatible)',
+        label: 'S3',
         value: 's3',
     },
     {
@@ -55,6 +56,13 @@ const S3_CONNECTION_TYPES = [
         label: 'Temporary credentials (STS session token)',
         value: 'sts'
     }
+]
+
+// Checksum checks of uploads to the connection (s3_skip_checks), offered for AWS and Ceph
+const S3_CHECK_OPTIONS = [
+    {value: '', label: 'Full checks (rclone compares the MD5 of every file after the copy)'},
+    {value: 'post_copy', label: "Skip rclone's check after the copy (recommended for speed)"},
+    {value: 'all', label: 'Skip all checks (not recommended)'},
 ]
 
 const AZURE_CONNECTION_TYPES = [
@@ -132,6 +140,9 @@ class CloudConnectionDialogFields extends React.Component {
                         </select>
                     </div>
                 </div>
+
+                {type === 's3' && this._renderS3ProviderSelect()}
+                {type === 's3' && !isAws(this._s3Provider()) && this._renderS3EndpointField(false)}
 
                 <CloudConnectionField
                     label='Connection Name'
@@ -280,15 +291,69 @@ class CloudConnectionDialogFields extends React.Component {
         );
     }
 
+    _s3Provider() {
+        return this.state.s3Provider || this.props.data.s3_provider || DEFAULT_S3_PROVIDER;
+    }
+
+    _s3SkipChecks() {
+        return this.state.s3SkipChecks === null ? (this.props.data.s3_skip_checks || '') : this.state.s3SkipChecks;
+    }
+
+    // Directly below Type: which S3 implementation (rclone's provider)
+    _renderS3ProviderSelect() {
+        return (
+            <div className="row mb-3 required">
+                <div className="col-4 text-end control-label">
+                    <b className='form-label'>Provider</b>
+                </div>
+                <div className="col-8">
+                    <select
+                        className="form-select"
+                        name="s3_provider"
+                        aria-label='Provider'
+                        value={this._s3Provider()}
+                        onChange={event => this.setState({s3Provider: event.target.value})}
+                    >
+                        {S3_PROVIDERS.map(d => (
+                            <option key={d.value} value={d.value}>{d.label}</option>
+                        ))}
+                    </select>
+                </div>
+            </div>
+        );
+    }
+
+    _renderS3EndpointField(aws) {
+        return (
+            <CloudConnectionField
+                label='Endpoint URL'
+                input={{
+                    name: 's3_endpoint',
+                    defaultValue: this.props.data.s3_endpoint,
+                    placeholder: aws ? 'Only for a VPC or FIPS endpoint of AWS' : 'e.g. https://s3.example.edu',
+                }}
+                error={this.props.errors.s3_endpoint}
+                isValid={this.props.verifySuccess}
+            />
+        );
+    }
+
     _renderS3Section(subtype) {
         const profile = this._profile();
         const pickedRegion = this.state.profile && this.state.profile.region;
+        const provider = this._s3Provider();
+        const aws = isAws(provider);
+        // A new connection to storage that is not AWS starts with us-east-1, which most
+        // S3 compatible servers accept
+        const defaultRegion = pickedRegion || this.props.data.s3_region
+            || (!aws && !this.props.isSanitized ? NON_AWS_DEFAULT_REGION : undefined);
+        const skipChecks = this._s3SkipChecks();
         return (
             <React.Fragment>
                 {this._renderProfilePicker('s3')}
                 {profile
                     ? this._renderProfileInputs(profile)
-                    : this._renderS3Credentials(subtype)
+                    : this._renderS3Credentials(subtype, aws)
                 }
                 <CloudConnectionField
                     label='Bucket'
@@ -303,13 +368,13 @@ class CloudConnectionDialogFields extends React.Component {
                     isValid={this.props.verifySuccess}
                 />
                 <CloudConnectionField
-                    key={'region-' + profileKey(this.state.profile)}
+                    key={'region-' + profileKey(this.state.profile) + (aws ? '-aws' : '-other')}
                     label='Region'
                     input={{
                         name: 's3_region',
-                        defaultValue: pickedRegion || this.props.data.s3_region,
-                        title: "Must be a valid AWS region",
-                        placeholder: 'e.g. us-west-2',
+                        defaultValue: defaultRegion,
+                        title: aws ? "Must be a valid AWS region" : "The region the server expects (usually us-east-1)",
+                        placeholder: aws ? 'e.g. us-west-2' : NON_AWS_DEFAULT_REGION,
                         // this regex works in python but not js, and it's not futureproof....
                         // pattern: "^(us(-gov)?|ap|ca|cn|eu|sa)-(central|(north|south)?(east|west)?)-\d$",
                     }}
@@ -330,16 +395,7 @@ class CloudConnectionDialogFields extends React.Component {
                             error={this.props.errors.kms_encryption_key_arn}
                             isValid={this.props.verifySuccess}
                         />
-                        <CloudConnectionField
-                            label='Endpoint URL'
-                            input={{
-                                name: 's3_endpoint',
-                                defaultValue: this.props.data.s3_endpoint,
-                                placeholder: 'Only for S3 compatible storage (not AWS)',
-                            }}
-                            error={this.props.errors.s3_endpoint}
-                            isValid={this.props.verifySuccess}
-                        />
+                        {aws && this._renderS3EndpointField(true)}
                         <CloudConnectionField label='TLS certificate' input={{}}>
                             <div className='form-check mt-2'>
                                 <input
@@ -359,20 +415,72 @@ class CloudConnectionDialogFields extends React.Component {
                                 </div>
                             </div>
                         </CloudConnectionField>
+                        <CloudConnectionField label='Uploads' input={{}}>
+                            <div className='form-check mt-2'>
+                                <input
+                                    type='checkbox'
+                                    className='form-check-input'
+                                    id='s3_chunked'
+                                    name='s3_chunked'
+                                    defaultChecked={this.props.data.s3_chunked !== false}
+                                />
+                                <label className='form-check-label' htmlFor='s3_chunked'>
+                                    Chunked uploads (fastest)
+                                </label>
+                                <div className='form-text'>
+                                    Files from 32 MiB on are uploaded in parts, in parallel. S3
+                                    stores no MD5 for such files, so "Check Integrity" is not
+                                    available for copies to this connection. Off: files up to
+                                    5 GiB are uploaded in one piece and keep their MD5; larger
+                                    files are still uploaded in parts.
+                                </div>
+                            </div>
+                        </CloudConnectionField>
+                        {canSkipChecks(provider) &&
+                            <CloudConnectionField label='Checksum checks' input={{}}>
+                                <select
+                                    className='form-select'
+                                    name='s3_skip_checks'
+                                    aria-label='Checksum checks'
+                                    value={skipChecks}
+                                    onChange={event => this.setState({s3SkipChecks: event.target.value})}
+                                >
+                                    {S3_CHECK_OPTIONS.map(d => (
+                                        <option key={d.value} value={d.value}>{d.label}</option>
+                                    ))}
+                                </select>
+                                {skipChecks === 'post_copy' &&
+                                    <div className='form-text'>
+                                        S3 still verifies the MD5 and CRC32 of every upload
+                                        request; only rclone's own comparison after each file is
+                                        left out. About twice as fast with chunked uploads.
+                                    </div>
+                                }
+                                {skipChecks === 'all' &&
+                                    <div className='alert alert-warning py-2 mt-2 mb-0 s3-skip-all-warning'>
+                                        Not recommended: S3 no longer verifies uploads sent in one
+                                        piece, so damaged data can be stored unnoticed. With the
+                                        current rclone this is not faster than skipping only the
+                                        check after the copy, because rclone still computes the
+                                        MD5 of every part.
+                                    </div>
+                                }
+                            </CloudConnectionField>
+                        }
                     </React.Fragment>
                 )}
             </React.Fragment>
         )
     }
 
-    _renderS3Credentials(subtype) {
+    _renderS3Credentials(subtype, aws=true) {
         return (
             <React.Fragment>
                 {this._renderSubtypeSelect('Key Type', S3_CONNECTION_TYPES, subtype)}
 
                 <CloudConnectionField
                     label='Access Key ID'
-                    input={{
+                    input={aws ? {
                         name: 's3_access_key_id',
                         defaultValue: this.props.data.s3_access_key_id,
                         title: "Must be a valid AWS Access Key ID (20 characters, usually starts with 'AKIA').",
@@ -380,7 +488,12 @@ class CloudConnectionDialogFields extends React.Component {
                         maxLength: 20,
                         pattern: "[A-Z0-9]{20}",
                         minLength: 20,
-
+                    } : {
+                        // S3 compatible servers have their own key formats
+                        name: 's3_access_key_id',
+                        defaultValue: this.props.data.s3_access_key_id,
+                        required: true,
+                        maxLength: 256,
                     }}
                     error={this.props.errors.s3_access_key_id}
                     isValid={this.props.verifySuccess}
@@ -388,7 +501,7 @@ class CloudConnectionDialogFields extends React.Component {
 
                 <CloudConnectionField
                     label='Secret Access Key'
-                    input={{
+                    input={aws ? {
                         name: 's3_secret_access_key',
                         defaultValue: this.props.data.s3_secret_access_key,
                         title: "Must be a valid AWS Secret Access Key (40 characters: letters, numbers and '/')",
@@ -398,6 +511,12 @@ class CloudConnectionDialogFields extends React.Component {
                         maxLength: 40,
                         // could probably trim this regex:
                         pattern: "[A-Za-z0-9\\/+=]{40}"
+                    } : {
+                        name: 's3_secret_access_key',
+                        defaultValue: this.props.data.s3_secret_access_key,
+                        required: true,
+                        type: 'password',
+                        maxLength: 256,
                     }}
                     error={this.props.errors.s3_secret_access_key}
                     isValid={this.props.verifySuccess}
@@ -1012,6 +1131,8 @@ class CloudConnectionDialogFields extends React.Component {
             subtype: DEFAULT_SUBTYPES[type] || '',
             profile: null,
             oauthManual: false,
+            s3Provider: null,
+            s3SkipChecks: null,
             // A drive name suggested by a sign-in does not fit another type
             name: name && name === this.state.autoName ? '' : this.state.name,
             autoName: null,
@@ -1037,6 +1158,8 @@ CloudConnectionDialogFields.initialState = {
     name: null, // Connection Name as edited, null = data.name
     autoName: null, // the name the sign-in suggested (the chosen drive)
     oauthManual: false, // OneDrive / Google Drive: "Advanced: paste a token" is open
+    s3Provider: null, // S3 provider as chosen, null = data.s3_provider or AWS
+    s3SkipChecks: null, // s3_skip_checks as chosen, null = data.s3_skip_checks
 }
 
 

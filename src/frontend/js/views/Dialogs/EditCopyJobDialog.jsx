@@ -7,6 +7,7 @@ import parseTime from 'utils/parseTime.jsx'
 import serializeForm from 'utils/serializeForm.jsx'
 import {describePerformance} from 'utils/copyPerformance.js'
 import {jobLocationDetail} from 'utils/jobLocation.js'
+import {canCheckIntegrity} from 'utils/s3Providers.js'
 
 class EditCopyJobDialog extends React.Component {
     constructor(props) {
@@ -30,7 +31,8 @@ class EditCopyJobDialog extends React.Component {
         const isInProgress = data.progress_state === 'PROGRESS'
         const isIncomplete = data.progress_state === 'FAILED' || data.progress_state === 'STOPPED'
         const dst_cloud = cloudMapping[this.props.data['dst_cloud_id'] || 0]
-        const checkIntegrityDisabled = dst_cloud.type === 's3'
+        // S3 stores chunked (multipart) uploads without an MD5, so they cannot be checked
+        const checkIntegrityDisabled = !canCheckIntegrity(dst_cloud)
 
         let color = 'default';
         if (isSuccess) {
@@ -139,8 +141,10 @@ class EditCopyJobDialog extends React.Component {
                                     Check Integrity
                                 </Button>
                                 {checkIntegrityDisabled && (
-                                    <div className="text-start ps-1">
-                                        Integrity check not needed for S3 destinations
+                                    <div className="text-start ps-1 check-integrity-note">
+                                        Not available: the destination uses chunked uploads, which
+                                        S3 stores without an MD5. Turn off "Chunked uploads" in the
+                                        connection's advanced options for copies you want to check.
                                     </div>
                                 )}
                             </Fragment>

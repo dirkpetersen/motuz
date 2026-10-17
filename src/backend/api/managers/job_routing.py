@@ -32,7 +32,7 @@ from flask import current_app
 
 from ..utils import file_view, rclone_tuning
 from ..utils.abstract_connection import RcloneException
-from ..utils.rclone_connection import RcloneConnection
+from ..utils.rclone_connection import RcloneConnection, destination_checks
 
 
 CENTRAL = 'central'
@@ -143,5 +143,16 @@ def rclone_flags(job_type, job):
     """
     if job_type == 'copy':
         dst_cloud = job.dst_cloud
-        return rclone_tuning.copy_flags(job.performance, dst_cloud.type if dst_cloud is not None else None)
+        return rclone_tuning.copy_flags(job.performance, dst_cloud.type if dst_cloud is not None else None) \
+            + destination_checks(dst_cloud)[0]
     return rclone_tuning.hashsum_flags(job.performance)
+
+
+def rclone_job_env(job_type, job):
+    """
+    Process variables for the job's rclone that are not remote configuration (skipping
+    S3's request checksums, RcloneConnection.destination_checks), for the ticket
+    """
+    if job_type == 'copy':
+        return destination_checks(job.dst_cloud)[1]
+    return {}

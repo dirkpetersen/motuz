@@ -215,6 +215,7 @@ stops with a message naming the missing piece (it says when to run `install.sh` 
     - [Remote workers on AL2027](#remote-workers-on-al2027)
     - [Tests on AL2027](#tests-on-al2027)
 - [Configuration and features](#configuration-and-features)
+    - [S3 connections](#s3-connections)
     - [OneDrive: own app registration](#onedrive-own-app-registration)
     - [Google Drive](#google-drive)
     - [Privacy policy and terms](#privacy-policy-and-terms)
@@ -1126,6 +1127,37 @@ motuz_manage workers list
 
 The docker-specific lines in the sections below (`.env`, `/docker/secrets`, `bin/redeploy.sh`)
 are the Docker column of this table; use the other column for the default install.
+
+### S3 connections
+
+A connection of type **S3** has a **Provider** right below the type: rclone's list of S3
+implementations, Amazon S3 first, then Ceph (RADOS Gateway), then MinIO, Wasabi, Cloudflare R2
+and the others rclone 1.75 knows, and "Any other S3 compatible provider" last. For anything but
+Amazon S3 the **Endpoint URL** appears right below the provider and the region starts as
+`us-east-1`, which most S3 compatible servers accept; for Amazon S3 the endpoint stays in the
+advanced options (VPC or FIPS endpoints only). Connections created before the provider existed
+count as Amazon S3 without an endpoint and "Other" with one; switch an on-prem Ceph connection to
+Ceph to get the options below.
+
+Advanced options:
+
+- **Ignore certificate errors**: for storage you trust whose certificate does not match its name
+  or is self-signed; only this connection skips the check (the other side of a copy still checks).
+- **Chunked uploads** (on by default): files from 32 MiB on go up in parts, in parallel, which is
+  the fastest. S3 stores no MD5 for objects uploaded in parts, so **Check Integrity is not
+  available** for copies to such a connection (the button is greyed out). Off: files up to 5 GiB
+  go up in one piece and keep their MD5 (S3's limit for one upload; larger files are still
+  uploaded in parts and cannot be checked).
+- **Checksum checks** (Amazon S3 and Ceph only, which verify the `Content-MD5` of every upload
+  request themselves):
+  - *Full checks* (default): rclone also compares the MD5 of every file after the copy.
+  - *Skip rclone's check after the copy* (recommended for speed, `--ignore-checksum` for copies to
+    this connection): S3 still verifies every request. Measured on 8 vCPUs, AWS us-west-2,
+    100 MB files: 1.1 GB/s with rclone's defaults, 2.2 GB/s with chunked uploads and this option,
+    because about two thirds of rclone's CPU time went into MD5.
+  - *Skip all checks* (not recommended): additionally
+    `AWS_REQUEST_CHECKSUM_CALCULATION=when_required`, so S3 no longer verifies uploads sent in one
+    piece. With rclone 1.75 it is not faster, because rclone still computes the MD5 of every part.
 
 ### OneDrive: own app registration
 
