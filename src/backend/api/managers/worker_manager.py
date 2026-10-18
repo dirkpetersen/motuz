@@ -695,7 +695,11 @@ def build_ticket(remote_job, job, ticket_token, broker_secret):
         sides[side] = entry
 
     if remote_job.job_type == 'copy':
-        options = {'copy_links': bool(job.copy_links)}
+        # The free space limit of this installation: the worker checks a local
+        # destination before rclone starts (utils/space_check.py)
+        options = {'copy_links': bool(job.copy_links),
+                   'max_fill_percent': current_app.config['MAX_FILL_PERCENT'],
+                   'space_check_timeout': current_app.config['JOB_SIZE_TIMEOUT']}
     else:
         options = {'download': bool(job.option_download)}
 

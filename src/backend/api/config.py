@@ -1,7 +1,7 @@
 import datetime
 import os
 
-from .utils import document_view, ec2_config, image_view, rclone_tuning
+from .utils import document_view, ec2_config, image_view, rclone_tuning, space_check
 
 basedir = os.path.abspath(os.path.dirname(__file__))
 
@@ -43,6 +43,10 @@ HEIC_MAX_CONCURRENT = image_view.heic_concurrency()
 # utils/document_view.py; PDFs are read in ranges and have no limit); an invalid value
 # stops the app here
 VIEW_DOCUMENT_MAX_BYTES = document_view.max_bytes()
+
+# Free space limit (MOTUZ_MAX_FILL_PERCENT, default 90, 100 = no check; README "Free
+# space limit", utils/space_check.py): an invalid value stops the app here
+MAX_FILL_PERCENT = space_check.max_fill_percent()
 
 
 class Config:
@@ -136,6 +140,11 @@ class Config:
     LARGE_JOB_BYTES = int(_optional_env('MOTUZ_LARGE_JOB_BYTES', str(300 * 1000 ** 3)))
     LARGE_JOB_FILES = int(_optional_env('MOTUZ_LARGE_JOB_FILES', '50000'))
     JOB_SIZE_TIMEOUT = int(_optional_env('MOTUZ_JOB_SIZE_TIMEOUT', '60'))
+    # A copy or upload to the local filesystem is refused if it would fill the
+    # destination's filesystem or quota above this percentage (managers/space_manager.py;
+    # measured within JOB_SIZE_TIMEOUT, else the job runs unchecked). Remote workers get
+    # it in the job ticket.
+    MAX_FILL_PERCENT = MAX_FILL_PERCENT
     # A claimed job fails when its worker has not reported for this long
     WORKER_LEASE_SECONDS = int(_optional_env('MOTUZ_WORKER_LEASE_SECONDS', '120'))
     # Lifetime of a worker's access token (it signs in again with its credential)

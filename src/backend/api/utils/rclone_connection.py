@@ -349,6 +349,43 @@ class RcloneConnection(AbstractConnection):
             raise RcloneException('Unexpected output of rclone size')
 
 
+    def measure(self, credentials, path, *, local, user, timeout, copy_links=False, missing_ok=False,
+                extra_env=None):
+        """
+        (bytes, files) of a job's source or local destination (`rclone size --json` as
+        `user`), for the free space check (utils/space_check.py): `credentials` are the
+        remote `src` of a cloud side (RCLONE_CONFIG_SRC_*, from _formatCredentials or a
+        worker's ticket), {} for a local path; `missing_ok`: (0, 0) if `path` does not
+        exist. Local sources skip .snapshot/ like the copy does. Raises
+        file_view.ViewTimeoutError after `timeout` seconds and RcloneException.
+        """
+        target = _local_path(path) if local else 'src:{}'.format(path)
+        env = {**credentials, **(extra_env or {})}
+        command = [
+            *sudo_as(user, env),
+            RCLONE,
+            '--config=/dev/null',
+            *_rate_limit_flags(credentials),
+            *(['--copy-links'] if copy_links else []),
+            *(['--exclude=\\.snapshot/'] if local else []),
+            'size',
+            '--json',
+            target,
+        ]
+        self._log_command(command, credentials)
+        returncode, stdout, stderr = file_view.run_limited(command, timeout, env=user_process_env(env))
+        if returncode == _RCLONE_DIRECTORY_NOT_FOUND and missing_ok:
+            return 0, 0
+        if returncode != 0:
+            raise RcloneException(stderr.decode('utf-8', 'replace').strip()[-1000:]
+                                  or 'rclone failed with exit status {}'.format(returncode))
+        try:
+            info = json.loads(stdout.decode('utf-8'))
+            return int(info['bytes']), int(info['count'])
+        except (ValueError, KeyError, TypeError):
+            raise RcloneException('Unexpected output of rclone size')
+
+
     def upload_command(self, dst_data, user, path, size):
         """
         (command, environment) of `rclone rcat` that writes `size` bytes from its stdin

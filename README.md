@@ -226,6 +226,7 @@ stops with a message naming the missing piece (it says when to run `install.sh` 
     - [Performance tuning](#performance-tuning)
     - [File viewer](#file-viewer)
     - [Uploads from the desktop](#uploads-from-the-desktop)
+    - [Free space limit](#free-space-limit)
     - [Remote workers (HTTPS only)](#remote-workers-https-only)
     - [Temporary EC2 workers](#temporary-ec2-workers)
 - [Alternative: Docker](#alternative-docker)
@@ -1618,6 +1619,34 @@ failed, with rclone's message for each failed file.
   source was in the browser).
 - When a local destination is full (or the user's disk quota is exceeded), the whole
   upload fails at once with that reason instead of failing file by file.
+
+### Free space limit
+
+A copy job or an upload to the **local filesystem** is refused when, once its data is
+there, the destination would be more than `MOTUZ_MAX_FILL_PERCENT` full (default `90`;
+`100` turns the check off; any other value than a whole number from 1 to 100 stops the
+app). The New Copy Job dialog (or, for uploads, an alert) shows why, and no job is created:
+
+    Copying 1.2 TiB to /storage/t3/x would fill its quota (CephFS quota of /storage/t3/x) to 96% (limit 90%): 409.6 GiB of 10.0 TiB free. ...
+
+- **What is full**: read as the logged-in user on the nearest existing folder of the
+  destination. If a quota applies, the quota is the limit: a CephFS directory quota
+  (`ceph.quota.max_bytes` of the folder or its nearest parent on the same mount that has
+  one, with `ceph.dir.rbytes` as its usage), or the user's or group's block quota of a
+  filesystem on a local disk (ext4, XFS). Otherwise the filesystem's size (`statvfs`; the
+  CephFS client already reports the quota of the mount's root there, XFS a project quota).
+  NFS, Lustre, GPFS and BeeGFS quotas are not read (only the size the filesystem reports).
+- **How much is added**: `rclone size` of the source, as the user, minus what already
+  exists at the destination path (so a Retry of a half-done copy is not refused); for an
+  upload the sizes of the files sent (files skipped as existing do not count, files that
+  are overwritten count in full).
+- **Not blocked when unknown**: if the space or a size cannot be determined within
+  `MOTUZ_JOB_SIZE_TIMEOUT` (60 s), or the folder cannot be read, the job runs and its
+  details say "Free space not checked: <why>"; a full disk still stops it at once. A job
+  that was checked says so in its details too ("Free space checked: ...").
+- Cloud destinations are not checked (no capacity information). Jobs that run on a remote
+  worker (`MOTUZ_LOCAL_JOB_POOL`) are checked by the worker, on its own mounts, before
+  rclone starts, with the Motuz server's percentage; a refused job fails with the message.
 
 ### Remote workers (HTTPS only)
 

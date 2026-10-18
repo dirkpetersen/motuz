@@ -24,6 +24,10 @@ class CopyJob(db.Model, TimestampMixin):
     # {"files": count, "bytes": total, "mode": "overwrite"|"skip", "name": shown as the
     # source}; its files are the job's upload_file rows
     upload = db.Column(db.JSON, nullable=True)
+    # The free space check at create (managers/space_manager.py): "Free space checked:
+    # ..." or "Free space not checked: <why>"; NULL if none ran (cloud destination,
+    # limit off, a remote worker's destination)
+    space_check = db.Column(db.String, nullable=True)
 
     owner = db.Column(db.String, index=True)
 

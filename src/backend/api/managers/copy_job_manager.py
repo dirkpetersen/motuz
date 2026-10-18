@@ -10,7 +10,7 @@ from ..models import CopyJob
 from ..managers.auth_manager import token_required, get_logged_in_user
 from ..managers import cloud_connection_manager
 from ..utils import rclone_tuning
-from ..managers import job_routing, worker_manager, upload_manager
+from ..managers import job_routing, worker_manager, upload_manager, space_manager
 from ..utils.email_utils import Email
 
 
@@ -81,6 +81,9 @@ def create(data):
 
     src_cloud = _owned_cloud(data.get('src_cloud_id'))
     dst_cloud = _owned_cloud(data.get('dst_cloud_id'))
+    # 409 if the local destination would be too full afterwards (MOTUZ_MAX_FILL_PERCENT)
+    space_note = space_manager.check_copy(owner, src_cloud, data.get('src_resource_path'), dst_cloud,
+                                          data.get('dst_resource_path'), data.get('copy_links'))
 
     copy_job = CopyJob(**{
         'description': data.get('description', None),
@@ -92,6 +95,7 @@ def create(data):
         'copy_links': data.get('copy_links', None),
         'notification_email': data.get('notification_email', None),
         'performance': validate_performance(data.get('performance'), dst_cloud),
+        'space_check': space_note,
 
         'progress_current': 0,
         'progress_total': 100,

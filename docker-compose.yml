@@ -81,6 +81,11 @@ x-variables:
         MOTUZ_RCLONE_MEMORY_BUDGET: ${MOTUZ_RCLONE_MEMORY_BUDGET:-}
         MOTUZ_RCLONE_MD5_SIMD_SERVERS: ${MOTUZ_RCLONE_MD5_SIMD_SERVERS:-}
         MOTUZ_RCLONE_EXTRA_FLAGS: ${MOTUZ_RCLONE_EXTRA_FLAGS:-}
+    - &space-environment
+        # Free space limit (README, "Free space limit"): a copy or upload to the local
+        # filesystem is refused if its destination's filesystem or quota would be more
+        # than this percent full afterwards. Empty: 90; 100: no check.
+        MOTUZ_MAX_FILL_PERCENT: ${MOTUZ_MAX_FILL_PERCENT:-}
     - &viewer-environment
         # Largest image the file viewer shows, e.g. 25M (the default); larger is refused
         MOTUZ_VIEW_IMAGE_MAX_BYTES: ${MOTUZ_VIEW_IMAGE_MAX_BYTES:-}
@@ -171,7 +176,7 @@ services:
         network_mode: host
         <<: *shared-volumes
         environment:
-            <<: [*database-environment, *smtp-environment, *oauth-environment, *operator-environment, *rclone-environment, *worker-environment, *ec2-environment, *viewer-environment]
+            <<: [*database-environment, *smtp-environment, *oauth-environment, *operator-environment, *rclone-environment, *worker-environment, *ec2-environment, *space-environment, *viewer-environment]
         secrets:
             - MOTUZ_DATABASE_PASSWORD
             - MOTUZ_FLASK_SECRET_KEY
@@ -190,7 +195,7 @@ services:
         environment:
             # The pool settings too: the EC2 launcher and reaper run here, and the
             # configuration check (config.py) needs them
-            <<: [*database-environment, *smtp-environment, *oauth-environment, *operator-environment, *rclone-environment, *worker-environment, *ec2-environment]
+            <<: [*database-environment, *smtp-environment, *oauth-environment, *operator-environment, *rclone-environment, *worker-environment, *ec2-environment, *space-environment]
         secrets:
             - MOTUZ_DATABASE_PASSWORD
             - MOTUZ_FLASK_SECRET_KEY
