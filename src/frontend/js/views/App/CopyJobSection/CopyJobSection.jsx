@@ -2,6 +2,7 @@ import React from 'react';
 
 import CopyJobTable from 'views/App/CopyJobSection/CopyJobTable.jsx'
 import HashsumJobTable from 'views/App/CopyJobSection/HashsumJobTable.jsx'
+import CopyScheduleTable from 'views/App/CopyJobSection/CopyScheduleTable.jsx'
 import CopyJobSectionHeader from 'views/App/CopyJobSection/CopyJobSectionHeader.jsx'
 import ResizableDivider from 'components/ResizableDivider.jsx'
 
@@ -36,6 +37,7 @@ class CopyJobSection extends React.PureComponent {
                 />
                 {this.state.value === 0 && <CopyJobTable />}
                 {this.state.value === 1 && <HashsumJobTable />}
+                {this.state.value === 2 && <CopyScheduleTable />}
             </div>
         );
     }

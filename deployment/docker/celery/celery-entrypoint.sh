@@ -17,4 +17,9 @@ case "${MOTUZ_EC2_WORKERS:-}" in
         ;;
 esac
 
+# Scheduled repeating copies (README, "Scheduled copies"): the runner, which starts the
+# due copy jobs every minute. Next to the Celery worker for the same reason, and exactly
+# one per installation (one celery container; claims are SKIP LOCKED anyway).
+( while true; do python3 manage.py schedules run --loop; sleep 30; done ) &
+
 exec celery -A api.tasks worker -l info

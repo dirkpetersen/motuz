@@ -7,3 +7,4 @@ from .oauth_flow import OauthFlow
 from .worker import Worker, WorkerBootstrapToken, RemoteJob
 from .ec2_worker import Ec2Worker
 from .motuz_destination import MotuzDestination
+from .copy_schedule import CopySchedule

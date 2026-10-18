@@ -149,6 +149,45 @@ def ec2_check():
     sys.exit(1 if failed else 0)
 
 
+@cli.group('schedules')
+def schedules():
+    """Scheduled repeating copies (README, "Scheduled copies")"""
+
+
+@schedules.command('tick')
+def schedules_tick():
+    """Runs every due schedule once now (one pass of the runner)"""
+    from api.managers import schedule_manager
+    outcomes = schedule_manager.tick()
+    for schedule_id, outcome in outcomes:
+        click.echo('schedule {} {}'.format(schedule_id, outcome))
+    if not outcomes:
+        click.echo('no schedule is due')
+
+
+@schedules.command('run')
+@click.option('--loop', is_flag=True, help='Repeat every minute (started next to the Celery worker)')
+def schedules_run(loop):
+    """The runner of the scheduled copies: one pass, or with --loop one every minute"""
+    from api.managers import schedule_manager
+    if loop:
+        schedule_manager.run_loop()
+        return
+    schedules_tick.callback()
+
+
+@schedules.command('list')
+def schedules_list():
+    """Lists all schedules (every user's) with their next run"""
+    from api.models import CopySchedule
+    from api.utils import schedule as schedule_utils
+    for row in CopySchedule.query.order_by(CopySchedule.id):
+        click.echo('{:<5} {:<12} {:<8} {:<40} next {} last job {} {}'.format(
+            row.id, row.owner, 'enabled' if row.enabled else 'paused',
+            schedule_utils.describe(schedule_utils.spec_of(row)), schedule_utils.iso_utc(row.next_run_at),
+            row.last_job_id or '-', row.last_status or ''))
+
+
 @cli.group('secrets')
 def secrets_group():
     """Encryption of the credential columns (README, "Secrets and backups")"""

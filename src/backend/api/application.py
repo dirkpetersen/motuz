@@ -99,6 +99,9 @@ def register_api(app):
     from .views.copy_job_views import api as copy_job_ns
     api.add_namespace(copy_job_ns)
 
+    from .views.copy_schedule_views import api as copy_schedule_ns
+    api.add_namespace(copy_schedule_ns)
+
     from .views.hashsum_job_views import api as hashsum_job_ns
     api.add_namespace(hashsum_job_ns)
 

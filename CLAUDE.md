@@ -20,6 +20,7 @@ Invariants that hold everywhere (the details are in the sections below and in `.
 - PostgreSQL passwords and keys are always random (`openssl rand -hex 32` / `-base64 32`); no default or example password in scripts, `.env`, compose files or CI.
 - `modified` in listings is always UTC ISO 8601 with `Z` and whole seconds, or null; never naive local times.
 - Celery task ids are `copy-<id>` / `hashsum-<id>` (`_celery_task_id`).
+- Scheduled copy runs never delete and never overwrite (`overwrite` False, `--ignore-existing`) unless `MOTUZ_ALLOW_GENERAL_OVERWRITES` is true; they are made only by `copy_job_manager.create_for(owner, data, schedule=)`, the same path as user-created jobs.
 - `api.utils` and `api.version` must never import the Flask app or config (the remote worker agent imports them without `MOTUZ_*` variables).
 - Bump `VERSION` / `WORKER_PROTOCOL` in `api/version.py` when the job code or the worker API changes.
 - Never build rclone flags from user text: only validated values through `rclone_tuning` (`copy_flags` / `hashsum_flags`).
@@ -141,6 +142,9 @@ Hashsum jobs run md5sum on src then dst, build file trees (`utils/file_utils.py`
 
 **rclone performance** (`utils/rclone_tuning.py`, stdlib only): installation defaults `MOTUZ_RCLONE_*` (unset ones mean `MOTUZ_DEFAULTS`: 64 transfers, 128 checkers, S3 parts 16M × 8, measured; halved on small servers until they fit the memory budget, whose default is a quarter of the server's memory), caps `MOTUZ_RCLONE_MAX_*`, a memory budget, and validated per-job overrides in `copy_job.performance` / `hashsum_job.performance`; an invalid setting stops the app with a `TuningConfigError`. Details: `.claude/rules/rclone-tuning.md`.
 
+### Scheduled copies
+`copy_schedule` rows (`models/copy_schedule.py`, `managers/schedule_manager.py`, `/api/copy-schedules/`, README "Scheduled copies") repeat a copy hourly/daily/weekly/monthly, times stored in UTC (`utils/schedule.py`, stdlib; the dialog converts local times, `utils/copySchedule.js`). The runner `manage.py schedules run --loop` (next to the Celery worker: `celery-entrypoint.sh`, `bin/systemd/celery_worker.sh` = `motuz-celery`'s ExecStart) claims due schedules with `FOR UPDATE SKIP LOCKED` + a compare-and-set of `next_run_at`, skips a run while the previous job is in PROGRESS, and creates a normal copy job (`copy_job.schedule_id`). A schedule out of AWS needs the first run's and the repeated runs' confirmation (`repeat_confirmed`, else 400). Details: `.claude/rules/scheduled-copies.md`.
+
 ### Remote workers (HTTPS only)
 Jobs can run on remote workers that reach the central node only by outbound HTTPS (optionally via an HTTP proxy); no database access, no inbound ports. README "Remote workers (HTTPS only)" is the operator documentation.
 Pools: `job_routing.route` sends jobs with a local path to `MOTUZ_LOCAL_JOB_POOL`, large cloud-to-cloud jobs to `MOTUZ_LARGE_JOB_POOL`, the rest to `central` (Celery); other pools get a `remote_job` row. Workers authenticate with their own tokens (never user JWTs), claim with `FOR UPDATE SKIP LOCKED`, hold a lease renewed by progress, and get OAuth tokens through the HTTPS broker. The agent (`src/worker/motuz_worker.py`) is stdlib only. Details: `.claude/rules/remote-workers.md`.
@@ -169,4 +173,4 @@ The default is the systemd install (`bin/systemd/`, `deployment/systemd/`, user 
 
 The Docker stack (`docker-compose.yml`, all services `network_mode: host`: traefik, app, celery, rabbitmq, database) is the alternative: Traefik is the only thing listening beyond loopback, uWSGI serves the API and the built frontend on 127.0.0.1:5000 and the token broker on 5001. Secrets are files in `$MOTUZ_DOCKER_ROOT/secrets`. Details: `.claude/rules/docker-deployment.md`.
 
-Rule files (`.claude/rules/`, loaded by path): `file-viewers`, `filesystem-access`, `auth`, `credentials-from-home`, `rclone-tuning`, `remote-workers`, `ec2-workers`, `oauth-broker`, `connection-dialog`, `systemd-install`, `docker-deployment`, `e2e-tests`.
+Rule files (`.claude/rules/`, loaded by path): `file-viewers`, `filesystem-access`, `auth`, `credentials-from-home`, `rclone-tuning`, `remote-workers`, `ec2-workers`, `oauth-broker`, `connection-dialog`, `systemd-install`, `docker-deployment`, `e2e-tests`, `scheduled-copies`.

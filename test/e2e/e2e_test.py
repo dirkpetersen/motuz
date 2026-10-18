@@ -11,7 +11,7 @@ import urllib.request
 
 from common import (BASE, CTX, DOCUMENT_FIXTURES_CODE, NUMBERED_LOG_CODE, VIEWER_FIXTURES_CODE, check, check_browser_upload,
                     check_chunked_reads, put_chunk, check_document_view, check_image_view, finish,
-                    numbered_log, data_key_material, db_password, pg_dump, psql, service_logs, sh, skip, stored_secret)
+                    numbered_log, data_key_material, db_password, manage, pg_dump, psql, service_logs, sh, skip, stored_secret)
 
 
 def req(method, path, token=None, body=None):
@@ -435,6 +435,72 @@ check('overwrite policy: upload conflicts say the existing file cannot be overwr
 status, body, _ = req('POST', '/api/copy-jobs/uploads/', A, {'dst_cloud_id': 0, 'dst_resource_path': '/home/alice/owup', 'mode': 'overwrite',
                                                              'files': [{'path': 'x.txt', 'size': 3}]})
 check('overwrite policy: an upload in overwrite mode is refused (403)', status == 403 and read_alice('/home/alice/owup/x.txt') == 'old\n', (status, body))
+
+# --- scheduled repeating copies (managers/schedule_manager.py): a run only adds new files,
+# also within a destination Motuz wrote before (where a normal copy overwrites), and
+# never deletes. One pass of the runner: manage.py schedules tick (the loop next to the
+# Celery worker may take the due schedule first; either way it runs once).
+sh('app', "sudo -u alice sh -c 'mkdir -p /home/alice/schsrc /home/alice/schdst; echo v1 > /home/alice/schsrc/a.txt'")
+sched_copy = {'description': 'before the schedule', 'src_resource_path': '/home/alice/schsrc',
+              'dst_resource_path': '/home/alice/schdst', 'copy_links': True}
+status, sj, _ = req('POST', '/api/copy-jobs/', A, sched_copy)
+sj = wait_job('copy-jobs', sj['id'], A)
+check('schedule: a normal copy first writes the destination', sj['progress_state'] == 'SUCCESS'
+      and read_alice('/home/alice/schdst/a.txt') == 'v1\n', (sj['progress_state'], read_alice('/home/alice/schdst/a.txt')))
+sh('app', "sudo -u alice sh -c 'echo v2 > /home/alice/schsrc/a.txt; echo b > /home/alice/schsrc/b.txt; "
+          "echo mine > /home/alice/schdst/extra.txt'")
+check('schedule: a normal copy would overwrite there (Motuz destination)', overwrite_policy(A, '/home/alice/schdst') is True)
+status, sc, _ = req('POST', '/api/copy-schedules/', A, {**sched_copy, 'description': 'nightly', 'frequency': 'daily',
+                                                        'minute': 0, 'hour': 3, 'run_now': False})
+check('schedule: created, first run at the next scheduled time', status == 201 and sc.get('enabled') is True
+      and re.match(r'^\d{4}-\d\d-\d\dT03:00:00Z$', sc.get('next_run_at') or '') and sc.get('last_job_id') is None, (status, sc))
+sid = sc.get('id')
+status, body, _ = req('GET', f'/api/copy-schedules/{sid}', B)
+check("schedule: bob cannot see alice's schedule", status == 404, (status, body))
+status, body, _ = req('PATCH', f'/api/copy-schedules/{sid}', B, {'enabled': False})
+check("schedule: bob cannot pause alice's schedule", status == 404, (status, body))
+status, body, _ = req('POST', '/api/copy-schedules/', A, {**sched_copy, 'frequency': 'monthly', 'minute': 0, 'hour': 3, 'day_of_month': 31})
+check('schedule: day 31 is refused (400)', status == 400, (status, body))
+status, body, _ = req('POST', '/api/copy-schedules/', A, {'description': 'x', 'src_cloud_id': cid, 'src_resource_path': '/b',
+                                                         'dst_resource_path': '/home/alice/x', 'frequency': 'hourly', 'minute': 5})
+check('schedule: out of AWS without the confirmation -> 400', status == 400 and 'Confirm the AWS egress cost' in str(body), (status, body))
+psql(f"update copy_schedule set next_run_at = (now() at time zone 'utc') - interval '1 minute' where id = {sid}")
+rc, out, err = manage('schedules', 'tick')
+check('schedule: manage.py schedules tick', rc == 0, (rc, out, err[-500:]))
+deadline = time.time() + 60
+runs = []
+while time.time() < deadline and not runs:
+    status, page, _ = req('GET', '/api/copy-jobs/?page=1&page_size=10', A)
+    runs = [j for j in page.get('data', []) if j.get('schedule_id') == sid]
+    if not runs:
+        time.sleep(1)
+check('schedule: the due schedule ran once', len(runs) == 1, [(j['id'], j.get('schedule_id')) for j in page.get('data', [])])
+if runs:
+    rj = wait_job('copy-jobs', runs[0]['id'], A)
+    check('schedule: the run is a copy job that keeps existing files', rj['progress_state'] == 'SUCCESS'
+          and rj.get('overwrite') is False, (rj['progress_state'], rj.get('overwrite'), rj.get('progress_error_text')))
+    check('schedule: the changed file is not overwritten, the new one is copied, nothing is deleted',
+          (read_alice('/home/alice/schdst/a.txt'), read_alice('/home/alice/schdst/b.txt'), read_alice('/home/alice/schdst/extra.txt'))
+          == ('v1\n', 'b\n', 'mine\n'),
+          (read_alice('/home/alice/schdst/a.txt'), read_alice('/home/alice/schdst/b.txt'), read_alice('/home/alice/schdst/extra.txt')))
+    check('schedule: the run reports the kept file', (rj.get('skipped_existing'), rj.get('skipped_existing_sample')) == (1, ['a.txt']),
+          (rj.get('skipped_existing'), rj.get('skipped_existing_sample')))
+    check('schedule: rclone ran copyto with --ignore-existing (celery log)',
+          '--ignore-existing --combined=- copyto /home/alice/schsrc /home/alice/schdst' in service_logs('celery'),
+          [line for line in service_logs('celery').splitlines() if 'schdst' in line][-1:])
+    status, sc, _ = req('GET', f'/api/copy-schedules/{sid}', A)
+    check('schedule: last job and the next run', status == 200 and sc.get('last_job_id') == rj['id']
+          and (sc.get('next_run_at') or '') > datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'), sc)
+rc, out, err = manage('schedules', 'tick')
+status, page, _ = req('GET', '/api/copy-jobs/?page=1&page_size=10', A)
+check('schedule: a second tick does not run it again', rc == 0 and 'no schedule is due' in out
+      and len([j for j in page.get('data', []) if j.get('schedule_id') == sid]) == 1, (rc, out))
+status, sc, _ = req('PATCH', f'/api/copy-schedules/{sid}', A, {'enabled': False})
+check('schedule: paused', status == 200 and sc.get('enabled') is False, (status, sc))
+status, body, _ = req('DELETE', f'/api/copy-schedules/{sid}', A)
+status, listed, _ = req('GET', '/api/copy-schedules/', A)
+check('schedule: deleted, its job stays', status == 200 and listed == []
+      and req('GET', f"/api/copy-jobs/{runs[0]['id'] if runs else 0}", A)[0] == 200, (status, listed))
 
 # --- rclone performance settings (utils/rclone_tuning.py). compose.yml sets
 # MOTUZ_RCLONE_CHECKERS=16, MOTUZ_RCLONE_MAX_TRANSFERS=48 and MOTUZ_RCLONE_MEMORY_BUDGET=8G

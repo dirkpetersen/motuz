@@ -220,3 +220,26 @@ def confirmed(assessment, raw, runs_on=None):
     result.pop('note', None)
     result['confirmed'] = True
     return result
+
+
+def repeated(stored, bytes_per_run, runs_per_month):
+    """
+    The monthly cost of a scheduled copy (managers/schedule_manager.py) whose runs each
+    copy `bytes_per_run` new bytes (None: not known), at the rates of the confirmed
+    estimate `stored`: later runs only copy new files, so the first run's size says
+    nothing about them. {new_bytes_per_run, runs_per_month, monthly_low_usd,
+    monthly_high_usd}, the prices None when the size is not known.
+    """
+    size = _number(bytes_per_run)
+    runs = _number(runs_per_month) or 0
+    result = {
+        'new_bytes_per_run': int(size) if size is not None else None,
+        'runs_per_month': runs,
+        'monthly_low_usd': None,
+        'monthly_high_usd': None,
+    }
+    low_rate, high_rate = _number(stored.get('rate_low_per_gb')), _number(stored.get('rate_high_per_gb'))
+    if size is not None and low_rate is not None and high_rate is not None:
+        result['monthly_low_usd'] = round(size / GB * runs * low_rate, 2)
+        result['monthly_high_usd'] = round(size / GB * runs * high_rate, 2)
+    return result

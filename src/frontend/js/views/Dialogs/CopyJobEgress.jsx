@@ -82,6 +82,8 @@ class CopyJobEgress extends React.Component {
         this.props.onChange({
             ready: !enabled || (!loading && (!needsConfirmation(estimate) || confirmed)),
             payload: enabled ? confirmationPayload(estimate, confirmed) : null,
+            // The estimate itself, for the monthly cost of a scheduled repeat (CopyJobSchedule)
+            estimate: enabled && !loading ? estimate : null,
         });
     }
 

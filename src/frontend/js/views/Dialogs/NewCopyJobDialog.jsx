@@ -8,6 +8,8 @@ import {
 } from 'utils/copyPerformance.js'
 import CopyJobPerformance from 'views/Dialogs/CopyJobPerformance.jsx'
 import CopyJobEgress from 'views/Dialogs/CopyJobEgress.jsx'
+import CopyJobSchedule, { initialSchedule, scheduleNewGb, scheduleReady } from 'views/Dialogs/CopyJobSchedule.jsx'
+import { parseTime, schedulePayload, toUtcSchedule } from 'utils/copySchedule.js'
 import { DialogError } from 'views/Dialogs/CloudConnection/VerifyStatusButton.jsx'
 
 function apiErrorMessage(payload) {
@@ -35,7 +37,9 @@ class NewCopyJobDialog extends React.Component {
             // Overwrite policy of each destination path (GET /api/copy-jobs/overwrite-policy/)
             overwrite: {},
             // AWS egress cost (CopyJobEgress): submit waits until it is confirmed
-            egress: {ready: false, payload: null},
+            egress: {ready: false, payload: null, estimate: null},
+            // Scheduled repeat (CopyJobSchedule): off unless the user turns it on
+            schedule: initialSchedule(),
         };
     }
 
@@ -213,6 +217,15 @@ class NewCopyJobDialog extends React.Component {
                                     )}
                                 </details>
 
+                                <CopyJobSchedule
+                                    value={this.state.schedule}
+                                    estimate={this.state.egress.estimate}
+                                    generalOverwrites={Object.values(this.state.overwrite).some(p => p.reason === 'general')}
+                                    onChange={changes => this.setState(state => ({
+                                        schedule: {...state.schedule, ...changes}, submitError: null,
+                                    }))}
+                                />
+
                                 <CopyJobPerformance
                                     info={this.state.performanceInfo}
                                     loadError={this.state.performanceLoadError}
@@ -232,8 +245,13 @@ class NewCopyJobDialog extends React.Component {
                             <Button variant="secondary" onClick={() => this.handleClose()}>
                                 Close
                             </Button>
-                            <Button variant="primary" type='submit' disabled={isLoading || !this.state.egress.ready}>
-                                { isLoading ? "Submitting..." : "Submit Copy Job" }
+                            <Button
+                                variant="primary"
+                                type='submit'
+                                disabled={isLoading || !this.state.egress.ready ||
+                                    !scheduleReady(this.state.schedule, this.state.egress.estimate)}
+                            >
+                                { isLoading ? "Submitting..." : (this.state.schedule.enabled ? "Create schedule" : "Submit Copy Job") }
                             </Button>
                         </Modal.Footer>
                     </form>
@@ -304,6 +322,10 @@ class NewCopyJobDialog extends React.Component {
         if (performance === false) {
             return;
         }
+        const schedule = this.scheduleRequest();
+        if (schedule === false) {
+            return;
+        }
         this.setState({submitError: null});
 
         for (let i in propsData.source_paths) {
@@ -324,6 +346,17 @@ class NewCopyJobDialog extends React.Component {
             if (this.state.egress.payload) {
                 data['egress_estimate'] = this.state.egress.payload;
             }
+            if (schedule) {
+                Object.assign(data, schedule.fields);
+                data['run_now'] = schedule.runNow;
+                const payload = schedulePayload(this.state.egress.payload, this.state.schedule.repeatConfirmed,
+                    scheduleNewGb(this.state.schedule, this.state.egress.estimate));
+                if (payload) {
+                    data['egress_estimate'] = payload;
+                } else {
+                    delete data['egress_estimate'];
+                }
+            }
 
             if (data['src_cloud_id'] === 0) {
                 delete data['src_cloud_id'];
@@ -332,7 +365,7 @@ class NewCopyJobDialog extends React.Component {
                 delete data['dst_cloud_id'];
             }
 
-            const result = await this.props.onSubmit(data);
+            const result = await (schedule ? this.props.onSubmitSchedule(data) : this.props.onSubmit(data));
             if (result && result.error) {
                 if (!this.unmounted) {
                     this.setState({submitError: apiErrorMessage(result.payload)});
@@ -340,6 +373,39 @@ class NewCopyJobDialog extends React.Component {
                 return;
             }
         }
+        if (schedule) {
+            this.props.onClose();
+        }
+    }
+
+    /**
+     * The schedule fields of the request in UTC ({fields, runNow}); null without a
+     * schedule; false (and shows why) if the time cannot be stored
+     */
+    scheduleRequest() {
+        const value = this.state.schedule;
+        if (!value.enabled) {
+            return null;
+        }
+        const time = parseTime(value.time);
+        const minute = Number(value.minute);
+        if (value.frequency === 'hourly' ? (value.minute === '' || !Number.isInteger(minute) || minute < 0 || minute > 59) : !time) {
+            this.setState({submitError: value.frequency === 'hourly' ? 'Pick a minute from 0 to 59' : 'Pick a time of day'});
+            return false;
+        }
+        const local = {
+            frequency: value.frequency,
+            minute: value.frequency === 'hourly' ? minute : time.minute,
+            hour: time ? time.hour : 0,
+            weekday: value.weekday,
+            dayOfMonth: value.dayOfMonth,
+        };
+        const {fields, error} = toUtcSchedule(local, new Date().getTimezoneOffset());
+        if (error) {
+            this.setState({submitError: error});
+            return false;
+        }
+        return {fields, runNow: value.runNow};
     }
 
     componentDidMount() {
@@ -403,20 +469,21 @@ NewCopyJobDialog.defaultProps = {
 
     onClose: () => {},
     onSubmit: async (data) => {},
+    onSubmitSchedule: async (data) => {},
     fetchPerformance: async (dstCloudId) => null,
     fetchOverwritePolicy: async (dstCloudId, path) => null,
 }
 
 import {connect} from 'react-redux';
 import {hideNewCopyJobDialog} from 'actions/dialogActions.jsx'
-import {createCopyJob, retrieveCopyJobOverwritePolicy, retrieveCopyJobPerformance} from 'actions/apiActions.jsx'
+import {createCopyJob, createCopySchedule, retrieveCopyJobOverwritePolicy, retrieveCopyJobPerformance} from 'actions/apiActions.jsx'
 import { getCurrentUser } from 'reducers/authReducer.jsx';
 
 const mapStateToProps = state => ({
     data: state.dialog.newCopyJobDialogData,
     username: getCurrentUser(state.auth),
 
-    isLoading: state.loaders.createCopyJobLoading,
+    isLoading: state.loaders.createCopyJobLoading || state.loaders.createCopyScheduleLoading,
 
     followSymlinksDefault: state.settings.followSymlinks,
     emailNotificationsDefault: state.settings.emailNotifications,
@@ -426,6 +493,7 @@ const mapStateToProps = state => ({
 const mapDispatchToProps = dispatch => ({
     onClose: () => dispatch(hideNewCopyJobDialog()),
     onSubmit: data => dispatch(createCopyJob(data)),
+    onSubmitSchedule: data => dispatch(createCopySchedule(data)),
     fetchPerformance: dstCloudId => dispatch(retrieveCopyJobPerformance(dstCloudId)),
     fetchOverwritePolicy: (dstCloudId, path) => dispatch(retrieveCopyJobOverwritePolicy(dstCloudId, path)),
 });
