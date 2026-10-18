@@ -216,7 +216,23 @@ class UploadChunk(Resource):
         try:
             return upload_manager.put_chunk(id, index, int(offset), request.content_length or 0, request.stream)
         except HTTP_EXCEPTION as e:
+            _drain_chunk()
             _abort(e)
         except Exception as e:
             logging.exception(e, exc_info=True)
+            _drain_chunk()
             api.abort(500, str(e))
+
+
+def _drain_chunk():
+    """
+    Reads the rest of a refused chunk: an answer before the body is read ends the
+    connection, and the browser sees a network error instead of e.g. 409 (job stopped)
+    """
+    if (request.content_length or 0) > upload_manager.MAX_CHUNK_BYTES:
+        return
+    try:
+        while request.stream.read(1 << 20):
+            pass
+    except Exception:
+        pass
