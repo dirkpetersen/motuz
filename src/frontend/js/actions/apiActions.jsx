@@ -48,6 +48,10 @@ export const RETRIEVE_COPY_JOB_OVERWRITE_REQUEST = '@@api/RETRIEVE_COPY_JOB_OVER
 export const RETRIEVE_COPY_JOB_OVERWRITE_SUCCESS = '@@api/RETRIEVE_COPY_JOB_OVERWRITE_SUCCESS';
 export const RETRIEVE_COPY_JOB_OVERWRITE_FAILURE = '@@api/RETRIEVE_COPY_JOB_OVERWRITE_FAILURE';
 
+export const RETRIEVE_EGRESS_ESTIMATE_REQUEST = '@@api/RETRIEVE_EGRESS_ESTIMATE_REQUEST';
+export const RETRIEVE_EGRESS_ESTIMATE_SUCCESS = '@@api/RETRIEVE_EGRESS_ESTIMATE_SUCCESS';
+export const RETRIEVE_EGRESS_ESTIMATE_FAILURE = '@@api/RETRIEVE_EGRESS_ESTIMATE_FAILURE';
+
 export const STOP_COPY_JOB_REQUEST = '@@api/STOP_COPY_JOB_REQUEST';
 export const STOP_COPY_JOB_SUCCESS = '@@api/STOP_COPY_JOB_SUCCESS';
 export const STOP_COPY_JOB_FAILURE = '@@api/STOP_COPY_JOB_FAILURE';
@@ -328,6 +332,29 @@ export const retrieveCopyJobOverwritePolicy = (dstCloudId, dstResourcePath) => (
     }
 });
 
+// AWS egress cost of a copy job ('copy-jobs') or an integrity check with download
+// ('hashsum-jobs'): {srcCloudId, srcPaths, dstCloudId, dstPaths}; connection 0 is local
+export const retrieveEgressEstimate = (jobType, {srcCloudId, srcPaths, dstCloudId, dstPaths = []}) => {
+    const query = [
+        `src_cloud_id=${encodeURIComponent(srcCloudId || 0)}`,
+        `dst_cloud_id=${encodeURIComponent(dstCloudId || 0)}`,
+        ...srcPaths.map(path => `src_resource_path=${encodeURIComponent(path)}`),
+        ...dstPaths.map(path => `dst_resource_path=${encodeURIComponent(path)}`),
+    ].join('&');
+    return {
+        [RSAA]: {
+            endpoint: `/api/${jobType === 'hashsum-jobs' ? 'hashsum-jobs' : 'copy-jobs'}/egress-estimate/?${query}`,
+            method: 'GET',
+            headers: withAuth({ 'Content-Type': 'application/json' }),
+            types: [
+                RETRIEVE_EGRESS_ESTIMATE_REQUEST,
+                RETRIEVE_EGRESS_ESTIMATE_SUCCESS,
+                RETRIEVE_EGRESS_ESTIMATE_FAILURE,
+            ],
+        }
+    };
+};
+
 const _createCopyJob = (data) => ({
     [RSAA]: {
         endpoint: `/api/copy-jobs/`, // TODO: Why is there a trailing slash here?
@@ -369,8 +396,12 @@ export const retrieveHashsumJob = (id) => ({
 
 export const createHashsumJob = (data) => {
     return async (dispatch, getState) => {
-        await dispatch(_createHashsumJob(data));
+        const result = await dispatch(_createHashsumJob(data));
+        if (result && result.error) {
+            return result; // the dialog stays open and shows why (e.g. the AWS egress cost)
+        }
         await dispatch(dialog.hideNewHashsumJobDialog())
+        return result;
     }
 }
 

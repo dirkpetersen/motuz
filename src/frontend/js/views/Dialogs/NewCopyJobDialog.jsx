@@ -7,6 +7,7 @@ import {
     CUSTOM, describeSize, estimateMemory, matchPreset, presetValues, toRequest, validatePerformance,
 } from 'utils/copyPerformance.js'
 import CopyJobPerformance from 'views/Dialogs/CopyJobPerformance.jsx'
+import CopyJobEgress from 'views/Dialogs/CopyJobEgress.jsx'
 import { DialogError } from 'views/Dialogs/CloudConnection/VerifyStatusButton.jsx'
 
 function apiErrorMessage(payload) {
@@ -33,6 +34,8 @@ class NewCopyJobDialog extends React.Component {
             submitError: null,
             // Overwrite policy of each destination path (GET /api/copy-jobs/overwrite-policy/)
             overwrite: {},
+            // AWS egress cost (CopyJobEgress): submit waits until it is confirmed
+            egress: {ready: false, payload: null},
         };
     }
 
@@ -121,6 +124,13 @@ class NewCopyJobDialog extends React.Component {
                                         <hr className='mt-4' />
                                     </React.Fragment>
                                 ))}
+
+                                <CopyJobEgress
+                                    srcCloudId={data.source_cloud.id}
+                                    srcPaths={data.source_paths}
+                                    dstCloudId={data.destination_cloud.id}
+                                    onChange={egress => this.setState({egress})}
+                                />
 
                                 <h5 className='text-primary mb-2'>Details</h5>
 
@@ -222,7 +232,7 @@ class NewCopyJobDialog extends React.Component {
                             <Button variant="secondary" onClick={() => this.handleClose()}>
                                 Close
                             </Button>
-                            <Button variant="primary" type='submit' disabled={isLoading}>
+                            <Button variant="primary" type='submit' disabled={isLoading || !this.state.egress.ready}>
                                 { isLoading ? "Submitting..." : "Submit Copy Job" }
                             </Button>
                         </Modal.Footer>
@@ -310,6 +320,9 @@ class NewCopyJobDialog extends React.Component {
             }
             if (performance) {
                 data['performance'] = performance;
+            }
+            if (this.state.egress.payload) {
+                data['egress_estimate'] = this.state.egress.payload;
             }
 
             if (data['src_cloud_id'] === 0) {

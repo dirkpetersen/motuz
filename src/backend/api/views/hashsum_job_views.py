@@ -4,10 +4,10 @@ import random
 from flask import request
 from flask_restx import Resource, Namespace, fields
 
-from ..managers import hashsum_job_manager
+from ..managers import egress_manager, hashsum_job_manager
 from .. import tasks
 from ..exceptions import HTTP_EXCEPTION, public_error
-from .copy_job_views import Performance
+from .copy_job_views import EgressEstimate, Performance, connection_id_arg
 
 
 api = Namespace('hashsum-jobs', description='CheckJob related operations')
@@ -22,6 +22,7 @@ dto = api.model('hashsum-job', {
     'option_download': fields.Boolean(required=True, example=True),
     'notification_email': fields.String(required=False, example='hello@example.com'),
     'performance': Performance(required=False, example={'checkers': 64}), # only checkers
+    'egress_estimate': EgressEstimate(required=False), # with option_download from AWS
 
     'progress_state': fields.String(readonly=True, example='PENDING'),
     'progress_current': fields.Integer(readonly=True, example=45),
@@ -40,6 +41,28 @@ dto = api.model('hashsum-job', {
     'progress_src_error_text': fields.String(readonly=True, example='Multi\nLine\nText'),
     'progress_dst_error_text': fields.String(readonly=True, example='Multi\nLine\nText'),
 })
+
+
+@api.route('/egress-estimate/')
+class HashsumJobEgressEstimate(Resource):
+    def get(self):
+        """
+        The AWS egress cost of an integrity check with download (New Hashsum Job
+        dialog): every side on AWS is read out of it. Query: src_cloud_id,
+        src_resource_path (repeatable), dst_cloud_id, dst_resource_path (repeatable);
+        the answer as for /copy-jobs/egress-estimate/
+        """
+        src_cloud_id = connection_id_arg('src_cloud_id')
+        dst_cloud_id = connection_id_arg('dst_cloud_id')
+        try:
+            return egress_manager.hashsum_estimate(
+                src_cloud_id, request.args.getlist('src_resource_path'),
+                dst_cloud_id, request.args.getlist('dst_resource_path'))
+        except HTTP_EXCEPTION as e:
+            api.abort(e.code, e.payload)
+        except Exception as e:
+            logging.exception(e, exc_info=True)
+            api.abort(500, public_error(e))
 
 
 @api.route('/')

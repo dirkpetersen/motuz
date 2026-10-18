@@ -4,6 +4,16 @@ import Toggle from 'react-toggle'
 
 import serializeForm from 'utils/serializeForm.jsx'
 import ToggleInfo from 'components/ToggleInfo.jsx'
+import CopyJobEgress from 'views/Dialogs/CopyJobEgress.jsx'
+import { DialogError } from 'views/Dialogs/CloudConnection/VerifyStatusButton.jsx'
+
+function apiErrorMessage(payload) {
+    const response = (payload && payload.response) || {};
+    if (typeof response.message === 'string' && response.message) {
+        return response.message;
+    }
+    return (payload && payload.message) || 'The integrity check could not be created';
+}
 
 
 class NewHashsumJobDialog extends React.Component {
@@ -11,6 +21,10 @@ class NewHashsumJobDialog extends React.Component {
         super(props);
         this.state = {
             emailNotifications: props.emailNotificationsDefault,
+            download: false,
+            // AWS egress cost of a check with download (CopyJobEgress)
+            egress: {ready: true, payload: null},
+            submitError: null,
         }
     }
 
@@ -103,6 +117,7 @@ class NewHashsumJobDialog extends React.Component {
                                                         name='option_download'
                                                         className='form-label'
                                                         defaultChecked={this.props.false}
+                                                        onChange={(event) => this.setState({download: event.target.checked})}
                                                     />
                                                 </div>
                                                 <div className="col-1"></div>
@@ -147,13 +162,26 @@ class NewHashsumJobDialog extends React.Component {
                                         </details>
                                     </React.Fragment>
                                 ))}
+
+                                {/* Only the first path is checked (handleSubmit) */}
+                                <CopyJobEgress
+                                    jobType='hashsum-jobs'
+                                    action='check'
+                                    enabled={this.state.download}
+                                    srcCloudId={data.source_cloud.id}
+                                    srcPaths={data.source_paths.slice(0, 1)}
+                                    dstCloudId={data.destination_cloud.id}
+                                    dstPaths={data.destination_paths.slice(0, 1)}
+                                    onChange={egress => this.setState({egress})}
+                                />
                             </div>
                         </Modal.Body>
                         <Modal.Footer>
+                            <DialogError message={this.state.submitError} />
                             <Button variant="secondary" onClick={() => this.handleClose()}>
                                 Close
                             </Button>
-                            <Button variant="primary" type='submit' disabled={isLoading}>
+                            <Button variant="primary" type='submit' disabled={isLoading || !this.state.egress.ready}>
                                 { isLoading ? "Checking..." : "Check hashes" }
                             </Button>
                         </Modal.Footer>
@@ -167,8 +195,9 @@ class NewHashsumJobDialog extends React.Component {
         this.props.onClose();
     }
 
-    handleSubmit(event) {
+    async handleSubmit(event) {
         event.preventDefault();
+        this.setState({submitError: null});
 
         const propsData = this.props.data;
         const formData = serializeForm(event.target);
@@ -188,6 +217,9 @@ class NewHashsumJobDialog extends React.Component {
             if (propsData.performance && propsData.performance.checkers) {
                 data['performance'] = {checkers: propsData.performance.checkers};
             }
+            if (this.state.egress.payload) {
+                data['egress_estimate'] = this.state.egress.payload;
+            }
 
             if (!data['src_cloud_id']) {
                 delete data['src_cloud_id'];
@@ -196,14 +228,17 @@ class NewHashsumJobDialog extends React.Component {
                 delete data['dst_cloud_id'];
             }
 
-            this.onSubmit(data);
+            const result = await this.props.onSubmit(data);
+            if (result && result.error && !this.unmounted) {
+                this.setState({submitError: apiErrorMessage(result.payload)});
+            }
 
             break // TODO - allow multiple selection as well
         }
     }
 
-    onSubmit(data) {
-        this.props.onSubmit(data)
+    componentWillUnmount() {
+        this.unmounted = true;
     }
 }
 
@@ -218,7 +253,7 @@ NewHashsumJobDialog.defaultProps = {
     emailAddressDefault: "",
 
     onClose: () => {},
-    onSubmit: (data) => {},
+    onSubmit: async (data) => {},
 }
 
 

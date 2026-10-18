@@ -39,6 +39,10 @@ x-variables:
         MOTUZ_LARGE_JOB_POOL: ${MOTUZ_LARGE_JOB_POOL:-}
         MOTUZ_LARGE_JOB_BYTES: ${MOTUZ_LARGE_JOB_BYTES:-}
         MOTUZ_LARGE_JOB_FILES: ${MOTUZ_LARGE_JOB_FILES:-}
+        # Seconds the AWS egress estimate of the New Copy Job dialog measures the source
+        MOTUZ_EGRESS_SIZE_TIMEOUT: ${MOTUZ_EGRESS_SIZE_TIMEOUT:-}
+        # The AWS region this node runs in (empty: not in AWS), for the egress estimate
+        MOTUZ_CENTRAL_AWS_REGION: ${MOTUZ_CENTRAL_AWS_REGION:-}
         MOTUZ_WORKER_LEASE_SECONDS: ${MOTUZ_WORKER_LEASE_SECONDS:-}
         MOTUZ_PUBLIC_URL: ${MOTUZ_PUBLIC_URL:-}
     - &ec2-environment

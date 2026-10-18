@@ -225,6 +225,7 @@ stops with a message naming the missing piece (it says when to run `install.sh` 
     - [Google Drive](#google-drive)
     - [Privacy policy and terms](#privacy-policy-and-terms)
     - [Performance tuning](#performance-tuning)
+    - [AWS egress cost](#aws-egress-cost)
     - [File viewer](#file-viewer)
     - [Uploads from the desktop](#uploads-from-the-desktop)
     - [Free space limit](#free-space-limit)
@@ -1584,6 +1585,60 @@ Users can never pass flags: per-job settings are a fixed set of names whose valu
 parsed as numbers or sizes and formatted by Motuz, one argv item per flag
 (`--transfers=32`), without a shell. The flags appear in the rclone command in the
 celery log (credentials stay masked).
+
+### AWS egress cost
+
+AWS charges for data that leaves it. When a copy job reads from an S3 connection on
+Amazon S3 (provider "Amazon S3", or a connection without provider and endpoint), the
+New Copy Job dialog measures the source (`rclone size` as the user, at most
+`MOTUZ_EGRESS_SIZE_TIMEOUT` seconds, default 120) and shows the expected data transfer
+fee; the job can only be created after the user ticks "I understand this copy costs
+about $A–$B". The server refuses such a job without that confirmation (400 "Confirm
+the AWS egress cost in the dialog") and stores the confirmed estimate with it (shown in
+the job details); Retry asks again. An integrity check with "Download" reads every side
+on AWS to the machine that runs the check, so the New Hashsum Job dialog asks the same
+when Download is on.
+
+rclone copies between two remotes through the machine that runs the job, so the charge
+depends on where the job runs (the same routing as the job itself: this server, a
+temporary EC2 worker for large jobs, or a worker of another pool), and the dialog says
+so ("this copy runs on this server, which is not in AWS, so the data leaves AWS"):
+
+| The job runs on | Destination | Charge | Motuz shows |
+|---|---|---|---|
+| a machine not in AWS: this server without `MOTUZ_CENTRAL_AWS_REGION`, workers of other pools | anything, also Amazon S3 in the source's region | data transfer out to the internet | a range: size × $0.05 – size × $0.09 per GB |
+| a machine in AWS (this server with `MOTUZ_CENTRAL_AWS_REGION`, an EC2 worker in `MOTUZ_AWS_REGION`) | other clouds, other S3 providers | data transfer out to the internet | the same range |
+| a machine in the source's region | its local disk, or Amazon S3 in that region | none | a note, no confirmation |
+| a machine in the source's region | Amazon S3 in another region | inter-region transfer | about $0.02 per GB |
+| a machine in another region than the source | its local disk or Amazon S3 in its region | inter-region transfer (the read out of the source's region) | about $0.02 per GB |
+| a machine in another region than the source | Amazon S3 in a third region | two inter-region transfers | about $0.04 per GB |
+
+`MOTUZ_CENTRAL_AWS_REGION` (e.g. `us-west-2`; empty, the default: not in AWS) is the
+AWS region this server runs in. It is not `MOTUZ_AWS_REGION`, which is where temporary
+EC2 workers start (an on-prem server may launch them).
+
+AWS S3 data transfer out to the internet, standard regions (aws.amazon.com/s3/pricing,
+as of 2026-10; per account and month, decimal GB = 10^9 bytes):
+
+| Volume per month | Price per GB |
+|---|---|
+| first 100 GB (all AWS services and regions of the account) | free |
+| up to 10 TB | $0.09 |
+| next 40 TB | $0.085 |
+| next 100 TB | $0.07 |
+| over 150 TB | $0.05 |
+
+Motuz cannot know the account's monthly volume, discounts, Direct Connect or the AWS
+Global Data Egress Waiver some research institutions have, so it shows the lowest and
+the highest rate times the size. If the size cannot be measured in time, the dialog shows
+the price per TB ($50–$90) and still asks for the confirmation. Regions come from the
+connections' Region field (empty: rclone's `us-east-1`); a connection from an AWS
+profile without a region, or two AWS connections whose regions are not both known,
+count as another region. Connections from an rclone remote in the user's home are not
+recognized as AWS (the remote decides the provider). When the size decides the routing
+(a large-job pool), the server asks for the confirmation if either possible runner needs
+one. The prices are in one table, `src/backend/api/utils/egress_cost.py`;
+update it and this section together.
 
 ### File viewer
 

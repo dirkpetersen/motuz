@@ -37,6 +37,10 @@ class CopyJob(db.Model, TimestampMixin):
     # in skip mode); NULL = none reported
     skipped_existing = db.Column(db.Integer, nullable=True)
     skipped_existing_sample = db.Column(db.JSON, nullable=True)
+    # The AWS egress cost the user confirmed for a copy out of AWS (utils/egress_cost.py,
+    # managers/egress_manager.py): {kind, bytes, files, low_usd, high_usd, rates,
+    # confirmed}; NULL when no AWS fee applies
+    egress_estimate = db.Column(db.JSON, nullable=True)
 
     owner = db.Column(db.String, index=True)
 

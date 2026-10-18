@@ -231,7 +231,8 @@ if AWS_PROFILE:
     status, ls, raw = req('POST', '/api/system/files/', A, {'path': f'{S3}/copy', 'connection_id': cid})
     check_r('S3 listing shows copied files', status == 200 and sorted(f['Name'] for f in ls['files']) == ['f1.bin', 'f2.bin', 'f3.bin', 'sub'], raw)
     status, cj, raw = req('POST', '/api/copy-jobs/', A, {'description': 'from s3', 'src_cloud_id': cid, 'src_resource_path': f'{S3}/copy',
-                                                        'dst_resource_path': '/home/alice/credback', 'copy_links': True})
+                                                        'dst_resource_path': '/home/alice/credback', 'copy_links': True,
+                                                        'egress_estimate': {'confirmed': True}}) # out of AWS
     cj = wait_job('copy-jobs', cj['id'], A)
     check_r('copy S3 -> local SUCCESS', cj['progress_state'] == 'SUCCESS', cj)
     out = sh('app', "sudo -u alice diff -r /home/alice/credsrc /home/alice/credback && echo SAME")
