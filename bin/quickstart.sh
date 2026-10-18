@@ -106,13 +106,15 @@ generate_certificates() {
 }
 
 generate_secrets() {
-    secrets="${MOTUZ_DOCKER_ROOT}/secrets/MOTUZ_DATABASE_PASSWORD ${MOTUZ_DOCKER_ROOT}/secrets/MOTUZ_FLASK_SECRET_KEY ${MOTUZ_DOCKER_ROOT}/secrets/MOTUZ_SMTP_PASSWORD"
+    secrets="${MOTUZ_DOCKER_ROOT}/secrets/MOTUZ_DATABASE_PASSWORD ${MOTUZ_DOCKER_ROOT}/secrets/MOTUZ_FLASK_SECRET_KEY ${MOTUZ_DOCKER_ROOT}/secrets/MOTUZ_SMTP_PASSWORD ${MOTUZ_DOCKER_ROOT}/secrets/MOTUZ_DATA_KEYS"
     for secret in $secrets; do
         if [ ! -f "$secret" ]; then
             _confirm "Generate random value for secret ${secret} ?"
-            set -x
-            (umask 077 && head /dev/urandom | md5sum | awk '{print $1}' > "$secret")
-            set +x
+            case "$secret" in
+                # <id>:<base64 of 32 random bytes>; back it up apart from the database dumps
+                */MOTUZ_DATA_KEYS) (umask 077 && printf 'k1:%s' "$(openssl rand -base64 32)" > "$secret") ;;
+                *) (umask 077 && printf '%s' "$(openssl rand -hex 32)" > "$secret") ;;
+            esac
         else
             _color_yellow "$secret exists. Skipping"
         fi

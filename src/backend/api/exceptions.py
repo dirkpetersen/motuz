@@ -74,3 +74,29 @@ class HTTP_507_INSUFFICIENT_STORAGE(HTTP_5XX_EXCEPTION):
 
 class HTTP_511_NETWORK_AUTHENTICATION_REQUIRED(HTTP_5XX_EXCEPTION):
     code = 511
+
+
+# What a client sees of an unexpected error. A database error carries the statement and
+# (without hide_parameters) the values of a credential column; the exception is logged
+# server side, the client only learns that something failed.
+INTERNAL_ERROR = 'Internal server error'
+
+# Exceptions of these libraries describe the database, the broker or their connection
+# strings: their text is never stored or shown
+_OPAQUE_LIBRARIES = ('sqlalchemy', 'psycopg', 'psycopg2', 'kombu', 'amqp', 'redis', 'celery', 'billiard')
+
+
+def public_error(e):
+    """Message of an unexpected error for the API: rclone's own text, otherwise a generic one"""
+    from .utils.abstract_connection import RcloneException
+    return str(e) if isinstance(e, RcloneException) else INTERNAL_ERROR
+
+
+def error_text(e):
+    """
+    Text of an error for a job's error field, a notification or the Celery task result:
+    str(e), except for database and broker errors, which only say what failed
+    """
+    if type(e).__module__.split('.')[0] in _OPAQUE_LIBRARIES:
+        return 'Database or broker error ({}); see the server log'.format(type(e).__name__)
+    return str(e)

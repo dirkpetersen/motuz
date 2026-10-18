@@ -6,7 +6,7 @@ from flask_restx import Resource, Namespace, fields
 
 from ..managers import hashsum_job_manager
 from .. import tasks
-from ..exceptions import HTTP_EXCEPTION
+from ..exceptions import HTTP_EXCEPTION, public_error
 from .copy_job_views import Performance
 
 
@@ -56,7 +56,7 @@ class HashsumJobList(Resource):
             api.abort(e.code, e.payload)
         except Exception as e:
             logging.exception(e, exc_info=True)
-            api.abort(500, str(e))
+            api.abort(500, public_error(e))
 
 
     @api.expect(dto, validate=True)
@@ -71,7 +71,7 @@ class HashsumJobList(Resource):
             api.abort(e.code, e.payload)
         except Exception as e:
             logging.exception(e, exc_info=True)
-            api.abort(500, str(e))
+            api.abort(500, public_error(e))
 
 
 
@@ -91,7 +91,7 @@ class HashsumJob(Resource):
             api.abort(e.code, e.payload)
         except Exception as e:
             logging.exception(e, exc_info=True)
-            api.abort(500, str(e))
+            api.abort(500, public_error(e))
 
 
 
@@ -111,4 +111,4 @@ class HashsumJob(Resource):
             api.abort(e.code, e.payload)
         except Exception as e:
             logging.exception(e, exc_info=True)
-            api.abort(500, str(e))
+            api.abort(500, public_error(e))

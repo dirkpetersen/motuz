@@ -124,8 +124,10 @@ echo "    Dump written to ${DUMP}"
 
 echo "2/4 Restoring into a new postgres:${NEW_MAJOR} cluster..."
 in_volumes "rm -rf /volumes/${NEW_DATA_NAME}"
+# Random superuser password nobody keeps (by name, so not on the command line)
+export POSTGRES_PASSWORD="$(openssl rand -hex 32)"
 docker run -d --name "$NEW_CONTAINER" --network none \
-    -e POSTGRES_PASSWORD="$(head -c 32 /dev/urandom | base64)" \
+    -e POSTGRES_PASSWORD \
     -e PGDATA="$PG_DATA_IN_CONTAINER" \
     -v "${VOLUMES}/${NEW_DATA_NAME}":"$PG_DATA_IN_CONTAINER" \
     "$NEW_IMAGE" -c listen_addresses='' > /dev/null
@@ -144,8 +146,11 @@ grep -i "error" "${WORK_DIR}/restore.log" | grep -v 'role "postgres" already exi
 
 # PostgreSQL 15+ no longer lets every role create tables in the public schema: the database
 # owner can. Also re-hash the password as scram-sha-256 (the old cluster stored md5).
-docker exec -i "$NEW_CONTAINER" psql -U postgres -v ON_ERROR_STOP=1 -q \
-    -v db="${MOTUZ_DATABASE_NAME}" -v user="${MOTUZ_DATABASE_USER}" -v pw="${MOTUZ_DATABASE_PASSWORD}" <<'EOSQL'
+# The password reaches psql through the environment (\getenv), never on a command line.
+MOTUZ_UPGRADE_PW="${MOTUZ_DATABASE_PASSWORD}" docker exec -i -e MOTUZ_UPGRADE_PW "$NEW_CONTAINER" \
+    psql -U postgres -v ON_ERROR_STOP=1 -q \
+    -v db="${MOTUZ_DATABASE_NAME}" -v user="${MOTUZ_DATABASE_USER}" <<'EOSQL'
+\getenv pw MOTUZ_UPGRADE_PW
 ALTER DATABASE :"db" OWNER TO :"user";
 ALTER ROLE :"user" WITH PASSWORD :'pw';
 EOSQL

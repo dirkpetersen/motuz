@@ -8,7 +8,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from common import BASE, CTX, FAKE_LOG, check, finish, psql, set_prefix
+from common import BASE, CTX, FAKE_LOG, check, finish, psql, set_prefix, set_stored_secret, stored_secret
 
 PHASE = os.environ.get('PHASE', 'paste')
 LOG = FAKE_LOG
@@ -106,7 +106,7 @@ status, conn = api('POST', '/api/oauth/onedrive/connect/', A, {'state': flow['st
 check('connect creates connection', status == 201 and conn['type'] == 'onedrive' and conn['name'] == 'Lab Share - Documents'
       and conn['onedrive_drive_id'] == 'b!labdocs' and conn['onedrive_drive_type'] == 'documentLibrary', (status, conn))
 check('token not returned', conn.get('onedrive_token') is None, conn)
-stored = json.loads(psql(f"select onedrive_token from cloud_connection where id={conn['id']}"))
+stored = json.loads(stored_secret('cloud_connection.onedrive_token', conn['id']))
 check('rclone-format token stored', set(stored) == {'access_token', 'token_type', 'refresh_token', 'expiry'} and stored['refresh_token'].startswith('REAL-')
       and stored['expiry'].endswith('Z'), stored)
 check('owner is alice', psql(f"select owner from cloud_connection where id={conn['id']}") == 'alice')
@@ -124,7 +124,7 @@ status, body = api('POST', '/api/oauth/onedrive/finish/', A, {'redirect_url': 'h
 check('expired flow rejected', status == 400, (status, body))
 
 # The broker refreshes the new connection's token with the right client
-psql("update cloud_connection set onedrive_token='{}' where id={}".format(json.dumps({**stored, 'expiry': '2020-01-01T00:00:00Z'}), conn['id']))
+set_stored_secret('cloud_connection.onedrive_token', conn['id'], json.dumps({**stored, 'expiry': '2020-01-01T00:00:00Z'}))
 open(LOG, 'w').close()
 status, body = api('POST', '/api/system/files/', A, {'path': '/', 'connection_id': conn['id']})
 refresh = calls('/token')

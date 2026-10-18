@@ -44,7 +44,10 @@ EOSQL
 
   if [ "$rc" != "0" ]; then
     # The database may already be initialized
-    psql -v ON_ERROR_STOP=1 "${MOTUZ_DATABASE_PROTOCOL}://${MOTUZ_DATABASE_USER}:${MOTUZ_DATABASE_PASSWORD}@${MOTUZ_DATABASE_HOST}/${MOTUZ_DATABASE_NAME}" <<-EOSQL
+    # The password goes in PGPASSWORD, not into a URL on the command line
+    PGPASSWORD="$MOTUZ_DATABASE_PASSWORD" psql -v ON_ERROR_STOP=1 \
+        -h "${MOTUZ_DATABASE_HOST%:*}" -p "${MOTUZ_DATABASE_HOST##*:}" \
+        -U "$MOTUZ_DATABASE_USER" -d "$MOTUZ_DATABASE_NAME" <<-EOSQL
     SELECT 1 as "DATABASE ALREADY INITIALIZED" WHERE 1 = 0
 EOSQL
   fi

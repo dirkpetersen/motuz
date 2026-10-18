@@ -194,6 +194,7 @@ def config_values(env):
     """Settings of api.config in a fresh interpreter with `env`"""
     base = {'MOTUZ_FLASK_SECRET_KEY': 'k', 'MOTUZ_DATABASE_PROTOCOL': 'postgresql', 'MOTUZ_DATABASE_USER': 'u',
             'MOTUZ_DATABASE_PASSWORD': 'p', 'MOTUZ_DATABASE_NAME': 'motuz', 'MOTUZ_DATABASE_HOST': '127.0.0.1:5432',
+            'MOTUZ_DATA_KEYS': 'k1:' + 'A' * 43 + '=',
             'PATH': os.environ['PATH']}
     code = ('import json; from api.config import Config as C; print(json.dumps([C.CELERY_BROKER_URL, '
             'C.CELERY_BROKER_TRANSPORT_OPTIONS, C.PAM_SERVICE, C.AUTH_HELPER]))')
@@ -219,6 +220,7 @@ class TestSettings(unittest.TestCase):
         code = 'from api.application import celery; print(celery.conf.broker_url, celery.conf.broker_transport_options)'
         base = {'MOTUZ_FLASK_SECRET_KEY': 'k', 'MOTUZ_DATABASE_PROTOCOL': 'postgresql', 'MOTUZ_DATABASE_USER': 'u',
                 'MOTUZ_DATABASE_PASSWORD': 'p', 'MOTUZ_DATABASE_NAME': 'motuz', 'MOTUZ_DATABASE_HOST': '127.0.0.1:5432',
+            'MOTUZ_DATA_KEYS': 'k1:' + 'A' * 43 + '=',
                 'PATH': os.environ['PATH'], 'MOTUZ_CELERY_BROKER_URL': 'redis+socket://:pw@/tmp/r.sock',
                 'MOTUZ_CELERY_VISIBILITY_TIMEOUT': '7200'}
         out = subprocess.run([sys.executable, '-c', code], cwd=BACKEND, env=base, capture_output=True, text=True)

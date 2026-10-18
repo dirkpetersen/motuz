@@ -10,7 +10,7 @@ import urllib.request
 
 from common import (BASE, CTX, DOCUMENT_FIXTURES_CODE, NUMBERED_LOG_CODE, VIEWER_FIXTURES_CODE, check, check_browser_upload,
                     check_chunked_reads, put_chunk, check_document_view, check_image_view, finish,
-                    numbered_log, psql, service_logs, sh, skip)
+                    numbered_log, data_key_material, db_password, pg_dump, psql, service_logs, sh, skip, stored_secret)
 
 
 def req(method, path, token=None, body=None):
@@ -309,7 +309,11 @@ check('bob cannot patch alice connection', status == 404, (status, body))
 status, body, _ = req('PATCH', f'/api/connections/{cid}', A, {'name': 'renamed', 'type': 's3', 'owner': 'bob', 's3_secret_access_key': ''})
 check('patch ok', status == 200 and body['name'] == 'renamed', (status, body))
 check('owner not settable on patch', psql(f"select owner from cloud_connection where id={cid}") == 'alice')
-check('empty secret on patch keeps stored secret', psql(f"select s3_secret_access_key from cloud_connection where id={cid}") == 'topsecret')
+check('empty secret on patch keeps stored secret', stored_secret('cloud_connection.s3_secret_access_key', cid) == 'topsecret')
+raw_secret = psql(f"select s3_secret_access_key from cloud_connection where id={cid}")
+check('secret columns are encrypted in the database (AES-GCM, MOTUZ_DATA_KEYS)',
+      raw_secret.startswith('mzc1.') and 'topsecret' not in raw_secret, raw_secret[:12])
+check('no secret value in a database dump', 'topsecret' not in pg_dump())
 status, body, _ = req('GET', '/api/connections/abc', A)
 check('non-int id -> 404', status == 404, status)
 
@@ -523,6 +527,11 @@ check("bob cannot upload into alice's home: the file fails", status == 200 and b
 left = sh('app', "grep -lx rclone /proc/[0-9]*/comm 2>/dev/null").stdout.strip()
 check('no rclone left after the uploads', left == '', left)
 check('upload contents never logged', 'hello upload' not in service_logs('app'), 'contents in the app log')
+
+key_material = data_key_material()
+check('the data encryption key and the database password are in no log',
+      len(key_material) >= 32 and key_material not in service_logs('app', 'celery') and db_password() not in service_logs('app', 'celery'),
+      'secret in a log')
 
 # --- refresh and logout
 status, r, _ = req('POST', '/api/auth/refresh/', a['refresh'])

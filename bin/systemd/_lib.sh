@@ -66,8 +66,17 @@ motuz_paths() { # home
 
 # Secrets of a fresh install; optional ones (empty = not configured) are added to an
 # existing secrets.env when missing, like bin/_utils/optional_secrets.sh does for docker
-REQUIRED_SECRETS="MOTUZ_FLASK_SECRET_KEY MOTUZ_DATABASE_PASSWORD MOTUZ_SMTP_PASSWORD MOTUZ_REDIS_PASSWORD"
+REQUIRED_SECRETS="MOTUZ_FLASK_SECRET_KEY MOTUZ_DATABASE_PASSWORD MOTUZ_SMTP_PASSWORD MOTUZ_REDIS_PASSWORD MOTUZ_DATA_KEYS"
 OPTIONAL_SECRETS="MOTUZ_ONEDRIVE_CLIENT_SECRET MOTUZ_GDRIVE_CLIENT_SECRET"
+
+# A new random value for a required secret: 64 hex digits, or for MOTUZ_DATA_KEYS (the key
+# that encrypts the credential columns of the database) `k1:<base64 of 32 random bytes>`
+new_secret() { # key
+    case "$1" in
+        MOTUZ_DATA_KEYS) printf 'k1:%s' "$(openssl rand -base64 32)" ;;
+        *) openssl rand -hex 32 ;;
+    esac
+}
 
 # Value of KEY in a systemd EnvironmentFile (the subset these scripts write: KEY=value,
 # KEY="..." with \" \\ escapes, KEY='...'); empty if missing. Never `source` these files:

@@ -14,7 +14,7 @@ import logging
 
 from flask import Blueprint, jsonify, request
 
-from ..exceptions import HTTP_EXCEPTION
+from ..exceptions import HTTP_EXCEPTION, public_error
 from ..managers import worker_manager
 from ..utils.rate_limit import RateLimiter
 

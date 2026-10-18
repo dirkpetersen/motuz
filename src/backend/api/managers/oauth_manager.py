@@ -24,7 +24,8 @@ import hashlib
 import json
 import logging
 import secrets
-import subprocess
+import threading
+import time
 import typing
 import urllib.error
 import urllib.parse
@@ -36,11 +37,17 @@ from ..application import db
 from ..exceptions import *
 from ..models import CloudConnection, OauthFlow
 from ..managers.auth_manager import token_required, get_logged_in_user
-from ..utils.rclone_connection import RCLONE
+from ..utils import rclone_obscure
 
 
 FLOW_TTL = datetime.timedelta(minutes=15)
 _HTTP_TIMEOUT = 30
+# An abandoned flow keeps its refresh token until it is purged, so expired flows are
+# deleted on every flow request and whenever the job list is read (the UI polls it), at
+# most once per this many seconds per process
+_PURGE_INTERVAL = 60
+_purge_lock = threading.Lock()
+_last_purge = 0.0
 
 
 @dataclasses.dataclass(frozen=True)
@@ -373,7 +380,7 @@ def redirect_mode(p=ONEDRIVE):
 def start(provider_name=PROVIDER):
     p = provider(provider_name)
     owner = get_logged_in_user(request)
-    _delete_expired_flows()
+    purge_expired_flows(force=True)
 
     code_verifier = secrets.token_urlsafe(64)
     code_challenge = base64.urlsafe_b64encode(
@@ -414,6 +421,7 @@ def finish(provider_name, data):
     p = provider(provider_name)
     owner = get_logged_in_user(request)
     params = _parse_redirect(data.get('redirect_url') or '')
+    purge_expired_flows()
 
     flow = _pending_flow(p, params.get('state'))
     if flow is None or flow.owner != owner:
@@ -432,6 +440,7 @@ def callback(provider_name, args):
     p = provider(provider_name)
     # OneDrive keeps its original landing URL; the frontend defaults to it
     suffix = '' if p is ONEDRIVE else '&oauth_provider={}'.format(p.name)
+    purge_expired_flows()
     flow = _pending_flow(p, args.get('state'))
     if flow is None:
         return '/clouds?oauth_error=expired' + suffix
@@ -448,6 +457,7 @@ def retrieve(provider_name, state):
     """Drives of a completed flow (callback mode)"""
     p = provider(provider_name)
     owner = get_logged_in_user(request)
+    purge_expired_flows()
     flow = _pending_flow(p, state)
     if flow is None or flow.owner != owner or flow.token is None:
         raise HTTP_404_NOT_FOUND('Sign-in not found or expired')
@@ -458,6 +468,7 @@ def retrieve(provider_name, state):
 def connect(provider_name, data):
     p = provider(provider_name)
     owner = get_logged_in_user(request)
+    purge_expired_flows()
     flow = _pending_flow(p, data.get('state'))
     if flow is None or flow.owner != owner or flow.token is None:
         raise HTTP_400_BAD_REQUEST('This sign-in has expired. Please start again.')
@@ -475,6 +486,8 @@ def connect(provider_name, data):
         **p.connection_fields(drive, flow),
     )
     db.session.add(cloud_connection)
+    # The token now belongs to the connection: the flow must not keep a second copy
+    flow.token = None
     db.session.delete(flow)
     db.session.commit()
     return cloud_connection
@@ -553,9 +566,20 @@ def _pending_flow(p, state):
     return flow
 
 
-def _delete_expired_flows():
-    OauthFlow.query.filter(OauthFlow.created_at < datetime.datetime.utcnow() - FLOW_TTL).delete()
+def purge_expired_flows(force=False):
+    """
+    Deletes the flows older than FLOW_TTL (with the tokens and PKCE verifiers they hold).
+    Rate limited per process unless `force`; returns the number of flows deleted.
+    """
+    global _last_purge
+    with _purge_lock:
+        now = time.monotonic()
+        if not force and now - _last_purge < _PURGE_INTERVAL:
+            return 0
+        _last_purge = now
+    deleted = OauthFlow.query.filter(OauthFlow.created_at < datetime.datetime.utcnow() - FLOW_TTL).delete()
     db.session.commit()
+    return deleted
 
 
 def _parse_redirect(redirect_url):
@@ -592,4 +616,4 @@ def _json(raw):
 
 
 def _reveal(obscured):
-    return subprocess.check_output([RCLONE, 'reveal', obscured]).decode().strip()
+    return rclone_obscure.reveal(obscured)

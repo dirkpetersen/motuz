@@ -1,7 +1,7 @@
 import datetime
 import os
 
-from .utils import document_view, ec2_config, image_view, rclone_tuning
+from .utils import document_view, ec2_config, image_view, rclone_tuning, secret_box
 
 basedir = os.path.abspath(os.path.dirname(__file__))
 
@@ -25,8 +25,14 @@ try:
     MOTUZ_DATABASE_NAME = os.environ['MOTUZ_DATABASE_NAME']
     MOTUZ_DATABASE_HOST = os.environ['MOTUZ_DATABASE_HOST']
     MOTUZ_DATABASE_REQUIRE_SSL = os.environ.get('MOTUZ_DATABASE_REQUIRE_SSL', 'false')
+    MOTUZ_DATA_KEYS = os.environ['MOTUZ_DATA_KEYS']
 except KeyError as e:
     raise KeyError("Environment variable {} not set".format(e.args[0]))
+
+# Keys that encrypt the credential columns at rest (models/encrypted.py, README "Secrets
+# and backups"): [(id, key material)], the first one encrypts. Missing or invalid: the
+# app does not start, rather than store credentials unprotected or unreadable.
+DATA_KEYS = secret_box.parse_keys(MOTUZ_DATA_KEYS)
 
 # rclone performance settings (MOTUZ_RCLONE_*, README "Performance tuning"): an invalid
 # value stops the app and the worker here, with a message naming the variable
@@ -47,7 +53,9 @@ VIEW_DOCUMENT_MAX_BYTES = document_view.max_bytes()
 
 class Config:
     SECRET_KEY = MOTUZ_FLASK_SECRET_KEY
-    JWT_SECRET_KEY = MOTUZ_FLASK_SECRET_KEY
+    # User tokens are signed with a key derived from the Flask secret, so that the key
+    # that signs them is not the one Flask itself uses (sessions, signing)
+    JWT_SECRET_KEY = secret_box.derive_secret(MOTUZ_FLASK_SECRET_KEY, 'user jwt key v1')
     JWT_IDENTITY_CLAIM = 'identity' # Frontend reads `identity`, and keeps pre-upgrade tokens valid
     # The frontend refreshes access tokens transparently (middleware/authMiddleware.jsx).
     # Logout revokes all tokens of the session at once; the short access lifetime limits
@@ -82,7 +90,9 @@ class Config:
     DATABASE_PARAMS = ''
     if MOTUZ_DATABASE_REQUIRE_SSL.lower() in ('true', 't'):
         DATABASE_PARAMS = '?sslmode=require'
-    SQLALCHEMY_ENGINE_OPTIONS = {'pool_pre_ping': True}
+    # hide_parameters: a database error must not repeat the bound values (credentials) in
+    # its message, which is logged and could be shown
+    SQLALCHEMY_ENGINE_OPTIONS = {'pool_pre_ping': True, 'hide_parameters': True}
     SQLALCHEMY_DATABASE_URI = '{PROTOCOL}://{USER}:{PASSWORD}@{HOST}/{DATABASE}{PARAMS}'.format(
         PROTOCOL=MOTUZ_DATABASE_PROTOCOL,
         USER=MOTUZ_DATABASE_USER,

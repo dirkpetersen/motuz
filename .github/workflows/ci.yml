@@ -25,14 +25,18 @@ jobs:
           cache-dependency-path: requirements-dev.txt
       - name: Install dependencies
         run: pip install -r requirements-dev.txt
+      - name: Random test secrets
+        # api/config.py needs these at import time (random, as in every install; no fixed
+        # passwords or keys anywhere); the tests never connect to a database
+        run: |
+          echo "MOTUZ_FLASK_SECRET_KEY=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
+          echo "MOTUZ_DATABASE_PASSWORD=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
+          echo "MOTUZ_DATA_KEYS=k1:$(openssl rand -base64 32)" >> "$GITHUB_ENV"
       - name: python manage.py test
         working-directory: src/backend
-        # api/config.py needs these at import time; the tests never connect to a database
         env:
-          MOTUZ_FLASK_SECRET_KEY: ci-dummy
           MOTUZ_DATABASE_PROTOCOL: postgresql
           MOTUZ_DATABASE_USER: ci
-          MOTUZ_DATABASE_PASSWORD: ci
           MOTUZ_DATABASE_NAME: ci
           MOTUZ_DATABASE_HOST: 127.0.0.1:5432
         run: python manage.py test

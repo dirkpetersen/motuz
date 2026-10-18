@@ -89,8 +89,9 @@ make_fixtures() {
     (
         umask 077
         mkdir -p "$WORK/secrets" "$WORK/certs" "$WORK/fake" "$WORK/worker"
-        printf '%s' "$(openssl rand -hex 16)" > "$WORK/secrets/MOTUZ_DATABASE_PASSWORD"
+        printf '%s' "$(openssl rand -hex 32)" > "$WORK/secrets/MOTUZ_DATABASE_PASSWORD"
         printf '%s' "$(openssl rand -hex 32)" > "$WORK/secrets/MOTUZ_FLASK_SECRET_KEY"
+        printf 'k1:%s' "$(openssl rand -base64 32)" > "$WORK/secrets/MOTUZ_DATA_KEYS"
         printf '%s' "unused" > "$WORK/secrets/MOTUZ_SMTP_PASSWORD"
         : > "$WORK/secrets/MOTUZ_ONEDRIVE_CLIENT_SECRET"  # empty = rclone's app
         openssl req -x509 -newkey rsa:2048 -nodes -days 7 -subj /CN=localhost \

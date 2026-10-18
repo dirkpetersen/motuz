@@ -38,7 +38,7 @@ case "${1:-}" in
         key="$2"
         [[ "$key" =~ ^MOTUZ_[A-Z0-9_]+$ ]] || die "$key is not a MOTUZ_* setting"
         case "$key" in
-            *PASSWORD*|*SECRET*|*TOKEN*) die "$key is a secret: use config.sh ask-secret" ;;
+            *PASSWORD*|*SECRET*|*TOKEN*|*_KEYS) die "$key is a secret: use config.sh ask-secret" ;;
         esac
         case " $MANAGED " in *" $key "*) die "$key is managed by install.sh/deploy.sh" ;; esac
         env_set "$SETTINGS" "$key" "$3"

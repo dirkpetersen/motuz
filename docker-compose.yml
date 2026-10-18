@@ -107,6 +107,9 @@ secrets:
         file: ${MOTUZ_DOCKER_ROOT:-/docker}/secrets/MOTUZ_DATABASE_PASSWORD
     MOTUZ_FLASK_SECRET_KEY:
         file: ${MOTUZ_DOCKER_ROOT:-/docker}/secrets/MOTUZ_FLASK_SECRET_KEY
+    # Encrypts the credential columns of the database (README, "Secrets and backups")
+    MOTUZ_DATA_KEYS:
+        file: ${MOTUZ_DOCKER_ROOT:-/docker}/secrets/MOTUZ_DATA_KEYS
     MOTUZ_SMTP_PASSWORD:
         file: ${MOTUZ_DOCKER_ROOT:-/docker}/secrets/MOTUZ_SMTP_PASSWORD
     # Optional, empty unless an own OneDrive app is configured. bin/prod/start.sh creates
@@ -175,6 +178,7 @@ services:
         secrets:
             - MOTUZ_DATABASE_PASSWORD
             - MOTUZ_FLASK_SECRET_KEY
+            - MOTUZ_DATA_KEYS
             - MOTUZ_SMTP_PASSWORD
             # Only the app signs in and refreshes tokens (token broker); celery never
             # needs it
@@ -194,6 +198,7 @@ services:
         secrets:
             - MOTUZ_DATABASE_PASSWORD
             - MOTUZ_FLASK_SECRET_KEY
+            - MOTUZ_DATA_KEYS
             - MOTUZ_SMTP_PASSWORD
         depends_on:
             - app # Build dependency

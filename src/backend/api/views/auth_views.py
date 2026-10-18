@@ -5,7 +5,7 @@ from flask_restx import Resource, Namespace, fields
 
 from ..managers import auth_manager
 from ..managers.auth_manager import token_required
-from ..exceptions import HTTP_EXCEPTION
+from ..exceptions import HTTP_EXCEPTION, public_error
 
 
 api = Namespace('auth', description='Authentication related operations')
@@ -27,7 +27,7 @@ class UserLogin(Resource):
             api.abort(e.code, e.payload)
         except Exception as e:
             logging.exception(e, exc_info=True)
-            api.abort(500, str(e))
+            api.abort(500, public_error(e))
 
 
 @api.route('/refresh/')
@@ -40,7 +40,7 @@ class TokenRefresh(Resource):
             api.abort(e.code, e.payload)
         except Exception as e:
             logging.exception(e, exc_info=True)
-            api.abort(500, str(e))
+            api.abort(500, public_error(e))
 
 
 
@@ -54,4 +54,4 @@ class LogoutAPI(Resource):
             api.abort(e.code, e.payload)
         except Exception as e:
             logging.exception(e, exc_info=True)
-            api.abort(500, str(e))
+            api.abort(500, public_error(e))

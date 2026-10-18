@@ -3,7 +3,7 @@ import logging
 from flask import request
 from flask_restx import Resource, Namespace, fields, reqparse
 
-from ..exceptions import HTTP_EXCEPTION
+from ..exceptions import HTTP_EXCEPTION, public_error
 from ..managers import copy_job_manager, upload_manager
 
 api = Namespace('copy-jobs', description='CopyJob related operations')
@@ -85,7 +85,7 @@ class CopyJobList(Resource):
             api.abort(e.code, e.payload)
         except Exception as e:
             logging.exception(e, exc_info=True)
-            api.abort(500, str(e))
+            api.abort(500, public_error(e))
 
     @api.expect(job_dto, validate=True)
     @api.marshal_with(job_dto, code=201)
@@ -99,7 +99,7 @@ class CopyJobList(Resource):
             api.abort(e.code, e.payload)
         except Exception as e:
             logging.exception(e, exc_info=True)
-            api.abort(500, str(e))
+            api.abort(500, public_error(e))
 
 
 @api.route('/performance/')
@@ -119,7 +119,7 @@ class CopyJobPerformance(Resource):
             api.abort(e.code, e.payload)
         except Exception as e:
             logging.exception(e, exc_info=True)
-            api.abort(500, str(e))
+            api.abort(500, public_error(e))
 
 
 @api.route('/<int:id>')
@@ -137,7 +137,7 @@ class CopyJob(Resource):
             api.abort(e.code, e.payload)
         except Exception as e:
             logging.exception(e, exc_info=True)
-            api.abort(500, str(e))
+            api.abort(500, public_error(e))
 
 
 @api.route('/<int:id>/stop/')
@@ -155,7 +155,7 @@ class CopyJob(Resource):
             api.abort(e.code, e.payload)
         except Exception as e:
             logging.exception(e, exc_info=True)
-            api.abort(500, str(e))
+            api.abort(500, public_error(e))
 
 
 def _abort(e):
@@ -178,7 +178,7 @@ class UploadConflicts(Resource):
             _abort(e)
         except Exception as e:
             logging.exception(e, exc_info=True)
-            api.abort(500, str(e))
+            api.abort(500, public_error(e))
 
 
 @api.route('/uploads/')
@@ -196,7 +196,7 @@ class Uploads(Resource):
             _abort(e)
         except Exception as e:
             logging.exception(e, exc_info=True)
-            api.abort(500, str(e))
+            api.abort(500, public_error(e))
 
 
 @api.route('/<int:id>/uploads/<int:index>')
@@ -221,7 +221,7 @@ class UploadChunk(Resource):
         except Exception as e:
             logging.exception(e, exc_info=True)
             _drain_chunk()
-            api.abort(500, str(e))
+            api.abort(500, public_error(e))
 
 
 def _drain_chunk():

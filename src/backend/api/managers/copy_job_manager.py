@@ -10,7 +10,7 @@ from ..models import CopyJob
 from ..managers.auth_manager import token_required, get_logged_in_user
 from ..managers import cloud_connection_manager
 from ..utils import rclone_tuning
-from ..managers import job_routing, worker_manager, upload_manager
+from ..managers import job_routing, worker_manager, upload_manager, oauth_manager
 from ..utils.email_utils import Email
 
 
@@ -19,6 +19,11 @@ def list(page_size=50, page=1):
     owner = get_logged_in_user(request)
     worker_manager.expire_leases()
     upload_manager.expire(owner)
+    try:
+        oauth_manager.purge_expired_flows() # abandoned sign-ins keep refresh tokens (rate limited)
+    except Exception:
+        logging.exception('Could not purge expired sign-in flows')
+        db.session.rollback() # Else the next query fails with PendingRollbackError
     try:
         query = (CopyJob.query
                  .filter_by(owner=owner)
@@ -33,9 +38,9 @@ def list(page_size=50, page=1):
             Email.send_notification(
                 to=address.strip() or None,
                 subject='Motuz: Error listing copy jobs',
-                body=str(e),
+                body=error_text(e),
             )
-        raise HTTP_500_INTERNAL_SERVER_ERROR(str(e))
+        raise HTTP_500_INTERNAL_SERVER_ERROR(INTERNAL_ERROR)
 
     return {
         'data': worker_manager.annotate_location('copy', query.items),
@@ -114,7 +119,7 @@ def create(data):
     except Exception as e:
         # Otherwise the job would stay in PROGRESS forever
         copy_job.progress_state = 'FAILED'
-        copy_job.progress_error = 'Could not queue the job: {}'.format(e)
+        copy_job.progress_error = 'Could not queue the job: {}'.format(error_text(e))
         db.session.commit()
         raise
 

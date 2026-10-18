@@ -19,7 +19,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from common import BASE, CTX, FAKE_LOG, WORK, check, compose, finish, psql, sh
+from common import BASE, CTX, FAKE_LOG, WORK, check, compose, finish, psql, sh, stored_secret
 
 SECRETS = [] # every secret this suite sees; none may appear in a log
 
@@ -242,7 +242,7 @@ check('onedrive job ran on the worker (ends FAILED at Graph, unreachable through
       oj['progress_state'] == 'FAILED' and remote_job('copy', oj['id'])[1] == 'w1', (oj['progress_state'], remote_job('copy', oj['id'])))
 check("the worker's rclone refreshed through the HTTPS broker: one upstream refresh with the real token",
       len(calls) == 1 and calls[0]['form'].get('refresh_token') == 'REAL-1' and calls[0]['form'].get('client_secret') == '<ok>', calls)
-stored = json.loads(psql(f"select onedrive_token from cloud_connection where id={cid}"))
+stored = json.loads(stored_secret('cloud_connection.onedrive_token', cid))
 check('rotated token stored centrally', stored['refresh_token'] == 'REAL-2' and stored['access_token'] == 'ACCESS-2', stored)
 worker_log, app_log, proxy_log = logs('worker'), logs('app'), logs('proxy')
 check('rclone on the worker got the public HTTPS broker URL',

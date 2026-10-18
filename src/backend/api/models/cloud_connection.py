@@ -1,6 +1,12 @@
 import datetime
 
 from ..application import db
+from .encrypted import EncryptedString
+
+
+def _secret(name):
+    """A credential column, encrypted at rest (encrypted.py); name is the column name"""
+    return db.Column(name, EncryptedString("cloud_connection." + name), nullable=True)
 
 
 
@@ -25,8 +31,8 @@ class CloudConnection(db.Model):
 
     # S3 fields
     s3_access_key_id = db.Column(db.String, nullable=True)
-    s3_secret_access_key = db.Column(db.String, nullable=True)
-    s3_session_token = db.Column(db.String, nullable=True)
+    s3_secret_access_key = _secret("s3_secret_access_key")
+    s3_session_token = _secret("s3_session_token")
     s3_region = db.Column(db.String, nullable=True)
     kms_encryption_key_arn = db.Column(db.String, nullable=True)
 
@@ -46,12 +52,12 @@ class CloudConnection(db.Model):
 
     # Azure fields
     azure_account = db.Column(db.String, nullable=True)
-    azure_key = db.Column(db.String, nullable=True)
-    azure_sas_url = db.Column(db.String, nullable=True)
+    azure_key = _secret("azure_key")
+    azure_sas_url = _secret("azure_sas_url")
 
     # Swift V1 fields
     swift_user = db.Column(db.String, nullable=True)
-    swift_key = db.Column(db.String, nullable=True)
+    swift_key = _secret("swift_key")
     swift_auth = db.Column(db.String, nullable=True)
 
     # Swift V2 additional fields
@@ -59,7 +65,7 @@ class CloudConnection(db.Model):
 
     # Google Cloud Services fields
     gcp_client_id = db.Column(db.String, nullable=True)
-    gcp_service_account_credentials = db.Column(db.String, nullable=True)
+    gcp_service_account_credentials = _secret("gcp_service_account_credentials")
     gcp_project_number = db.Column(db.String, nullable=True)
     gcp_object_acl = db.Column(db.String, nullable=True)
     gcp_bucket_acl = db.Column(db.String, nullable=True)
@@ -68,14 +74,14 @@ class CloudConnection(db.Model):
     sftp_host = db.Column(db.String, nullable=True)
     sftp_port = db.Column(db.String, nullable=True)
     sftp_user = db.Column(db.String, nullable=True)
-    sftp_pass = db.Column(db.String, nullable=True)
+    sftp_pass = _secret("sftp_pass")
     sftp_key_file = db.Column(db.String, nullable=True)
 
     # Dropbox
-    dropbox_token = db.Column(db.String, nullable=True)
+    dropbox_token = _secret("dropbox_token")
 
     # Microsoft OneDrive
-    onedrive_token = db.Column(db.String, nullable=True)
+    onedrive_token = _secret("onedrive_token")
     onedrive_drive_id = db.Column(db.String, nullable=True)
     onedrive_drive_type = db.Column(db.String, nullable=True)
     # Client id of the app registration that issued onedrive_token, set by "Sign in with
@@ -83,7 +89,7 @@ class CloudConnection(db.Model):
     onedrive_client_id = db.Column(db.String, nullable=True)
 
     # Google Drive (rclone backend "drive", scope "drive")
-    gdrive_token = db.Column(db.String, nullable=True)
+    gdrive_token = _secret("gdrive_token")
     gdrive_root_folder_id = db.Column(db.String, nullable=True)
     gdrive_team_drive = db.Column(db.String, nullable=True) # Shared drive id
     # Client id of the OAuth client that issued gdrive_token, set by "Sign in with
@@ -93,7 +99,7 @@ class CloudConnection(db.Model):
     # WebDAV
     webdav_url = db.Column(db.String, nullable=True)
     webdav_user = db.Column(db.String, nullable=True)
-    webdav_pass = db.Column(db.String, nullable=True)
+    webdav_pass = _secret("webdav_pass")
 
     # OAuth token broker (see managers/token_broker_manager.py): rclone receives this
     # opaque handle instead of the real refresh token

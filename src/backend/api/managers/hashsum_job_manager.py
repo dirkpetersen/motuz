@@ -62,7 +62,7 @@ def create(data):
     except Exception as e:
         # Otherwise the job would stay in PROGRESS forever
         hashsum_job.progress_state = 'FAILED'
-        hashsum_job.progress_error = 'Could not queue the job: {}'.format(e)
+        hashsum_job.progress_error = 'Could not queue the job: {}'.format(error_text(e))
         db.session.commit()
         raise
 
