@@ -28,6 +28,15 @@ class CopyJob(db.Model, TimestampMixin):
     # ..." or "Free space not checked: <why>"; NULL if none ran (cloud destination,
     # limit off, a remote worker's destination)
     space_check = db.Column(db.String, nullable=True)
+    # Overwrite policy (managers/overwrite_policy.py), decided when the job is created:
+    # False = rclone --ignore-existing (the destination was not written by Motuz
+    # before), True = changed files are overwritten, NULL = uploads and older jobs
+    overwrite = db.Column(db.Boolean, nullable=True)
+    # Existing destination files that were kept (not overwritten): their number and the
+    # first overwrite_policy.KEPT_SAMPLE paths (copy jobs with overwrite False; uploads
+    # in skip mode); NULL = none reported
+    skipped_existing = db.Column(db.Integer, nullable=True)
+    skipped_existing_sample = db.Column(db.JSON, nullable=True)
 
     owner = db.Column(db.String, index=True)
 

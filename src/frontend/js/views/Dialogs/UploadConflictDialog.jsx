@@ -11,7 +11,7 @@ const SHOWN_NAMES = 20;
  */
 class UploadConflictDialog extends React.Component {
     render() {
-        const {existing, host, folder, count} = this.props.data;
+        const {existing, host, folder, count, overwrite, overwriteMessage} = this.props.data;
         const shown = existing.slice(0, SHOWN_NAMES);
         const more = existing.length - shown.length;
 
@@ -30,21 +30,30 @@ class UploadConflictDialog extends React.Component {
                         {shown.map(name => <li key={name}>{name}</li>)}
                         {more > 0 && <li className="text-muted">and {more} more</li>}
                     </ul>
-                    <p className="mb-0">
-                        <b>Overwrite all</b> replaces the existing files. <b>Skip existing</b> uploads
-                        only the files that do not exist yet, also inside these folders.
-                    </p>
+                    {overwrite ? (
+                        <p className="mb-0">
+                            <b>Overwrite all</b> replaces the existing files. <b>Skip existing</b> uploads
+                            only the files that do not exist yet, also inside these folders.
+                        </p>
+                    ) : (
+                        <p className="mb-0 upload-conflict-no-overwrite">
+                            {overwriteMessage || 'Existing files cannot be overwritten here.'}{' '}
+                            <b>Skip existing</b> uploads only the files that do not exist yet, also inside these folders.
+                        </p>
+                    )}
                 </Modal.Body>
                 <Modal.Footer>
                     <Button variant="secondary" onClick={() => this.props.onAnswer('cancel')}>
                         Cancel
                     </Button>
-                    <Button variant="outline-primary" onClick={() => this.props.onAnswer('skip')}>
+                    <Button variant={overwrite ? 'outline-primary' : 'primary'} onClick={() => this.props.onAnswer('skip')}>
                         Skip existing
                     </Button>
-                    <Button variant="primary" onClick={() => this.props.onAnswer('overwrite')}>
-                        Overwrite all
-                    </Button>
+                    {overwrite && (
+                        <Button variant="primary" onClick={() => this.props.onAnswer('overwrite')}>
+                            Overwrite all
+                        </Button>
+                    )}
                 </Modal.Footer>
             </Modal>
         );
@@ -52,7 +61,7 @@ class UploadConflictDialog extends React.Component {
 }
 
 UploadConflictDialog.defaultProps = {
-    data: {existing: [], host: {}, folder: '', count: 0},
+    data: {existing: [], host: {}, folder: '', count: 0, overwrite: true, overwriteMessage: null},
     onAnswer: (mode) => {},
 }
 

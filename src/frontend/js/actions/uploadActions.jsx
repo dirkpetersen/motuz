@@ -148,7 +148,12 @@ export const uploadDroppedFiles = (side, dstSubdir, dropped) => async (dispatch,
     waiting.set(id, upload);
     dispatch({
         type: SHOW_UPLOAD_CONFLICT_DIALOG,
-        payload: {data: {id, existing: conflicts.body.existing, host: pane.host, folder, count: files.length}},
+        payload: {data: {
+            id, existing: conflicts.body.existing, host: pane.host, folder, count: files.length,
+            // false: the existing names are outside what Motuz wrote before (overwrite policy)
+            overwrite: conflicts.body.overwrite !== false,
+            overwriteMessage: conflicts.body.overwrite_message || null,
+        }},
     });
 };
 

@@ -27,6 +27,7 @@ class CopyJobQueue:
         self._latest_job_id = 0
         self._local_dst = {} # Mapping from id to the local destination path (None: a cloud)
         self._disk_full = {} # Mapping from id to (disk_full.FULL or QUOTA, rclone's last such line)
+        self._kept = defaultdict(lambda: [0, []]) # Mapping from id to [count, first KEPT_SAMPLE names]
 
 
     def push(self, command, env, job_id, local_dst=None):
@@ -66,6 +67,14 @@ class CopyJobQueue:
 
     def copy_percent(self, job_id):
         return self._job_percent[job_id]
+
+    def copy_kept(self, job_id):
+        """
+        {count, sample}: the existing destination files rclone kept (--ignore-existing,
+        rclone_tuning.KEEP_EXISTING_FLAGS) and the first KEPT_SAMPLE of their paths
+        """
+        count, sample = self._kept[job_id]
+        return {'count': count, 'sample': list(sample)}
 
     def copy_stop(self, job_id):
         self._stop_events[job_id].set()
@@ -146,6 +155,8 @@ class CopyJobQueue:
                 time.sleep(0.5)
                 continue
 
+            if _combined_line(line.rstrip('\r\n'), self._kept[job_id]):
+                continue
             line = line.strip()
 
             q1 = line.find(reset_sequence1)
@@ -290,6 +301,9 @@ class CopyJobQueue:
             if status[header]
         )
         text = text.replace("Transferred0", " Transferred")
+        kept = self._kept[job_id][0]
+        if kept:
+            text += '\n{:>12}: {} existing file{} (not overwritten)'.format('Kept', kept, '' if kept == 1 else 's')
         self._job_text[job_id] = text
 
 
@@ -302,3 +316,27 @@ class CopyJobQueue:
                 self._job_percent[job_id] = int(match[1])
                 return
         # No percentage in this update, keep the last known value
+
+
+# Paths of kept files collected per job (copy_kept); the rest is only counted
+KEPT_SAMPLE = 1000
+# rclone's --combined report (rclone_tuning.KEEP_EXISTING_FLAGS), one line per file at
+# the start of a line: '= ' exists in the destination (kept with --ignore-existing),
+# '+ ' new, '* ' differs, '- ' only in the destination, '! ' error. The progress lines
+# never start like this (their list items start with ' * '); rclone escapes control
+# characters in names, so a name is always one line.
+_COMBINED_PREFIXES = ('= ', '+ ', '* ', '- ', '! ')
+
+
+def _combined_line(line, kept):
+    """
+    True if `line` (stdout without its line end) is a line of rclone's --combined
+    report; a kept file is counted into `kept` ([count, sample])
+    """
+    if not line.startswith(_COMBINED_PREFIXES):
+        return False
+    if line.startswith('= '):
+        kept[0] += 1
+        if len(kept[1]) < KEPT_SAMPLE:
+            kept[1].append(line[2:])
+    return True

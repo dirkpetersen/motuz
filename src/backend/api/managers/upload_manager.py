@@ -5,7 +5,9 @@ An upload is a copy job with `upload` set, shown in the job table like any other
 one upload_file row per file. The browser
 1. asks which of the dropped names exist in the destination folder (conflicts),
 2. creates the job (create), in mode 'overwrite' or 'skip' (existing files are not
-   uploaded),
+   uploaded). 'overwrite' is refused (403) when an existing item is outside the paths
+   Motuz wrote before (managers/overwrite_policy.py); the conflicts tell the browser.
+   The job's top-level items count as written by Motuz from then on,
 3. sends each file in chunks of at most MAX_CHUNK_BYTES, in order (put_chunk). Each
    chunk is written to the file's `rclone rcat`, run as the user (utils/upload_pipes.py),
    so nothing is stored on the server and the OS checks the user's permissions. rcat
@@ -30,7 +32,7 @@ from ..application import db
 from ..exceptions import *
 from ..models import CopyJob, UploadFile
 from ..managers.auth_manager import token_required, get_logged_in_user
-from ..managers import cloud_connection_manager, space_manager
+from ..managers import cloud_connection_manager, overwrite_policy, space_manager
 from ..utils import disk_full, file_view, upload_pipes
 from ..utils.rclone_connection import RcloneConnection, RcloneException
 
@@ -46,7 +48,11 @@ _CONTROL = re.compile(r'[\x00-\x1f\x7f]')
 
 @token_required
 def conflicts(data):
-    """{existing: [names]}: the dropped top-level `names` that exist in the destination"""
+    """
+    {existing: [names], overwrite, overwrite_message}: the dropped top-level `names`
+    that exist in the destination, and whether they may be overwritten (else only
+    'skip' is accepted, for this reason)
+    """
     owner = get_logged_in_user(request)
     dst_cloud = _owned_cloud(data.get('dst_cloud_id'))
     folder = _checked_folder(data.get('dst_resource_path'), dst_cloud)
@@ -57,7 +63,21 @@ def conflicts(data):
     if any('/' in name for name in names):
         raise HTTP_400_BAD_REQUEST('names must not contain "/"')
     existing = {entry.rstrip('/') for entry in _list(dst_cloud, owner, folder, recursive=False)}
-    return {'existing': sorted(names & existing)}
+    refused = _not_overwritable(dst_cloud, folder, names & existing)
+    return {
+        'existing': sorted(names & existing),
+        'overwrite': refused is None,
+        'overwrite_message': None if refused is None else overwrite_policy.MESSAGES[refused],
+    }
+
+
+def _not_overwritable(dst_cloud, folder, names):
+    """The reason (overwrite_policy.MESSAGES) why one of `names` cannot be overwritten, or None"""
+    for name in sorted(names):
+        allowed, reason = overwrite_policy.decide(dst_cloud, _join(folder, name))
+        if not allowed:
+            return reason
+    return None
 
 
 @token_required
@@ -79,6 +99,8 @@ def create(data):
     space_note = space_manager.check_upload(owner, dst_cloud, folder, sum(size for path, size in files if path not in skipped))
 
     tops = sorted({path.split('/')[0] for path, _ in files})
+    if mode == 'overwrite':
+        _check_overwrite(dst_cloud, owner, folder, tops)
     name = tops[0] + ('/' if any('/' in path for path, _ in files) else '') if len(tops) == 1 \
         else '{} items'.format(len(tops))
     job = CopyJob(
@@ -95,8 +117,11 @@ def create(data):
         progress_state='PROGRESS',
         owner=owner,
     )
+    overwrite_policy.record_kept(job, len(skipped), sorted(skipped)) # shown like a copy job's
     db.session.add(job)
     db.session.flush()
+    for top in tops: # Written by Motuz from now on, also if the upload fails or is stopped
+        overwrite_policy.register(dst_cloud, _join(folder, top), 'upload', job.id, owner)
     db.session.execute(insert(UploadFile), [{
         'copy_job_id': job.id,
         'index': index,
@@ -111,6 +136,20 @@ def create(data):
     db.session.commit()
     logging.info('Copy job %s: upload of %s files (%s skipped) by %s', job.id, len(files), len(skipped), owner)
     return {'job': job, 'pending': pending, 'chunk_bytes': CHUNK_BYTES}
+
+
+def _check_overwrite(dst_cloud, owner, folder, tops):
+    """
+    403 if mode 'overwrite' would replace an existing item outside the paths Motuz wrote
+    before (the dialog offers only 'skip' then); lists the folder only if needed
+    """
+    if _not_overwritable(dst_cloud, folder, tops) is None:
+        return
+    existing = {entry.rstrip('/') for entry in _list(dst_cloud, owner, folder, recursive=False)}
+    refused = _not_overwritable(dst_cloud, folder, set(tops) & existing)
+    if refused is not None:
+        raise HTTP_403_FORBIDDEN('Existing files cannot be overwritten here. {} Upload with '
+                                 '"Skip existing" instead.'.format(overwrite_policy.MESSAGES[refused]))
 
 
 @token_required

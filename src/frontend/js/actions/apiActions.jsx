@@ -44,6 +44,9 @@ export const CREATE_COPY_JOB_FAILURE = '@@api/CREATE_COPY_JOB_FAILURE';
 export const RETRIEVE_COPY_JOB_PERFORMANCE_REQUEST = '@@api/RETRIEVE_COPY_JOB_PERFORMANCE_REQUEST';
 export const RETRIEVE_COPY_JOB_PERFORMANCE_SUCCESS = '@@api/RETRIEVE_COPY_JOB_PERFORMANCE_SUCCESS';
 export const RETRIEVE_COPY_JOB_PERFORMANCE_FAILURE = '@@api/RETRIEVE_COPY_JOB_PERFORMANCE_FAILURE';
+export const RETRIEVE_COPY_JOB_OVERWRITE_REQUEST = '@@api/RETRIEVE_COPY_JOB_OVERWRITE_REQUEST';
+export const RETRIEVE_COPY_JOB_OVERWRITE_SUCCESS = '@@api/RETRIEVE_COPY_JOB_OVERWRITE_SUCCESS';
+export const RETRIEVE_COPY_JOB_OVERWRITE_FAILURE = '@@api/RETRIEVE_COPY_JOB_OVERWRITE_FAILURE';
 
 export const STOP_COPY_JOB_REQUEST = '@@api/STOP_COPY_JOB_REQUEST';
 export const STOP_COPY_JOB_SUCCESS = '@@api/STOP_COPY_JOB_SUCCESS';
@@ -306,6 +309,21 @@ export const retrieveCopyJobPerformance = (dstCloudId) => ({
             RETRIEVE_COPY_JOB_PERFORMANCE_REQUEST,
             RETRIEVE_COPY_JOB_PERFORMANCE_SUCCESS,
             RETRIEVE_COPY_JOB_PERFORMANCE_FAILURE,
+        ],
+    }
+});
+
+// Whether a copy to this destination would overwrite existing files (New Copy Job dialog)
+export const retrieveCopyJobOverwritePolicy = (dstCloudId, dstResourcePath) => ({
+    [RSAA]: {
+        endpoint: `/api/copy-jobs/overwrite-policy/?dst_cloud_id=${encodeURIComponent(dstCloudId || 0)}`
+            + `&dst_resource_path=${encodeURIComponent(dstResourcePath)}`,
+        method: 'GET',
+        headers: withAuth({ 'Content-Type': 'application/json' }),
+        types: [
+            RETRIEVE_COPY_JOB_OVERWRITE_REQUEST,
+            RETRIEVE_COPY_JOB_OVERWRITE_SUCCESS,
+            RETRIEVE_COPY_JOB_OVERWRITE_FAILURE,
         ],
     }
 });

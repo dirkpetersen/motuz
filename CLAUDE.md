@@ -23,6 +23,7 @@ Invariants that hold everywhere (the details are in the sections below and in `.
 - `api.utils` and `api.version` must never import the Flask app or config (the remote worker agent imports them without `MOTUZ_*` variables).
 - Bump `VERSION` / `WORKER_PROTOCOL` in `api/version.py` when the job code or the worker API changes.
 - Never build rclone flags from user text: only validated values through `rclone_tuning` (`copy_flags` / `hashsum_flags`).
+- Copies and uploads overwrite existing files only at or below a path a Motuz copy job or upload wrote before (any user, same storage: `managers/overwrite_policy.py`, table `motuz_destination`), unless `MOTUZ_ALLOW_GENERAL_OVERWRITES=true`; elsewhere `--ignore-existing` (from `rclone_tuning.copy_flags(..., overwrite=False)`) and uploads only skip.
 - Systemd install: root never writes, chowns or follows names inside the service account's home; everything root reads from it is validated.
 - Change Traefik flags only in the `command:` of `docker-compose.yml` (`bin/systemd/traefik_args.py` derives the systemd flags from it).
 - Never log secrets or file contents.
@@ -133,6 +134,8 @@ Double-click on a file in a pane opens a read-only viewer: pager (text, with fol
 **Free space limit** (`utils/space_check.py`, stdlib only; `managers/space_manager.py`): copy jobs and uploads to a local destination are refused at create (409, no job) when the destination's quota (CephFS xattrs, user/group quotactl) or, without one, its filesystem (statvfs) would be more than `MOTUZ_MAX_FILL_PERCENT` (default 90, 100 = off) full; read as the user by a `/usr/bin/env python3 -I -S` reader, bytes = `rclone size` of source minus destination; unknown or slower than `JOB_SIZE_TIMEOUT` runs with a note in `copy_job.space_check`; jobs for a remote pool are checked on the worker (ticket `options.max_fill_percent`, `WORKER_PROTOCOL` 4). Details: `.claude/rules/filesystem-access.md`, README "Free space limit".
 
 Hashsum jobs run md5sum on src then dst, build file trees (`utils/file_utils.py`), and store only the differing branches (`remove_identical_branches`) as JSON.
+
+**Overwrite policy** (`managers/overwrite_policy.py`, `utils/motuz_destinations.py`; README "Overwriting existing files"): `create` decides `copy_job.overwrite` before registering the job's `dst_resource_path` (uploads: each top-level item) under `storage_key(connection)`; a job with `overwrite` false runs with `KEEP_EXISTING_FLAGS` (`--ignore-existing --combined=-`) and `CopyJobQueue` counts the `= name` lines as kept files (`skipped_existing`, `skipped_existing_sample`; remote workers report them, `WORKER_PROTOCOL` 4). Details: `.claude/rules/rclone-tuning.md`.
 
 **rclone performance** (`utils/rclone_tuning.py`, stdlib only): installation defaults `MOTUZ_RCLONE_*` (unset transfers/checkers mean Motuz's 16/32, `MOTUZ_DEFAULTS`, so every copy carries `--transfers=16 --checkers=32` unless configured otherwise), caps `MOTUZ_RCLONE_MAX_*`, a memory budget, and validated per-job overrides in `copy_job.performance` / `hashsum_job.performance`; an invalid setting stops the app with a `TuningConfigError`. Details: `.claude/rules/rclone-tuning.md`.
 

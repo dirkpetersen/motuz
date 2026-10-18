@@ -81,6 +81,9 @@ x-variables:
         MOTUZ_RCLONE_MEMORY_BUDGET: ${MOTUZ_RCLONE_MEMORY_BUDGET:-}
         MOTUZ_RCLONE_MD5_SIMD_SERVERS: ${MOTUZ_RCLONE_MD5_SIMD_SERVERS:-}
         MOTUZ_RCLONE_EXTRA_FLAGS: ${MOTUZ_RCLONE_EXTRA_FLAGS:-}
+        # true: copies overwrite changed files everywhere the user may write; unset/false:
+        # only within destinations Motuz wrote before (README, "Overwriting existing files")
+        MOTUZ_ALLOW_GENERAL_OVERWRITES: ${MOTUZ_ALLOW_GENERAL_OVERWRITES:-}
     - &space-environment
         # Free space limit (README, "Free space limit"): a copy or upload to the local
         # filesystem is refused if its destination's filesystem or quota would be more

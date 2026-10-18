@@ -442,11 +442,13 @@ def effective(overrides, dst_type, tuning=None):
     return values
 
 
-def copy_flags(overrides, dst_type, tuning=None, *, src_local=False):
+def copy_flags(overrides, dst_type, tuning=None, *, src_local=False, overwrite=True):
     """
     rclone flags of a copy job: the effective settings (none: rclone's defaults) plus the
     extra flags. Re-validates stored overrides, since the caps may have changed. A local
     source (`src_local`) gets LOCAL_SOURCE_BUFFER_SIZE unless the installation sets one.
+    `overwrite` False (the overwrite policy, managers/overwrite_policy.py) adds
+    KEEP_EXISTING_FLAG.
     """
     tuning = tuning or settings()
     overrides = validate_overrides(overrides, dst_type, tuning)
@@ -455,7 +457,18 @@ def copy_flags(overrides, dst_type, tuning=None, *, src_local=False):
         values.setdefault('buffer_size', LOCAL_SOURCE_BUFFER_SIZE)
     flags = ['{}={}'.format(PARAMS_BY_NAME[name].flag, format_value(PARAMS_BY_NAME[name], value))
              for name, value in values.items()]
+    if overwrite is False:
+        flags.extend(KEEP_EXISTING_FLAGS)
     return flags + list(tuning.extra_flags)
+
+
+# Existing destination files are never modified, new ones are copied: a copy job whose
+# destination was not written by Motuz before (managers/overwrite_policy.py). rclone
+# logs the files it keeps only at DEBUG level, so it also reports every file on stdout
+# (--combined: '= name' for an existing file, which --ignore-existing keeps; '+ name'
+# new); CopyJobQueue collects the kept ones (copy_kept)
+KEEP_EXISTING_FLAG = '--ignore-existing'
+KEEP_EXISTING_FLAGS = (KEEP_EXISTING_FLAG, '--combined=-')
 
 
 def hashsum_flags(overrides, tuning=None):

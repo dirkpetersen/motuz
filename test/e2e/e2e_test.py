@@ -6,6 +6,7 @@ import json
 import re
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
 from common import (BASE, CTX, DOCUMENT_FIXTURES_CODE, NUMBERED_LOG_CODE, VIEWER_FIXTURES_CODE, check, check_browser_upload,
@@ -360,6 +361,59 @@ check('copy job pagination', status == 200 and len(page['data']) == 2 and page['
 status, page, _ = req('GET', '/api/copy-jobs/', B)
 check('bob sees no alice jobs', status == 200 and page['total'] == 0, page)
 
+# --- overwrite policy (managers/overwrite_policy.py): existing files are overwritten only
+# within destinations Motuz wrote before (the stack keeps MOTUZ_ALLOW_GENERAL_OVERWRITES unset)
+def read_alice(path):
+    out = sh('app', f"sudo -u alice cat -- '{path}'")
+    return out.stdout if out.returncode == 0 else None
+
+
+def overwrite_policy(token, path):
+    status, body, _ = req('GET', '/api/copy-jobs/overwrite-policy/?dst_cloud_id=0&dst_resource_path=' + urllib.parse.quote(path), token)
+    return body.get('overwrite') if status == 200 else (status, body)
+
+
+sh('app', "sudo -u alice sh -c 'mkdir -p /home/alice/owsrc /home/alice/owdst; echo new > /home/alice/owsrc/x.txt; "
+          "echo n > /home/alice/owsrc/n.txt; echo old > /home/alice/owdst/x.txt'")
+check('overwrite policy: a destination Motuz never wrote is not overwritten', overwrite_policy(A, '/home/alice/owdst') is False)
+ow = {'description': 'overwrite policy', 'src_resource_path': '/home/alice/owsrc', 'dst_resource_path': '/home/alice/owdst', 'copy_links': True}
+status, oj, _ = req('POST', '/api/copy-jobs/', A, ow)
+check('overwrite policy: first copy keeps existing files', status == 201 and oj.get('overwrite') is False, (status, oj))
+oj = wait_job('copy-jobs', oj['id'], A)
+check('overwrite policy: first copy SUCCESS', oj['progress_state'] == 'SUCCESS', oj)
+check('overwrite policy: the pre-existing file is unchanged, the new one copied',
+      (read_alice('/home/alice/owdst/x.txt'), read_alice('/home/alice/owdst/n.txt')) == ('old\n', 'n\n'),
+      (read_alice('/home/alice/owdst/x.txt'), read_alice('/home/alice/owdst/n.txt')))
+check('overwrite policy: the job lists the kept file',
+      (oj.get('skipped_existing'), oj.get('skipped_existing_sample')) == (1, ['x.txt'])
+      and 'Kept: 1 existing file (not overwritten)' in (oj.get('progress_text') or ''),
+      (oj.get('skipped_existing'), oj.get('skipped_existing_sample'), oj.get('progress_text')))
+check('overwrite policy: the destination is registered', psql(
+    "select storage_key || path from motuz_destination where path = '/home/alice/owdst'") == 'local:/home/alice/owdst')
+check('overwrite policy: written by Motuz now', overwrite_policy(A, '/home/alice/owdst') is True
+      and overwrite_policy(A, '/home/alice/owdst/sub/f') is True and overwrite_policy(A, '/home/alice/owdstx') is False)
+sh('app', "sudo -u alice sh -c 'echo newer > /home/alice/owsrc/x.txt'")
+status, oj2, _ = req('POST', '/api/copy-jobs/', A, ow)
+oj2 = wait_job('copy-jobs', oj2['id'], A)
+check('overwrite policy: a second copy into the Motuz destination overwrites the changed file',
+      oj2.get('overwrite') is True and oj2['progress_state'] == 'SUCCESS' and read_alice('/home/alice/owdst/x.txt') == 'newer\n'
+      and not oj2.get('skipped_existing'), (oj2.get('overwrite'), oj2['progress_state'], read_alice('/home/alice/owdst/x.txt')))
+sh('app', "sudo -u bob sh -c 'mkdir -p /home/bob/owsrc; echo bob > /home/bob/owsrc/x.txt'")
+check("overwrite policy: alice's Motuz destination may be overwritten by bob's copies too", overwrite_policy(B, '/home/alice/owdst/frombob') is True)
+status, bj, _ = req('POST', '/api/copy-jobs/', B, {'description': 'into alice', 'src_resource_path': '/home/bob/owsrc',
+                                                   'dst_resource_path': '/home/alice/owdst/frombob', 'copy_links': True})
+bj = wait_job('copy-jobs', bj['id'], B)
+check("overwrite policy: bob's copy is allowed by the policy but refused by the OS (no write permission)",
+      bj.get('overwrite') is True and bj['progress_state'] == 'FAILED' and read_alice('/home/alice/owdst/frombob/x.txt') is None,
+      (bj.get('overwrite'), bj['progress_state'], bj.get('progress_error_text')))
+sh('app', "sudo -u alice sh -c 'mkdir -p /home/alice/owup; echo old > /home/alice/owup/x.txt'")
+status, conflicts, _ = req('POST', '/api/copy-jobs/uploads/conflicts/', A, {'dst_cloud_id': 0, 'dst_resource_path': '/home/alice/owup', 'names': ['x.txt']})
+check('overwrite policy: upload conflicts say the existing file cannot be overwritten', status == 200
+      and conflicts.get('existing') == ['x.txt'] and conflicts.get('overwrite') is False and conflicts.get('overwrite_message'), (status, conflicts))
+status, body, _ = req('POST', '/api/copy-jobs/uploads/', A, {'dst_cloud_id': 0, 'dst_resource_path': '/home/alice/owup', 'mode': 'overwrite',
+                                                             'files': [{'path': 'x.txt', 'size': 3}]})
+check('overwrite policy: an upload in overwrite mode is refused (403)', status == 403 and read_alice('/home/alice/owup/x.txt') == 'old\n', (status, body))
+
 # --- rclone performance settings (utils/rclone_tuning.py). compose.yml sets
 # MOTUZ_RCLONE_CHECKERS=16 and MOTUZ_RCLONE_MAX_TRANSFERS=48
 status, perf, _ = req('GET', '/api/copy-jobs/performance/?dst_cloud_id=0', A)
@@ -386,11 +440,14 @@ check('job detail returns the settings', pj.get('performance') == {'transfers': 
 check('settings stored on the job', json.loads(psql(f"select performance from copy_job where id={pj['id']}") or 'null')
       == {'transfers': 32, 'checkers': 64})
 celery_log = service_logs('celery')
-check('rclone got the preset flags (celery log)', '--transfers=32 --checkers=64 --buffer-size=0B copyto /home/alice/src /home/alice/dst-perf' in celery_log,
+# Fresh destinations: existing files are kept (overwrite policy, rclone_tuning.KEEP_EXISTING_FLAGS)
+check('rclone got the preset flags (celery log)',
+      '--transfers=32 --checkers=64 --buffer-size=0B --ignore-existing --combined=- copyto /home/alice/src /home/alice/dst-perf' in celery_log,
       [line for line in celery_log.splitlines() if 'dst-perf' in line][-1:])
 # a local source: no read-ahead (rclone_tuning.LOCAL_SOURCE_BUFFER_SIZE)
 check('a job without settings: the installation defaults only (celery log)',
-      '--contimeout=5m --transfers=16 --checkers=16 --buffer-size=0B copyto /home/alice/src /home/alice/dst ' in celery_log)
+      '--contimeout=5m --transfers=16 --checkers=16 --buffer-size=0B --ignore-existing --combined=- copyto /home/alice/src /home/alice/dst '
+      in celery_log)
 
 jobs_before = psql("select count(*) from copy_job")
 for name, performance, expected in [

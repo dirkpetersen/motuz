@@ -136,15 +136,17 @@ def choose_pool(src_cloud, src_path, dst_cloud, config=None, estimate=estimate_s
 def rclone_flags(job_type, job):
     """
     The job's rclone performance flags (utils/rclone_tuning.py: the job's overrides on
-    top of this installation's MOTUZ_RCLONE_* settings), for the job ticket of a remote
-    worker. They are computed here because the settings live in this node's
+    top of this installation's MOTUZ_RCLONE_* settings) and, for a copy job that must
+    not overwrite (copy_job.overwrite False), --ignore-existing, for the job ticket of a
+    remote worker. They are computed here because the settings live in this node's
     environment; the worker passes them to rclone as they are (extra_flags), exactly
     where RcloneConnection.copy / md5sum put them for Celery jobs.
     """
     if job_type == 'copy':
         dst_cloud = job.dst_cloud
         return rclone_tuning.copy_flags(job.performance, dst_cloud.type if dst_cloud is not None else None,
-                                        src_local=job.src_cloud is None) \
+                                        src_local=job.src_cloud is None,
+                                        overwrite=job.overwrite is not False) \
             + destination_checks(dst_cloud)[0]
     return rclone_tuning.hashsum_flags(job.performance)
 

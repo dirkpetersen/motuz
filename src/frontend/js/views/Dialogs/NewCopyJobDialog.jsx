@@ -31,6 +31,8 @@ class NewCopyJobDialog extends React.Component {
             performancePreset: 'default',
             performanceErrors: {},
             submitError: null,
+            // Overwrite policy of each destination path (GET /api/copy-jobs/overwrite-policy/)
+            overwrite: {},
         };
     }
 
@@ -101,6 +103,20 @@ class NewCopyJobDialog extends React.Component {
                                             </div>
                                             <div className="col-1"></div>
                                         </div>
+                                        {this.state.overwrite[data['destination_paths'][i]] && (
+                                            <div className="row">
+                                                <div className="col-4 text-end">
+                                                    <b className='form-label'>Existing files</b>
+                                                </div>
+                                                <div className="col-7">
+                                                    <span className={'form-label copy-job-overwrite' + (
+                                                        this.state.overwrite[data['destination_paths'][i]].overwrite ? ' text-warning' : '')}>
+                                                        {this.state.overwrite[data['destination_paths'][i]].message}
+                                                    </span>
+                                                </div>
+                                                <div className="col-1"></div>
+                                            </div>
+                                        )}
 
                                         <hr className='mt-4' />
                                     </React.Fragment>
@@ -316,6 +332,22 @@ class NewCopyJobDialog extends React.Component {
     componentDidMount() {
         this.inputRef.current.focus()
         this.loadPerformance();
+        this.loadOverwritePolicy();
+    }
+
+    async loadOverwritePolicy() {
+        const {data} = this.props;
+        const dstCloudId = data.destination_cloud ? data.destination_cloud.id : 0;
+        for (const path of data.destination_paths || []) {
+            const action = await this.props.fetchOverwritePolicy(dstCloudId || 0, path);
+            if (this.unmounted) {
+                return;
+            }
+            const policy = action && !action.error ? action.payload : null;
+            if (policy && typeof policy.message === 'string') {
+                this.setState(state => ({overwrite: {...state.overwrite, [path]: policy}}));
+            }
+        }
     }
 
     componentWillUnmount() {
@@ -359,11 +391,12 @@ NewCopyJobDialog.defaultProps = {
     onClose: () => {},
     onSubmit: async (data) => {},
     fetchPerformance: async (dstCloudId) => null,
+    fetchOverwritePolicy: async (dstCloudId, path) => null,
 }
 
 import {connect} from 'react-redux';
 import {hideNewCopyJobDialog} from 'actions/dialogActions.jsx'
-import {createCopyJob, retrieveCopyJobPerformance} from 'actions/apiActions.jsx'
+import {createCopyJob, retrieveCopyJobOverwritePolicy, retrieveCopyJobPerformance} from 'actions/apiActions.jsx'
 import { getCurrentUser } from 'reducers/authReducer.jsx';
 
 const mapStateToProps = state => ({
@@ -381,6 +414,7 @@ const mapDispatchToProps = dispatch => ({
     onClose: () => dispatch(hideNewCopyJobDialog()),
     onSubmit: data => dispatch(createCopyJob(data)),
     fetchPerformance: dstCloudId => dispatch(retrieveCopyJobPerformance(dstCloudId)),
+    fetchOverwritePolicy: (dstCloudId, path) => dispatch(retrieveCopyJobOverwritePolicy(dstCloudId, path)),
 });
 
 export default connect(mapStateToProps, mapDispatchToProps)(NewCopyJobDialog);

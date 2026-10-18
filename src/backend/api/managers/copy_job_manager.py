@@ -10,7 +10,7 @@ from ..models import CopyJob
 from ..managers.auth_manager import token_required, get_logged_in_user
 from ..managers import cloud_connection_manager
 from ..utils import rclone_tuning
-from ..managers import job_routing, worker_manager, upload_manager, oauth_manager, space_manager
+from ..managers import job_routing, overwrite_policy, worker_manager, upload_manager, oauth_manager, space_manager
 from ..utils.email_utils import Email
 
 
@@ -81,6 +81,17 @@ def performance(dst_cloud_id=None):
 
 
 @token_required
+def describe_overwrite(dst_cloud_id=None, dst_resource_path=None):
+    """
+    Whether a copy to `dst_resource_path` of the user's connection `dst_cloud_id` would
+    overwrite existing files (New Copy Job dialog): only the decision and its reason,
+    never who wrote the destination before
+    """
+    dst_cloud = _owned_cloud(dst_cloud_id)
+    return overwrite_policy.describe(dst_cloud, dst_resource_path)
+
+
+@token_required
 def create(data):
     owner = get_logged_in_user(request)
 
@@ -89,6 +100,8 @@ def create(data):
     # 409 if the local destination would be too full afterwards (MOTUZ_MAX_FILL_PERCENT)
     space_note = space_manager.check_copy(owner, src_cloud, data.get('src_resource_path'), dst_cloud,
                                           data.get('dst_resource_path'), data.get('copy_links'))
+    # Before this job registers its destination: a first copy never overwrites
+    overwrite, _ = overwrite_policy.decide(dst_cloud, data.get('dst_resource_path'))
 
     copy_job = CopyJob(**{
         'description': data.get('description', None),
@@ -101,6 +114,7 @@ def create(data):
         'notification_email': data.get('notification_email', None),
         'performance': validate_performance(data.get('performance'), dst_cloud),
         'space_check': space_note,
+        'overwrite': overwrite,
 
         'progress_current': 0,
         'progress_total': 100,
@@ -109,6 +123,9 @@ def create(data):
     })
 
     db.session.add(copy_job)
+    db.session.flush()
+    # Written by Motuz from now on, also if the job fails or is stopped
+    overwrite_policy.register(dst_cloud, copy_job.dst_resource_path, 'copy', copy_job.id, owner)
     db.session.commit()
 
     task_id = copy_job.id

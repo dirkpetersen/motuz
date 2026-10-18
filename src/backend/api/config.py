@@ -1,7 +1,7 @@
 import datetime
 import os
 
-from .utils import document_view, ec2_config, image_view, rclone_tuning, secret_box, space_check
+from .utils import document_view, ec2_config, image_view, motuz_destinations, rclone_tuning, secret_box, space_check
 
 basedir = os.path.abspath(os.path.dirname(__file__))
 
@@ -54,6 +54,11 @@ VIEW_DOCUMENT_MAX_BYTES = document_view.max_bytes()
 # space limit", utils/space_check.py): an invalid value stops the app here
 MAX_FILL_PERCENT = space_check.max_fill_percent()
 
+# Copies overwrite existing files only within destinations Motuz wrote before, unless
+# MOTUZ_ALLOW_GENERAL_OVERWRITES is true (managers/overwrite_policy.py); a value other
+# than true/false stops the app here
+ALLOW_GENERAL_OVERWRITES = motuz_destinations.allow_general_overwrites()
+
 
 class Config:
     SECRET_KEY = MOTUZ_FLASK_SECRET_KEY
@@ -90,6 +95,9 @@ class Config:
     # Largest image the file viewer shows (utils/image_view.py)
     VIEW_IMAGE_MAX_BYTES = VIEW_IMAGE_MAX_BYTES
     VIEW_DOCUMENT_MAX_BYTES = VIEW_DOCUMENT_MAX_BYTES
+
+    # Overwrite policy (managers/overwrite_policy.py, README "Overwriting existing files")
+    ALLOW_GENERAL_OVERWRITES = ALLOW_GENERAL_OVERWRITES
 
     DATABASE_PARAMS = ''
     if MOTUZ_DATABASE_REQUIRE_SSL.lower() in ('true', 't'):
