@@ -30,7 +30,7 @@ from ..application import db
 from ..exceptions import *
 from ..models import CopyJob, UploadFile
 from ..managers.auth_manager import token_required, get_logged_in_user
-from ..managers import cloud_connection_manager
+from ..managers import cloud_connection_manager, space_manager
 from ..utils import disk_full, file_view, upload_pipes
 from ..utils.rclone_connection import RcloneConnection, RcloneException
 
@@ -74,6 +74,9 @@ def create(data):
         raise HTTP_400_BAD_REQUEST('mode must be one of: {}'.format(', '.join(MODES)))
     files = _checked_files(data.get('files'))
     skipped = _existing_files(dst_cloud, owner, folder, [path for path, _ in files]) if mode == 'skip' else set()
+    # 409 if the local folder would be too full afterwards (MOTUZ_MAX_FILL_PERCENT); files
+    # replaced in overwrite mode are counted in full
+    space_note = space_manager.check_upload(owner, dst_cloud, folder, sum(size for path, size in files if path not in skipped))
 
     tops = sorted({path.split('/')[0] for path, _ in files})
     name = tops[0] + ('/' if any('/' in path for path, _ in files) else '') if len(tops) == 1 \
@@ -86,6 +89,7 @@ def create(data):
         dst_resource_path=folder,
         copy_links=False,
         upload={'files': len(files), 'bytes': sum(size for _, size in files), 'mode': mode, 'name': name},
+        space_check=space_note,
         progress_current=0,
         progress_total=100,
         progress_state='PROGRESS',

@@ -45,6 +45,8 @@ job_dto = api.model('copy-job', {
     'pool_status': fields.String(readonly=True, example='running on c7gn.2xlarge'),
     # Set for an upload from the browser (managers/upload_manager.py)
     'upload': fields.Raw(readonly=True, example={'files': 3, 'bytes': 1048576, 'mode': 'skip', 'name': 'photos/'}),
+    # The free space check at create (managers/space_manager.py), else null
+    'space_check': fields.String(readonly=True, example='Free space checked: copying 1.2 GiB leaves its filesystem 45% full (limit 90%, 6.0 TiB of 10.0 TiB free before).'),
 })
 
 upload_dto = api.model('copy-job-upload', {

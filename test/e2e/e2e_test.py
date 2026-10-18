@@ -458,21 +458,54 @@ status, hc, _ = req('POST', '/api/copy-jobs/', A, {'description': 'after stop', 
 hc = wait_job('copy-jobs', hc['id'], A)
 check('worker still processes jobs after stop', hc['progress_state'] == 'SUCCESS', hc)
 
-# --- a full local destination fails the job at once (utils/disk_full.py): a 1 MiB tmpfs
-# owned by alice. Needs root with mount rights where the jobs run: the systemd install
-# (VM, privileged AL2027 container); the Docker stack's containers may not mount
+# --- the free space limit (utils/space_check.py, MOTUZ_MAX_FILL_PERCENT, default 90) and a
+# full local destination failing the job at once (utils/disk_full.py): an 8 MiB tmpfs owned
+# by alice. Needs root with mount rights where the jobs run: the systemd install (VM,
+# privileged AL2027 container); the Docker stack's containers may not mount. The limit is
+# checked where the job is created (the app), the full disk where it runs (celery).
 FULL = '/home/alice/full'
-mounted = sh('celery', f"mkdir -p {FULL} && mount -t tmpfs -o size=1m,mode=0755,uid=$(id -u alice),gid=$(id -g alice) "
+FILL_REFUSED = re.compile(r'^Copying 234\.4 MiB to /home/alice/full/many would fill its filesystem to \d+% \(limit 90%\): '
+                          r'[\d.]+ (B|KiB|MiB) of 8\.0 MiB free\. Free space or choose another destination\.$')
+mounted = sh('celery', f"mkdir -p {FULL} && mount -t tmpfs -o size=8m,mode=0755,uid=$(id -u alice),gid=$(id -g alice) "
                        f"motuz-e2e-full {FULL} && test \"$(stat -f -c %T {FULL})\" = tmpfs")
 if mounted.returncode != 0:
     sh('celery', f"rmdir {FULL}")
-    skip('a copy to a full local disk fails at once', 'cannot mount a tmpfs where the jobs run: ' + mounted.stderr.strip()[-200:])
-    skip('an upload to a full local disk fails at once', 'no tmpfs')
+    reason = 'cannot mount a tmpfs where the jobs run: ' + mounted.stderr.strip()[-200:]
+    for name in ('a copy that would fill the disk above 90% is refused', 'a copy that fits is accepted',
+                 'a copy to a full local disk fails at once', 'an upload that would fill the disk above 90% is refused',
+                 'an upload to a full local disk fails at once'):
+        skip(name, reason)
 else:
     try:
-        status, fj, _ = req('POST', '/api/copy-jobs/', A, {'description': 'full disk', 'src_resource_path': '/home/alice/many',
+        app_sees_tmpfs = sh('app', f'test "$(stat -f -c %T {FULL})" = tmpfs').returncode == 0
+        if not app_sees_tmpfs:
+            skip('a copy that would fill the disk above 90% is refused', 'the tmpfs is not mounted where the app runs')
+            skip('a copy that fits is accepted', 'the tmpfs is not mounted where the app runs')
+        else:
+            jobs_before = psql("select count(*) from copy_job")
+            status, body, _ = req('POST', '/api/copy-jobs/', A, {'description': 'too big', 'src_resource_path': '/home/alice/many',
+                                                                 'dst_resource_path': FULL + '/many', 'copy_links': True})
+            check('a copy that would fill the disk above 90% is refused (409) with the sizes and the limit',
+                  status == 409 and FILL_REFUSED.match(msg(body)) is not None, (status, body))
+            check('no job is created for a refused copy', psql("select count(*) from copy_job") == jobs_before)
+            status, small, _ = req('POST', '/api/copy-jobs/', A, {'description': 'fits', 'src_resource_path': '/home/alice/src',
+                                                                  'dst_resource_path': FULL + '/small', 'copy_links': True})
+            check('a copy that fits is accepted, with the check as its note', status == 201
+                  and (small.get('space_check') or '').startswith('Free space checked: copying '), (status, small))
+            if status == 201:
+                small = wait_job('copy-jobs', small['id'], A)
+                check('the copy that fits SUCCESS', small['progress_state'] == 'SUCCESS', small['progress_state'])
+            sh('app', f"sudo -u alice rm -rf {FULL}/small")
+
+        # The limit passes (4 MiB already at the destination count as copied: 4 + 3 of 8 MiB),
+        # the 7 MiB do not fit next to the 4 MiB: the disk gets full while the job runs
+        sh('app', "sudo -u alice python3 -c \"import os; os.makedirs('/home/alice/fullsrc', exist_ok=True); "
+                  "[open(f'/home/alice/fullsrc/{i}', 'w').write('x' * 4096) for i in range(1792)]\"")
+        sh('app', f"sudo -u alice sh -c 'mkdir -p {FULL}/many && head -c 4194304 /dev/zero > {FULL}/many/zz-filler'")
+        status, fj, _ = req('POST', '/api/copy-jobs/', A, {'description': 'full disk', 'src_resource_path': '/home/alice/fullsrc',
                                                           'dst_resource_path': FULL + '/many', 'copy_links': True})
-        fj = wait_job('copy-jobs', fj['id'], A, timeout=120)
+        check('a copy within the limit is accepted', status == 201, (status, fj))
+        fj = wait_job('copy-jobs', fj['id'], A, timeout=120) if status == 201 else {'progress_state': None}
         error = fj.get('progress_error_text') or ''
         check('a copy to a full local disk FAILED', fj['progress_state'] == 'FAILED', fj['progress_state'])
         check("the job says the destination is full, how many files were copied, and rclone's line",
@@ -480,20 +513,30 @@ else:
                        r'\d+ files? (was|were) copied before\. Free space or choose another destination\.\nrclone: .*'
                        r'(no space left on device|file too big for remaining disk space)\n', error) is not None, error[:600])
         check('rclone stopped at the first full write, not after failing every file',
-              len(re.findall(r'no space left on device|remaining disk space', error)) < 200 and fj['progress_execution_time'] < 60,
-              (len(re.findall(r'no space left on device|remaining disk space', error)), fj['progress_execution_time']))
+              len(re.findall(r'no space left on device|remaining disk space', error)) < 200 and fj.get('progress_execution_time', 999) < 60,
+              (len(re.findall(r'no space left on device|remaining disk space', error)), fj.get('progress_execution_time')))
         left = sh('celery', RCLONE_PIDS).stdout.strip()
         check('no rclone left after the full disk', left == '', left)
+        sh('app', "sudo -u alice rm -rf /home/alice/fullsrc")
 
-        if sh('app', f'test "$(stat -f -c %T {FULL})" = tmpfs').returncode != 0:
+        if not app_sees_tmpfs:
+            skip('an upload that would fill the disk above 90% is refused', 'the tmpfs is not mounted where the app runs')
             skip('an upload to a full local disk fails at once', 'the tmpfs is not mounted where the app runs')
         else:
             sh('app', f"sudo -u alice rm -rf {FULL}/many")
+            status, body, _ = req('POST', '/api/copy-jobs/uploads/', A, {
+                'dst_cloud_id': 0, 'dst_resource_path': FULL, 'mode': 'overwrite',
+                'files': [{'path': 'huge1.bin', 'size': 8 << 20}, {'path': 'huge2.bin', 'size': 8 << 20}]})
+            check('an upload that would fill the disk above 90% is refused (409)', status == 409 and msg(body).startswith(
+                'Uploading 16.0 MiB to /home/alice/full would fill its filesystem to '), (status, body))
+            # Accepted with room to spare (4 of 8 MiB), then something else fills the disk
             size = 2 * 1024 * 1024
             status, created, _ = req('POST', '/api/copy-jobs/uploads/', A, {
                 'dst_cloud_id': 0, 'dst_resource_path': FULL, 'mode': 'overwrite',
                 'files': [{'path': 'big1.bin', 'size': size}, {'path': 'big2.bin', 'size': size}]})
+            check('an upload within the limit is accepted', status == 201, (status, created))
             uj = created['job']['id'] if status == 201 else None
+            sh('app', f"sudo -u alice sh -c 'head -c 16777216 /dev/zero > {FULL}/filler'")
             status, body = put_chunk(A, uj, 0, 0, (b'full-disk-needle' * (size // 16))[:size])
             check('an upload to a full local disk: the file fails and the job with it', status == 200
                   and body['file_state'] == 'failed' and body['job_state'] == 'FAILED', (status, body))
@@ -504,7 +547,7 @@ else:
                 'The destination filesystem is full (no space left on device) at /home/alice/full: 0 files were uploaded before.'),
                 (status, job.get('progress_error'), job.get('progress_error_text')))
             listing = sh('app', f"ls -A {FULL}").stdout.strip()
-            check('no temporary upload file left', listing == '', listing)
+            check('no temporary upload file left', listing == 'filler', listing)
             check('upload contents never logged (full disk)', 'full-disk-needle' not in service_logs('app'), 'contents in the app log')
     finally:
         sh('celery', f"umount {FULL} || umount -l {FULL}; rmdir {FULL}")

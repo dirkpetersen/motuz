@@ -124,6 +124,18 @@ class EditCopyJobDialog extends React.Component {
                                 <div className="col-1"></div>
                             </div>
 
+                            {data.space_check && (
+                                <div className="row mb-3">
+                                    <div className="col-4 text-end">
+                                        <b>Free space</b>
+                                    </div>
+                                    <div className="col-7 text-start job-space-check">
+                                        {data.space_check}
+                                    </div>
+                                    <div className="col-1"></div>
+                                </div>
+                            )}
+
                             {this.outputErrorText(data)}
 
                             {this.outputText(data)}

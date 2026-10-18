@@ -7,5 +7,5 @@ in, and the worker refuses to claim jobs if they differ. Bump VERSION with every
 release that changes the job code (rclone command lines, output parsing) and
 WORKER_PROTOCOL whenever the worker API (/api/workers/...) or the job ticket changes.
 """
-VERSION = '0.5.6'
-WORKER_PROTOCOL = 3
+VERSION = '0.5.7'
+WORKER_PROTOCOL = 4

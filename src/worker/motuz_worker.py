@@ -55,7 +55,7 @@ import urllib.request
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.environ.get('MOTUZ_BACKEND_DIR') or os.path.join(HERE, '..', 'backend'))
 
-from api.utils import job_runner  # noqa: E402  (Flask-free, see api/__init__.py)
+from api.utils import job_runner, space_check  # noqa: E402  (Flask-free, see api/__init__.py)
 from api.utils.abstract_connection import RcloneException  # noqa: E402
 from api.utils.rclone_connection import RCLONE, RcloneConnection, checked_job_env  # noqa: E402
 from api.version import VERSION, WORKER_PROTOCOL  # noqa: E402
@@ -412,9 +412,34 @@ class JobRun:
         except (ApiError, Shutdown) as e:
             log.error('%s: could not report the result: %s', self.name, e)
 
+    def check_space(self):
+        """
+        The free space limit of the central node (the ticket's max_fill_percent) for a
+        local destination, which is on this worker: raises space_check.NotEnoughSpace,
+        and the job fails with its message before rclone starts
+        """
+        job, options = self.job, self.job.get('options') or {}
+        if not job['dst'].get('local'):
+            return
+        timeout = options.get('space_check_timeout')
+        note = space_check.check_copy(
+            self.connection, self.user,
+            src_credentials=side_credentials(job['src']),
+            src_path=job['src']['path'],
+            src_local=bool(job['src'].get('local')),
+            dst_path=job['dst']['path'],
+            copy_links=bool(options.get('copy_links')),
+            max_percent=space_check.checked_percent(options.get('max_fill_percent')),
+            timeout=timeout if isinstance(timeout, int) and 0 < timeout <= 3600 else 60,
+            extra_env=self.config.rclone_env,
+        )
+        if note:
+            log.info('%s: %s', self.name, note)
+
     def copy(self):
         job, options = self.job, self.job.get('options') or {}
         run_id = job['id']
+        self.check_space()
         self.connection.copy_with_credentials(
             {**side_credentials(job['src']), **side_credentials(job['dst'])},
             src_resource_path=job['src']['path'],
