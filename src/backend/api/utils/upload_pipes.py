@@ -177,7 +177,14 @@ def _abort(pipe):
     # exits. With a signal, stdin stays open until rcat has exited: end of file first
     # would let rcat complete the upload and then remove it, with the file it replaced.
     if pipe.by_signal:
-        _kill(pipe, signal.SIGTERM) # also sudo, which relays it to rclone
+        # To sudo only, which relays it to rclone once: rclone stops handling signals
+        # after the first, so a second one (e.g. to the whole group) would kill it in
+        # the middle of its cleanup (azureblob: after committing an empty blob, before
+        # removing it)
+        try:
+            os.kill(pipe.process.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
     else:
         _close(pipe)
     try:
