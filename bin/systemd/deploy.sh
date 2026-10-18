@@ -6,8 +6,9 @@
 #     sudo -iu motuz ~/motuz/bin/systemd/deploy.sh [--pull]
 #   --pull   git pull --ff-only first
 #
-# Steps: the Python venv (~/motuz/venv: Python and requirements.txt by uv), the frontend
-# (npm ci, npm run build), ~/.config/motuz/{motuz.env,secrets.env} on the first deploy
+# Steps: the pinned rclone, Traefik and uv in /var/lib/motuz-bin (bin/systemd/tools.sh, as
+# this account: updating them needs no root), the Python venv (~/motuz/venv: Python and
+# requirements.txt by uv), the frontend (npm ci, npm run build), ~/.config/motuz/{motuz.env,secrets.env} on the first deploy
 # (never overwritten; secrets added by an update are generated), a self-signed
 # certificate if there is none, Redis' and Traefik's generated configuration, the
 # database (the private cluster ~/data/pg with the role and database, or the distribution's
@@ -34,7 +35,8 @@ done
 motuz_paths "$HOME"
 [ "$REPO_DIR" = "$CHECKOUT" ] || die "the checkout must be $CHECKOUT (the units use that path), not $REPO_DIR"
 load_distro
-[ -x /usr/local/bin/uv ] || die "run bin/systemd/install.sh as root first"
+# Made by install.sh together with the sudoers rule that names $TOOLS_DIR/rclone
+[ -d "$TOOLS_DIR" ] || die "no $TOOLS_DIR: run bin/systemd/install.sh (again) as root first"
 # sudo -iu does not start a login session: find this account's systemd user manager
 export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 export DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-unix:path=$XDG_RUNTIME_DIR/bus}"
@@ -47,12 +49,10 @@ if [ "$PULL" = 1 ]; then
     git -C "$CHECKOUT" pull --ff-only
 fi
 
+# The pinned rclone, Traefik and uv, the account's own (no root needed for an update)
+"$CHECKOUT/bin/systemd/tools.sh"
+
 # Things install.sh (root) installed from an older checkout
-if [ "$(/usr/local/bin/rclone version 2>/dev/null | head -1)" != "rclone v${RCLONE_VERSION}" ]; then
-    warn "/usr/local/bin/rclone is not v${RCLONE_VERSION}: run bin/systemd/install.sh again as root"
-fi
-/usr/local/bin/traefik version 2>/dev/null | grep -qE "^Version:[[:space:]]+${TRAEFIK_VERSION}$" \
-    || warn "/usr/local/bin/traefik is not ${TRAEFIK_VERSION}: run bin/systemd/install.sh again as root"
 cmp -s "$PAM_TEMPLATE" /etc/pam.d/motuz \
     || warn "/etc/pam.d/motuz differs from the checkout: run bin/systemd/install.sh again as root"
 if [ -f /usr/local/lib/motuz-auth/motuz_auth_helper.py ]; then
@@ -77,15 +77,15 @@ if [ -n "${DISTRO_PYTHON:-}" ]; then
 else
     export UV_PYTHON_PREFERENCE=only-managed
     PYTHON="$PYTHON_VERSION"
-    /usr/local/bin/uv python install --quiet "$PYTHON_VERSION"
+    "$TOOLS_DIR/uv" python install --quiet "$PYTHON_VERSION"
 fi
 log "Python ${PYTHON_VERSION} venv and requirements.txt (uv ${UV_VERSION})"
 if [ ! -x "$VENV/bin/python" ] || ! "$VENV/bin/python" -c "import sys; sys.exit(sys.version_info[:2] != tuple(map(int, '$PYTHON_VERSION'.split('.'))))" 2>/dev/null; then
     rm -rf "$VENV"
-    /usr/local/bin/uv venv --quiet --python "$PYTHON" "$VENV"
+    "$TOOLS_DIR/uv" venv --quiet --python "$PYTHON" "$VENV"
 fi
 # uWSGI is built from source here, as in the docker image (build-essential)
-/usr/local/bin/uv pip install --quiet --python "$VENV/bin/python" -r "$CHECKOUT/requirements.txt"
+"$TOOLS_DIR/uv" pip install --quiet --python "$VENV/bin/python" -r "$CHECKOUT/requirements.txt"
 
 # ---------------------------------------------------------------- frontend
 log "frontend (npm ci, npm run build)"

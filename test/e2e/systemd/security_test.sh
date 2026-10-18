@@ -32,7 +32,7 @@ check "the Motuz services run as $ACCOUNT" bash -c "
     done
     [ $DB_MODE != private ] || ps -eo user=,args= | grep -v grep | grep -qE \"^$ACCOUNT .*postgres\" || exit 1
     [ $BROKER_MODE != private ] || ps -eo user=,args= | grep -v grep | grep -qE \"^$ACCOUNT .*(redis|valkey)-server\" || exit 1
-    ! ps -eo user=,args= | grep -v grep | grep -E '^root ' | grep -qE \"(/usr/local/bin/traefik|(redis|valkey)-server|postgres -D|uwsgi|celery)\""
+    ! ps -eo user=,args= | grep -v grep | grep -E '^root ' | grep -qE \"(/var/lib/motuz-bin/traefik|(redis|valkey)-server|postgres -D|uwsgi|celery)\""
 check "the login helper only runs as root on demand (socket activated, no daemon)" \
     bash -c "systemctl is-active --quiet motuz-auth.socket && ! ps -eo args= | grep -q '^/usr/bin/python3 -I -S /usr/local/lib/motuz-auth/'"
 
@@ -40,7 +40,9 @@ check "the login helper only runs as root on demand (socket activated, no daemon
 RULE=$(sudo -l -U "$ACCOUNT" 2>/dev/null | sed -n '/may run the following commands/,$p' | tail -n +2 | sed 's/^ *//')
 echo "    sudo -l -U $ACCOUNT: $RULE"
 check "sudo -l -U $ACCOUNT shows exactly the one rule" \
-    bash -c "[ \"\$(printf '%s\n' \"$RULE\" | grep -c .)\" = 1 ] && printf '%s' \"$RULE\" | grep -qE '^\(ALL, !root, !postgres, !redis, !valkey\) (SETENV: NOPASSWD:|NOPASSWD: ?SETENV:) /usr/local/bin/rclone, /usr/bin/ls, /usr/bin/mkdir, /usr/bin/env$'"
+    bash -c "[ \"\$(printf '%s\n' \"$RULE\" | grep -c .)\" = 1 ] && printf '%s' \"$RULE\" | grep -qE '^\(ALL, !root, !postgres, !redis, !valkey\) (SETENV: NOPASSWD:|NOPASSWD: ?SETENV:) /var/lib/motuz-bin/rclone, /usr/bin/ls, /usr/bin/mkdir, /usr/bin/env$'"
+check "rclone, Traefik and uv are the account's (/var/lib/motuz-bin, root's directory entry), runnable by everyone" \
+    bash -c "[ \"\$(stat -c %U:%a /var/lib/motuz-bin)\" = $ACCOUNT:755 ] && for f in rclone traefik uv; do [ \"\$(stat -c %U:%a /var/lib/motuz-bin/\$f)\" = $ACCOUNT:755 ] || exit 1; done && [ \"\$(stat -c %U /var/lib)\" = root ]"
 check "$ACCOUNT cannot sudo -u postgres, redis or valkey (the superusers of the system services)" \
     bash -c "! runuser -u $ACCOUNT -- sudo -n -u postgres /usr/bin/env true && ! runuser -u $ACCOUNT -- sudo -n -u redis /usr/bin/env true && ! runuser -u $ACCOUNT -- sudo -n -u valkey /usr/bin/env true"
 check "$ACCOUNT cannot sudo -u root" bash -c "! runuser -u $ACCOUNT -- sudo -n -u root /usr/bin/ls /root"

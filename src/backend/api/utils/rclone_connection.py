@@ -18,8 +18,20 @@ from .copy_job_queue import CopyJobQueue
 from .hashsum_job_queue import HashsumJobQueue
 
 
-# The sudoers rule of a non-root install (bin/systemd/install.sh) allows exactly this path
-RCLONE = '/usr/local/bin/rclone'
+# The rclone that runs as the users: root's copy in the Docker image and on the EC2
+# workers, the account's own copy in the systemd install, whose sudoers rule
+# (bin/systemd/install.sh) allows exactly that path. The units set MOTUZ_RCLONE.
+RCLONE_PATHS = ('/usr/local/bin/rclone', '/var/lib/motuz-bin/rclone')
+
+
+def rclone_path(environ=None):
+    path = (os.environ if environ is None else environ).get('MOTUZ_RCLONE') or RCLONE_PATHS[0]
+    if path not in RCLONE_PATHS:
+        raise RcloneException('MOTUZ_RCLONE={!r} must be one of {}'.format(path, ', '.join(RCLONE_PATHS)))
+    return path
+
+
+RCLONE = rclone_path()
 
 
 class RcloneConnection(AbstractConnection):

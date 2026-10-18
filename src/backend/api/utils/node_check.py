@@ -25,7 +25,8 @@ import subprocess
 import sys
 import threading
 
-RCLONE = '/usr/local/bin/rclone'
+# rclone_connection.rclone_path (this file also runs on its own, without the package)
+RCLONE = os.environ.get('MOTUZ_RCLONE') or '/usr/local/bin/rclone'
 CHECK_TIMEOUT = 15 # seconds; a hung network mount must not hang the check
 
 

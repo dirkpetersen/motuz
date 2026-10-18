@@ -15,7 +15,8 @@ EnvironmentFile=%h/.config/motuz/motuz.env
 EnvironmentFile=%h/.config/motuz/traefik.env
 # cert.crt and cert.key when MOTUZ_ACME_DOMAIN is empty (motuz.yml)
 Environment=MOTUZ_TRAEFIK_CERTS_DIR=%h/data/certs
-ExecStart=/usr/local/bin/traefik $TRAEFIK_ARGS
+# The account's pinned Traefik (deploy.sh)
+ExecStart=/var/lib/motuz-bin/traefik $TRAEFIK_ARGS
 Restart=on-failure
 RestartSec=5
 NoNewPrivileges=yes

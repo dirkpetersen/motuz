@@ -57,13 +57,12 @@ sys.path.insert(0, os.environ.get('MOTUZ_BACKEND_DIR') or os.path.join(HERE, '..
 
 from api.utils import job_runner  # noqa: E402  (Flask-free, see api/__init__.py)
 from api.utils.abstract_connection import RcloneException  # noqa: E402
-from api.utils.rclone_connection import RcloneConnection, checked_job_env  # noqa: E402
+from api.utils.rclone_connection import RCLONE, RcloneConnection, checked_job_env  # noqa: E402
 from api.version import VERSION, WORKER_PROTOCOL  # noqa: E402
 
 EXIT_ERROR = 1
 EXIT_NO_JOB = 3
 EXIT_CONFIG = 78
-RCLONE = '/usr/local/bin/rclone' # RcloneConnection runs this path
 CLAIM_WAIT = 25
 RUN_AS_RE = re.compile(r'^[a-z_][a-z0-9_-]{0,31}$')
 PROXY_VARIABLES = ('HTTPS_PROXY', 'https_proxy', 'HTTP_PROXY', 'http_proxy', 'NO_PROXY', 'no_proxy')

@@ -21,8 +21,8 @@ reviewed:
 
 | | Who | How often | What |
 | --- | --- | --- | --- |
-| 1 | **root** | once (again only when `deploy.sh` says so) | `sudo bin/systemd/install.sh`: packages, pinned binaries, the account, its sudoers rule, PAM, PostgreSQL and Redis |
-| 2 | **the account `motuz`** | on the first deploy and on every update | `~/motuz/bin/systemd/deploy.sh`: Python environment, frontend, settings, units, database, start |
+| 1 | **root** | once (again only when `deploy.sh` says so) | `sudo bin/systemd/install.sh`: packages, the account and its directory `/var/lib/motuz-bin`, its sudoers rule, PAM, PostgreSQL and Redis |
+| 2 | **the account `motuz`** | on the first deploy and on every update | `~/motuz/bin/systemd/deploy.sh`: the pinned rclone, Traefik and uv, Python environment, frontend, settings, units, database, start |
 
 Before you start, the two things people most often get stuck on:
 
@@ -88,8 +88,10 @@ install.sh](#root-steps-without-installsh)):
 
 - installs packages: PostgreSQL 18, Redis (Ubuntu) or Valkey 9 (Amazon Linux), Node.js and npm,
   build tools, `git`, `curl`, `openssl`, `python3`, `sudo`;
-- installs the pinned **rclone, Traefik and uv** into `/usr/local/bin` (SHA256 checked) and the
-  HEIC/HEIF converter (`pi-heif` and Pillow) into `/opt/motuz-heic`;
+- installs the HEIC/HEIF converter (`pi-heif` and Pillow) into `/opt/motuz-heic`;
+- makes `/var/lib/motuz-bin`, owned by the account: the account itself puts the pinned **rclone,
+  Traefik and uv** there (SHA256 checked, `bin/systemd/tools.sh`, run by `deploy.sh`), so new
+  versions need no root, and root never runs them;
 - creates the account **`motuz`** (system account, locked password, home `/var/lib/motuz`) and
   turns on `loginctl enable-linger`, so its services start at boot;
 - writes the account's only privilege, the sudoers rule `/etc/sudoers.d/motuz` (run `rclone`,
@@ -390,26 +392,10 @@ systemctl disable --now valkey.service valkey-sentinel.service; systemctl mask v
 [ "$(node -p 'process.versions.node.split(".")[0]')" = 24 ] || alternatives --set node /usr/bin/node-24
 ```
 
-**2. Pinned rclone, Traefik and uv** (SHA256 checked; arm64 instead of amd64 on ARM):
-
-```bash
-. deployment/systemd/versions.env
-RCLONE_RELEASES=$(sed -n 's/^ARG RCLONE_RELEASES=//p' deployment/docker/app/Dockerfile)
-RCLONE_VERSION=$(sed -n 's/^ARG RCLONE_VERSION=//p' deployment/docker/app/Dockerfile)
-RCLONE_SHA256_AMD64=$(sed -n 's/^ARG RCLONE_SHA256_AMD64=//p' deployment/docker/app/Dockerfile)
-ARCH=amd64; UVARCH=x86_64      # arm64 / aarch64 on ARM (then RCLONE_SHA256_ARM64, TRAEFIK_SHA256_ARM64, UV_SHA256_ARM64)
-T=$(mktemp -d); cd "$T"
-curl -fsSLO $RCLONE_RELEASES/v$RCLONE_VERSION/rclone-v$RCLONE_VERSION-linux-$ARCH.zip
-echo "$RCLONE_SHA256_AMD64  rclone-v$RCLONE_VERSION-linux-$ARCH.zip" | sha256sum -c -
-unzip -q rclone-v$RCLONE_VERSION-linux-$ARCH.zip && install -m 755 rclone-v$RCLONE_VERSION-linux-$ARCH/rclone /usr/local/bin/rclone
-curl -fsSLO https://github.com/traefik/traefik/releases/download/v$TRAEFIK_VERSION/traefik_v${TRAEFIK_VERSION}_linux_$ARCH.tar.gz
-echo "$TRAEFIK_SHA256_AMD64  traefik_v${TRAEFIK_VERSION}_linux_$ARCH.tar.gz" | sha256sum -c -
-tar -xzf traefik_v${TRAEFIK_VERSION}_linux_$ARCH.tar.gz traefik && install -m 755 traefik /usr/local/bin/traefik
-curl -fsSLO https://github.com/astral-sh/uv/releases/download/$UV_VERSION/uv-$UVARCH-unknown-linux-gnu.tar.gz
-echo "$UV_SHA256_AMD64  uv-$UVARCH-unknown-linux-gnu.tar.gz" | sha256sum -c -
-tar -xzf uv-$UVARCH-unknown-linux-gnu.tar.gz && install -m 755 uv-$UVARCH-unknown-linux-gnu/uv /usr/local/bin/uv
-cd /root/motuz-install
-```
+**2. Pinned rclone, Traefik and uv**: nothing as root. The account downloads them into
+`/var/lib/motuz-bin` (`bin/systemd/tools.sh`, SHA256 checked, run by `deploy.sh`); root only
+makes that directory (step 3). The HEIC/HEIF converter in `/opt/motuz-heic` is optional
+(`install.sh` installs it with a uv of its own, downloaded for that step).
 
 **3. The account**, linger and its systemd user manager:
 
@@ -417,6 +403,7 @@ cd /root/motuz-install
 useradd --system --user-group --create-home --home-dir /var/lib/motuz --shell /bin/bash \
   --comment "Motuz service account" motuz        # locked password; a uid below UID_MIN
 chmod 750 /var/lib/motuz
+install -d -m 755 -o motuz -g motuz /var/lib/motuz-bin   # the account's rclone, Traefik, uv
 loginctl enable-linger motuz
 systemctl start user@$(id -u motuz).service
 ```
@@ -426,7 +413,7 @@ systemctl start user@$(id -u motuz).service
 ```bash
 cat > /tmp/motuz.sudoers <<'EOF'
 # Motuz (bin/systemd/install.sh): file and rclone operations as the logged-in user
-motuz ALL=(ALL, !root, !postgres, !redis, !valkey) NOPASSWD:SETENV: /usr/local/bin/rclone, /usr/bin/ls, /usr/bin/mkdir, /usr/bin/env
+motuz ALL=(ALL, !root, !postgres, !redis, !valkey) NOPASSWD:SETENV: /var/lib/motuz-bin/rclone, /usr/bin/ls, /usr/bin/mkdir, /usr/bin/env
 EOF
 # the classic sudo (Amazon Linux; not Ubuntu's sudo-rs, `sudo -V | head -1` says "Sudo version" for it) would log
 # rclone's credentials with every allowed command:
@@ -549,9 +536,8 @@ chown root:motuz /etc/motuz/handoff-motuz.env
 modules:
 
 ```bash
-restorecon -F /usr/local/bin/rclone /usr/local/bin/traefik /usr/local/bin/uv /etc/sudoers.d/motuz \
-  /etc/sysctl.d/60-motuz.conf /etc/pam.d/motuz
-restorecon -RF /var/lib/motuz-aws-config /var/lib/motuz
+restorecon -F /etc/sudoers.d/motuz /etc/sysctl.d/60-motuz.conf /etc/pam.d/motuz
+restorecon -RF /var/lib/motuz-aws-config /var/lib/motuz-bin /var/lib/motuz
 # with the login helper: restorecon -F /etc/systemd/system/motuz-auth.socket /etc/systemd/system/motuz-auth@.service; restorecon -RF /usr/local/lib/motuz-auth
 ```
 
@@ -561,8 +547,9 @@ Amazon Linux: the security group, or `firewall-cmd --permanent --add-service=htt
 Then the [steps as the `motuz` account](#steps-as-the-motuz-account).
 
 **What root is needed for later.** Updates of Motuz itself (`deploy.sh --pull`) need no
-root. Run `install.sh` (or the steps above) again when `deploy.sh` prints "run
-bin/systemd/install.sh again as root": it does when the pinned rclone or Traefik, `/etc/pam.d/motuz`
+root, also when they pin a new rclone, Traefik or uv (the account's own, in `/var/lib/motuz-bin`).
+Run `install.sh` (or the steps above) again when `deploy.sh` says so: it does when
+`/var/lib/motuz-bin` is missing (installs from before it), `/etc/pam.d/motuz`
 or the login helper in the checkout differ from what is installed, or a system service was
 prepared that the account has not picked up. Root is also needed for the firewall and DNS,
 joining a directory (`realm join`), mounting shared filesystems, and OS updates (`apt`/`dnf`).
@@ -821,7 +808,7 @@ checks the permissions (in Docker, Motuz runs as root for this). Without Docker,
 account `motuz` gets exactly one rule, `/etc/sudoers.d/motuz`, checked with `visudo -c`:
 
 ```
-motuz ALL=(ALL, !root, !postgres, !redis, !valkey) NOPASSWD:SETENV: /usr/local/bin/rclone, /usr/bin/ls, /usr/bin/mkdir, /usr/bin/env
+motuz ALL=(ALL, !root, !postgres, !redis, !valkey) NOPASSWD:SETENV: /var/lib/motuz-bin/rclone, /usr/bin/ls, /usr/bin/mkdir, /usr/bin/env
 ```
 
 - `rclone` copies, lists and reads cloud storage; `ls` and `mkdir` browse the local
@@ -840,6 +827,9 @@ motuz ALL=(ALL, !root, !postgres, !redis, !valkey) NOPASSWD:SETENV: /usr/local/b
 - `install.sh --sudo-group=GROUP` allows only the members of a group
   (`(%GROUP, !root, !postgres, !redis, !valkey)`).
 - Motuz refuses logins as root and as the account it runs as.
+- `/var/lib/motuz-bin/rclone` is the account's own file (it updates it without root). That
+  adds nothing to the rule: through `env` the account may already run any program as the
+  users, and rclone can run commands itself (`--password-command`). Root never runs it.
 
 This rule lets `motuz` act as any other user, as the root of the Docker install does, so
 treat the account like root: no password (locked), no other use, its home only readable
@@ -1081,7 +1071,7 @@ job, 78 configuration error).
 
 `--run-as=NAME` makes a cloud-to-cloud worker like the [temporary EC2
 workers](#temporary-ec2-workers): rclone runs as the system account NAME (created, no
-shell) instead of the jobs' owners, the sudoers rule allows only `/usr/local/bin/rclone`
+shell) instead of the jobs' owners, the sudoers rule allows only `/var/lib/motuz-bin/rclone`
 as NAME, and `worker.env` gets `MOTUZ_WORKER_RUN_AS` (local jobs and credentials from a
 home directory are refused). A prebuilt AMI for those workers: `install.sh --worker-only
 --run-as=motuzjob` from a checkout in `/opt/motuz` at the server's release, plus
@@ -1652,7 +1642,6 @@ The same by hand (Ubuntu):
 
 ```bash
 sudo apt-get install -y python3 sudo unzip curl
-# rclone: the version pinned in deployment/docker/app/Dockerfile, at /usr/local/bin/rclone
 sudo git clone https://github.com/dirkpetersen/motuz /opt/motuz   # check out the server's release
 
 # An unprivileged account that may run rclone, ls, mkdir and env as any user except root
@@ -1661,7 +1650,10 @@ sudo git clone https://github.com/dirkpetersen/motuz /opt/motuz   # check out th
 # On Ubuntu 26.04, `sudo bin/systemd/install.sh --worker-only` does this and the rclone
 # download (README, "Install (default: without Docker)").
 sudo useradd --system --create-home --home-dir /var/lib/motuz --shell /usr/sbin/nologin motuz
-echo 'motuz ALL=(ALL, !root, !postgres, !redis, !valkey) NOPASSWD:SETENV: /usr/local/bin/rclone, /usr/bin/ls, /usr/bin/mkdir, /usr/bin/env' \
+# rclone: the version pinned in deployment/docker/app/Dockerfile, downloaded by the account
+sudo install -d -m 755 -o motuz -g motuz /var/lib/motuz-bin
+sudo -u motuz /opt/motuz/bin/systemd/tools.sh --rclone-only     # again as motuz after updates
+echo 'motuz ALL=(ALL, !root, !postgres, !redis, !valkey) NOPASSWD:SETENV: /var/lib/motuz-bin/rclone, /usr/bin/ls, /usr/bin/mkdir, /usr/bin/env' \
     | sudo tee /etc/sudoers.d/motuz-worker
 sudo chmod 440 /etc/sudoers.d/motuz-worker
 sudo visudo -c

@@ -41,8 +41,8 @@ distro_install_packages() {
     # nodejs24 is Node.js 24 (node/npm via alternatives); python3 (3.14) runs the scripts,
     # the login helper and the venv (DISTRO_PYTHON). hostname and diffutils (cmp) are
     # used by deploy.sh, policycoreutils (restorecon) by install.sh. The distribution's
-    # rclone package is never installed: install.sh puts the pinned rclone into
-    # /usr/local/bin.
+    # rclone package is never installed: the account puts the pinned rclone into
+    # /var/lib/motuz-bin (bin/systemd/tools.sh).
     local pkgs=(postgresql18-server postgresql18 valkey nodejs24 nodejs24-npm
         gcc make git tar gzip unzip openssl python3 python3-devel sudo iproute procps-ng shadow-utils
         util-linux pam policycoreutils hostname diffutils findutils gawk sed ca-certificates)

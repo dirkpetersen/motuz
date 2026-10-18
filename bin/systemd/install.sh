@@ -50,14 +50,18 @@
 #   --run-as=NAME       worker: rclone runs as this unprivileged system account (created,
 #                       no shell) instead of the jobs' owners, i.e. only cloud-to-cloud jobs,
 #                       like the temporary EC2 workers (MOTUZ_WORKER_RUN_AS); the sudoers
-#                       rule then allows only /usr/local/bin/rclone as NAME
+#                       rule then allows only /var/lib/motuz-bin/rclone as NAME
 #
 # What it does:
 #   - packages (bin/systemd/distro/<ID>.sh): PostgreSQL 18, Redis or Valkey (their own
 #     services are used or masked, see the options), Node.js/npm, build tools, git, curl,
 #     openssl (--worker-only: python3, sudo, curl, unzip)
-#   - pinned rclone, Traefik and uv in /usr/local/bin, SHA256 checked (--worker-only: rclone)
 #   - the account, `loginctl enable-linger`, its sudoers rule (checked with visudo -c)
+#   - /var/lib/motuz-bin, owned by the account: the account itself puts the pinned rclone,
+#     Traefik and uv there (bin/systemd/tools.sh, run by deploy.sh; with --worker-only
+#     rclone, run by this script as the account), so updating them needs no root; the
+#     sudoers rule names /var/lib/motuz-bin/rclone. Root runs none of them (the HEIC
+#     converter below is installed with a uv of its own, downloaded for that step only).
 #   - sysctl: net.ipv4.ip_unprivileged_port_start=80 (Traefik is a user service on
 #     :80/:443), vm.overcommit_memory=1 (Redis) (not with --worker-only)
 #   - network tuning for the data mover, also with --worker-only (/etc/sysctl.d/61-motuz-network.conf,
@@ -153,36 +157,6 @@ else
     distro_install_packages
 fi
 
-# ---------------------------------------------------------------- pinned binaries
-fetch_checked() { # url sha256 file
-    curl -fsSL --retry 3 -o "$3" "$1" || die "download failed: $1"
-    echo "$2  $3" | sha256sum -c --quiet - || die "SHA256 mismatch: $1"
-}
-
-if [ "$(/usr/local/bin/rclone version 2>/dev/null | head -1)" != "rclone v${RCLONE_VERSION}" ]; then
-    log "rclone ${RCLONE_VERSION}"
-    sha="RCLONE_SHA256_${ARCH^^}"
-    name="rclone-v${RCLONE_VERSION}-linux-${ARCH}"
-    fetch_checked "${RCLONE_RELEASES}/v${RCLONE_VERSION}/${name}.zip" "${!sha}" "$TMP/rclone.zip"
-    unzip -q "$TMP/rclone.zip" -d "$TMP"
-    install -m 755 -o root -g root "$TMP/$name/rclone" /usr/local/bin/rclone
-fi
-if [ "$WORKER_ONLY" = 0 ] && ! /usr/local/bin/traefik version 2>/dev/null | grep -qE "^Version:[[:space:]]+${TRAEFIK_VERSION}$"; then
-    log "Traefik ${TRAEFIK_VERSION}"
-    sha="TRAEFIK_SHA256_${ARCH^^}"
-    fetch_checked "https://github.com/traefik/traefik/releases/download/v${TRAEFIK_VERSION}/traefik_v${TRAEFIK_VERSION}_linux_${ARCH}.tar.gz" "${!sha}" "$TMP/traefik.tar.gz"
-    tar -xzf "$TMP/traefik.tar.gz" -C "$TMP" traefik
-    install -m 755 -o root -g root "$TMP/traefik" /usr/local/bin/traefik
-fi
-if [ "$WORKER_ONLY" = 0 ] && [ "$(/usr/local/bin/uv --version 2>/dev/null)" != "uv ${UV_VERSION}" ]; then
-    log "uv ${UV_VERSION}"
-    sha="UV_SHA256_${ARCH^^}"
-    target=$([ "$ARCH" = arm64 ] && echo aarch64 || echo x86_64)-unknown-linux-gnu
-    fetch_checked "https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/uv-${target}.tar.gz" "${!sha}" "$TMP/uv.tar.gz"
-    tar -xzf "$TMP/uv.tar.gz" -C "$TMP"
-    install -m 755 -o root -g root "$TMP/uv-${target}/uv" /usr/local/bin/uv
-fi
-
 # ---------------------------------------------------------------- HEIC/HEIF converter
 # The image viewer converts HEIC/HEIF to JPEG (api/utils/heic_convert.py) in a child process
 # run as the logged-in user. The server's own Python (the venv in the account's home) is not
@@ -195,8 +169,13 @@ if [ "$WORKER_ONLY" = 0 ]; then
         "$(/usr/bin/python3 -c 'import platform, sys; print(sys.implementation.cache_tag, platform.machine())')")
     if [ "$(cat /opt/motuz-heic/STATE 2>/dev/null)" != "$heic_state" ] || [ ! -d /opt/motuz-heic/site ]; then
         log "HEIC/HEIF converter: pi-heif and Pillow (requirements-heic.txt) for $(/usr/bin/python3 --version)"
+        # root's own uv for this step (never the account's, which the account can replace)
+        sha="UV_SHA256_${ARCH^^}"
+        target=$([ "$ARCH" = arm64 ] && echo aarch64 || echo x86_64)-unknown-linux-gnu
+        fetch_checked "https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/uv-${target}.tar.gz" "${!sha}" "$TMP/uv.tar.gz"
+        tar -xzf "$TMP/uv.tar.gz" -C "$TMP"
         rm -rf /opt/motuz-heic.new
-        /usr/local/bin/uv pip install --quiet --python /usr/bin/python3 --no-deps --only-binary :all: --require-hashes \
+        "$TMP/uv-${target}/uv" pip install --quiet --python /usr/bin/python3 --no-deps --only-binary :all: --require-hashes \
             --target /opt/motuz-heic.new/site -r "$REPO_DIR/requirements-heic.txt" \
             || die "could not install pi-heif and Pillow for /usr/bin/python3"
         printf '%s\n' "$heic_state" > /opt/motuz-heic.new/STATE
@@ -220,6 +199,10 @@ fi
 HOME_DIR=$(getent passwd "$ACCOUNT" | cut -d: -f6)
 GROUP=$(id -gn "$ACCOUNT")
 chmod 750 "$HOME_DIR"
+# The account's pinned binaries (bin/systemd/tools.sh): /var/lib is root's, so only root
+# can replace this directory itself; its contents are the account's, never touched by root
+[ ! -L "$TOOLS_DIR" ] && { [ ! -e "$TOOLS_DIR" ] || [ -d "$TOOLS_DIR" ]; } || die "$TOOLS_DIR is not a directory"
+install -d -m 755 -o "$ACCOUNT" -g "$GROUP" "$TOOLS_DIR"
 loginctl enable-linger "$ACCOUNT"
 systemctl start "user@$(id -u "$ACCOUNT").service"
 if [ -n "$RUN_AS" ] && ! id "$RUN_AS" >/dev/null 2>&1; then
@@ -233,6 +216,9 @@ fi
 # credential readers run python3 through env) as the logged-in user, never as root.
 # SETENV: rclone gets the connection's credentials as RCLONE_CONFIG_* variables
 # (sudo --preserve-env=<names>). A worker uses the same rule (rclone as the job's owner).
+# rclone is the account's own copy ($TOOLS_DIR/rclone). That grants nothing beyond the rule
+# itself: the account may already run any program as the users through /usr/bin/env, and
+# rclone can run commands too (--password-command), also with --run-as.
 log "sudoers rule /etc/sudoers.d/motuz"
 # Never root, and never the accounts of the system PostgreSQL and Redis/Valkey (the superuser
 # of the whole cluster / server): with the system modes the account could otherwise become them
@@ -242,12 +228,12 @@ if [ -n "$RUN_AS" ]; then
     # A cloud-to-cloud worker: rclone only, as one fixed account
     cat > "$TMP/sudoers" <<EOF
 # Motuz (bin/systemd/install.sh --worker-only --run-as): rclone as $RUN_AS only
-$ACCOUNT ALL=($RUN_AS) NOPASSWD:SETENV: /usr/local/bin/rclone
+$ACCOUNT ALL=($RUN_AS) NOPASSWD:SETENV: $TOOLS_DIR/rclone
 EOF
 else
     cat > "$TMP/sudoers" <<EOF
 # Motuz (bin/systemd/install.sh): file and rclone operations as the logged-in user
-$ACCOUNT ALL=($RUNAS) NOPASSWD:SETENV: /usr/local/bin/rclone, /usr/bin/ls, /usr/bin/mkdir, /usr/bin/env
+$ACCOUNT ALL=($RUNAS) NOPASSWD:SETENV: $TOOLS_DIR/rclone, /usr/bin/ls, /usr/bin/mkdir, /usr/bin/env
 EOF
 fi
 # The classic sudo (Amazon Linux; sudo-rs on Ubuntu does not) logs the variables of
@@ -260,6 +246,10 @@ fi
 visudo -c -q -f "$TMP/sudoers" || die "the sudoers rule does not parse"
 install -m 440 -o root -g root "$TMP/sudoers" /etc/sudoers.d/motuz
 visudo -c -q || die "sudoers is invalid after installing /etc/sudoers.d/motuz"
+# Installs before $TOOLS_DIR put root's copies there; they stay, others may use them
+for f in /usr/local/bin/rclone /usr/local/bin/traefik /usr/local/bin/uv; do
+    [ ! -e "$f" ] || echo "    $f (from an earlier install) is no longer used by Motuz: remove it unless something else needs it"
+done
 
 # ---------------------------------------------------------------- sysctl, PAM, SSO dir
 if [ "$WORKER_ONLY" = 0 ]; then
@@ -346,6 +336,9 @@ if [ "$WORKER_ONLY" = 1 ]; then
         account_env_set "$WORKER_ENV" MOTUZ_REQUIRED_PATHS ""
     fi
     account_env_set "$WORKER_ENV" MOTUZ_HOME "$REPO_DIR"
+    account_env_set "$WORKER_ENV" MOTUZ_RCLONE "$TOOLS_DIR/rclone"
+    # The pinned rclone, downloaded by the account (later updates: the same command as the account)
+    runuser -u "$ACCOUNT" -- "$REPO_DIR/bin/systemd/tools.sh" --rclone-only
     account_env_set "$WORKER_ENV" MOTUZ_WORKER_CREDENTIAL_FILE "$WORKER_DIR/credential"
     account_env_set "$WORKER_ENV" MOTUZ_SSO_CONFIG_DIR /var/lib/motuz-aws-config
     [ -z "$CENTRAL_URL" ] || account_env_set "$WORKER_ENV" MOTUZ_CENTRAL_URL "$CENTRAL_URL"
@@ -365,12 +358,12 @@ fi
 # they need no booleans or policy modules.
 if command -v selinuxenabled >/dev/null && selinuxenabled; then
     log "SELinux ($(getenforce)): restorecon"
-    for f in /usr/local/bin/rclone /usr/local/bin/traefik /usr/local/bin/uv /etc/sudoers.d/motuz \
+    for f in /etc/sudoers.d/motuz \
             /etc/sysctl.d/60-motuz.conf /etc/sysctl.d/61-motuz-network.conf /etc/modules-load.d/motuz-bbr.conf /etc/pam.d/motuz /etc/systemd/system/motuz-auth.socket \
             /etc/systemd/system/motuz-auth@.service; do
         [ ! -e "$f" ] || restorecon -F "$f"
     done
-    restorecon -RF /var/lib/motuz-aws-config "$HOME_DIR"
+    restorecon -RF /var/lib/motuz-aws-config "$TOOLS_DIR" "$HOME_DIR"
     [ ! -d /opt/motuz-heic ] || restorecon -RF /opt/motuz-heic
     [ ! -d /usr/local/lib/motuz-auth ] || restorecon -RF /usr/local/lib/motuz-auth
 fi
@@ -405,4 +398,6 @@ cat <<EOF
 Next, as $ACCOUNT (sudo -iu $ACCOUNT, or sudo machinectl shell $ACCOUNT@):
     git clone https://github.com/dirkpetersen/motuz.git ~/motuz    # or your fork / branch
     ~/motuz/bin/systemd/deploy.sh
+deploy.sh puts rclone, Traefik and uv into $TOOLS_DIR (jobs need that rclone), also when
+this was an update of an existing install.
 EOF

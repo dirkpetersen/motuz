@@ -7,6 +7,16 @@ log() { printf '\033[1m==> %s\033[0m\n' "$*"; }
 warn() { printf '\033[0;33mWARNING: %s\033[0m\n' "$*" >&2; }
 die() { printf '\033[0;31mERROR: %s\033[0m\n' "$*" >&2; exit 1; }
 
+# The pinned rclone, Traefik and uv of the account (bin/systemd/tools.sh): its own
+# directory, made by install.sh, outside its home (which stays closed to the users, who run
+# rclone through sudo). The sudoers rule, the units and MOTUZ_RCLONE name these paths.
+TOOLS_DIR=/var/lib/motuz-bin
+
+fetch_checked() { # url sha256 file
+    curl -fsSL --retry 3 -o "$3" "$1" || die "download failed: $1"
+    echo "$2  $3" | sha256sum -c --quiet - || die "SHA256 mismatch: $1"
+}
+
 # The account's configuration and data (the units use the same paths below %h)
 motuz_paths() { # home
     CONFIG_DIR="$1/.config/motuz"

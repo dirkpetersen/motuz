@@ -9,7 +9,8 @@
 #   --user=NAME  the service account (default motuz)
 #   --purge      also delete the account with its home and all Motuz data (a private
 #                database, secrets, certificates), /var/lib/motuz-aws-config, the login
-#                helper's state and /usr/local/bin/{rclone,traefik,uv}; needs --yes.
+#                helper's state, /var/lib/motuz-bin (the pinned rclone, Traefik, uv) and
+#                /usr/local/bin/{rclone,traefik,uv} of older installs; needs --yes.
 #                With the distribution's PostgreSQL (MOTUZ_DATABASE_MODE=system) only the
 #                database motuz and the role motuz_user are dropped (and our pg_hba lines
 #                removed), with the distribution's Redis only /etc/redis/motuz.conf and the
@@ -142,11 +143,11 @@ if [ "$PURGE" = 1 ]; then
         # userdel only removes the home if it is owned by the account
         case "$HOME_DIR" in /|/home|/var|/var/lib|/usr*|/etc*|/root) ;; *) rm -rf "$HOME_DIR" ;; esac
     fi
-    rm -rf /var/lib/motuz-aws-config /var/lib/motuz-auth /opt/motuz-heic /opt/motuz-heic.new
+    rm -rf /var/lib/motuz-aws-config /var/lib/motuz-auth "$TOOLS_DIR" /opt/motuz-heic /opt/motuz-heic.new
     rm -f /usr/local/bin/rclone /usr/local/bin/traefik /usr/local/bin/uv
 else
     [ "$DB_MODE" != system ] || echo "    kept: the system PostgreSQL service with the database motuz and the role motuz_user (--purge drops only those)"
     [ "$BROKER_MODE" != system ] || echo "    kept: the system Redis with /etc/redis/motuz.conf (--purge removes our configuration only)"
-    [ -z "$HOME_DIR" ] || echo "    kept: the account $ACCOUNT and $HOME_DIR (checkout, ~/.config/motuz, ~/data), /usr/local/bin/{rclone,traefik,uv}, /opt/motuz-heic (the HEIC converter's packages)"
+    [ -z "$HOME_DIR" ] || echo "    kept: the account $ACCOUNT and $HOME_DIR (checkout, ~/.config/motuz, ~/data), $TOOLS_DIR (rclone, Traefik, uv), /opt/motuz-heic (the HEIC converter's packages)"
 fi
 log "done"

@@ -14,6 +14,8 @@ WorkingDirectory=%h/motuz/src/backend
 Environment=PYTHON_ENVIRONMENT=prod
 Environment=PYTHONUNBUFFERED=1
 Environment=MOTUZ_FRONTEND_DIR=%h/motuz/build
+# The account's pinned rclone (deploy.sh), the path of the sudoers rule
+Environment=MOTUZ_RCLONE=/var/lib/motuz-bin/rclone
 # Settings (motuz.env), secrets (secrets.env, mode 600) and the broker URL with its
 # password (broker.env, mode 600), all made by bin/systemd/deploy.sh
 EnvironmentFile=%h/.config/motuz/motuz.env
