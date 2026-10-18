@@ -1577,6 +1577,8 @@ failed, with rclone's message for each failed file.
 - Empty folders are not uploaded, at most 100,000 files per drop. Uploads always run on
   the central node, never on remote workers, and have no Retry or Check Integrity (the
   source was in the browser).
+- When a local destination is full (or the user's disk quota is exceeded), the whole
+  upload fails at once with that reason instead of failing file by file.
 
 ### Remote workers (HTTPS only)
 
@@ -1592,6 +1594,11 @@ access, open no ports and need no VPN. Typical setups:
 A worker runs the same job code as the Motuz server's Celery worker: rclone as the job's
 owner (`sudo -n --preserve-env=<names> -u <owner>`), the same output parsing, Stop, progress and final state in
 the UI. Local paths are the worker's own mounts.
+
+A copy job whose local destination is full (no space left on device, or the user's disk
+quota is exceeded) stops at once, on the Motuz server and on workers alike: rclone is
+stopped instead of failing and retrying every remaining file, and the job's error text
+starts with the reason, the destination and how many files were copied before.
 
 **Which jobs go where** (`.env` of the Motuz server, passed to the `app` container; `motuz.env` without Docker):
 

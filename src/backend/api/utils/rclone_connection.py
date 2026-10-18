@@ -7,6 +7,7 @@ import subprocess
 from collections import defaultdict
 
 from .abstract_connection import AbstractConnection, RcloneException, check_output, sudo_as, user_process_env
+from . import disk_full
 from . import local_credentials
 from .file_times import rfc3339_to_iso_utc
 from . import file_view
@@ -357,7 +358,8 @@ class RcloneConnection(AbstractConnection):
         credentials = self._formatCredentials(dst_data, name='dst') if dst_data is not None else {}
         check_flags, check_env = destination_checks(dst_data)
         dst = _local_path(path) if dst_data is None else 'dst:{}'.format(path)
-        env = {**credentials, **check_env}
+        # A full local disk: no retries (upload_manager fails the whole upload)
+        env = {**credentials, **check_env, **(disk_full.FATAL_ENV if dst_data is None else {})}
         command = [
             *sudo_as(user, env),
             RCLONE,
@@ -488,6 +490,8 @@ class RcloneConnection(AbstractConnection):
 
         if dst_local:
             dst = _local_path(dst_resource_path)
+            # A full disk is fatal for rclone, and CopyJobQueue stops it (utils/disk_full.py)
+            extra_env = {**(extra_env or {}), **disk_full.FATAL_ENV}
         else:
             dst = 'dst:{}'.format(dst_resource_path)
 
@@ -522,7 +526,7 @@ class RcloneConnection(AbstractConnection):
         credentials.update(extra_env or {})
 
         try:
-            self._copy_job_queue.push(command, credentials, job_id)
+            self._copy_job_queue.push(command, credentials, job_id, local_dst=dst if dst_local else None)
         except RcloneException as e:
             raise RcloneException(str(e))
 

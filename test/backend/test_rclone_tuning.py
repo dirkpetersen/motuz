@@ -443,7 +443,7 @@ class TestRcloneCommand(unittest.TestCase):
         pushed = {}
         queue = connection._copy_job_queue if method == 'copy' else connection._hashsum_job_queue
         with mock.patch.object(tuning, '_settings', s), \
-                mock.patch.object(queue, 'push', side_effect=lambda command, env, job_id: pushed.update(command=command, env=env)):
+                mock.patch.object(queue, 'push', side_effect=lambda command, env, job_id, **_: pushed.update(command=command, env=env)):
             if method == 'copy':
                 connection.copy(None, '/tmp', dst, '/bucket/x', 'alice', False, 1, performance=performance)
             else:

@@ -22,7 +22,8 @@ from api.models import CloudConnection, CopyJob, UploadFile
 from api.utils import upload_pipes
 from api.utils.rclone_connection import RcloneConnection
 
-# Writes stdin to argv[2] if it has argv[1] bytes, like rclone rcat --size
+# Writes stdin to argv[2] if it has argv[1] bytes, like rclone rcat --size; below a
+# folder "full" it fails with what rclone rcat prints when the disk is full
 FAKE_RCAT = textwrap.dedent('''
     import os, sys
     size, path = int(sys.argv[1]), sys.argv[2]
@@ -31,6 +32,14 @@ FAKE_RCAT = textwrap.dedent('''
         sys.exit('corrupted on transfer: sizes differ')
     if '/denied/' in path:
         sys.exit('permission denied')
+    if '/full/' in path:
+        for line in (
+            'NOTICE: {0}: Removing partially written file on error: write {0}: no space left on device',
+            'ERROR : {0}: Post request put error: write {0}: no space left on device',
+            'NOTICE: Failed to rcat with 2 errors: last error was: write {0}: no space left on device',
+        ):
+            print('2026/10/18 08:52:27 ' + line.format(path), file=sys.stderr)
+        sys.exit(7)
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, 'wb') as f:
         f.write(data)
@@ -179,6 +188,29 @@ class UploadTest(unittest.TestCase):
         self.assertIn('denied/no.txt: permission denied', job['progress_error_text'])
         # A finished file takes no more chunks
         self.assertEqual(self.put(job_id, 0, 0, b'ok').status_code, 409)
+
+    def test_a_full_disk_fails_the_whole_upload_at_once(self):
+        files = [('ok.txt', b'ok'), ('full/a.bin', b'0123456789'), ('full/b.bin', b'0123456789'), ('c.txt', b'c')]
+        job_id = self.create(files).get_json()['job']['id']
+        self.send(job_id, 0, b'ok')
+        self.assertEqual(self.put(job_id, 2, 0, b'0123').status_code, 200) # b.bin is being sent
+        result = self.send(job_id, 1, b'0123456789')
+        self.assertEqual(result['file_state'], 'failed')
+        self.assertEqual(result['job_state'], 'FAILED')
+        self.assertIsNone(upload_pipes.written((job_id, 2)), "the job's other files are aborted")
+        # The browser's next chunks are refused, the files that are left are not started
+        for index, offset, data in ((2, 4, b'456789'), (3, 0, b'c')):
+            response = self.put(job_id, index, offset, data)
+            self.assertEqual(response.status_code, 409)
+            self.assertEqual(response.get_json()['job_state'], 'FAILED')
+        job = self.job(job_id).get_json()
+        self.assertTrue(job['progress_error'].startswith(
+            'The destination filesystem is full (no space left on device) at {}: 1 file was uploaded before. '
+            'Free space or choose another destination.\nrclone: NOTICE: Failed to rcat with 2 errors: '.format(self.dst)),
+            job['progress_error'])
+        self.assertTrue(job['progress_error_text'].startswith(job['progress_error']), 'shown first in the job')
+        self.assertIn('full/a.bin: ', job['progress_error_text'])
+        self.assertFalse(os.path.exists(os.path.join(self.dst, 'full', 'b.bin')))
 
     def test_conflicts(self):
         self.listing[(self.dst, False)] = ['photos/', 'c.txt', 'other']

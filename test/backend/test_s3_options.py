@@ -105,7 +105,7 @@ class TestDestinationChecks(unittest.TestCase):
         pushed = {}
         with mock.patch.object(rclone_tuning, '_settings', rclone_tuning.load_settings({})), \
                 mock.patch.object(connection._copy_job_queue, 'push',
-                                  side_effect=lambda command, env, job_id: pushed.update(command=command, env=env)):
+                                  side_effect=lambda command, env, job_id, **_: pushed.update(command=command, env=env)):
             logging.disable(logging.INFO)
             try:
                 connection.copy(None, '/tmp', s3(s3_provider='AWS', s3_skip_checks='all'), 'bucket/x', 'alice', False, 1)
@@ -122,7 +122,7 @@ class TestDestinationChecks(unittest.TestCase):
         pushed = {}
         with mock.patch.object(rclone_tuning, '_settings', rclone_tuning.load_settings({})), \
                 mock.patch.object(connection._copy_job_queue, 'push',
-                                  side_effect=lambda command, env, job_id: pushed.update(command=command, env=env)):
+                                  side_effect=lambda command, env, job_id, **_: pushed.update(command=command, env=env)):
             logging.disable(logging.INFO)
             try:
                 connection.copy(s3(s3_provider='AWS', s3_skip_checks='all'), 'bucket/x', s3(s3_provider='Minio'),

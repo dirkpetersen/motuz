@@ -13,7 +13,9 @@ one upload_file row per file. The browser
    same folder and is renamed when it is complete: Stop never damages a file it replaces.
 
 The data comes from the browser: if it stops sending (tab closed, connection lost), the
-job fails after upload_pipes.IDLE_SECONDS (expire). Only the central node runs uploads.
+job fails after upload_pipes.IDLE_SECONDS (expire). A file that fails because the local
+destination is full (utils/disk_full.py) fails the whole job at once and aborts its other
+files. Only the central node runs uploads.
 """
 import datetime
 import logging
@@ -28,7 +30,7 @@ from ..exceptions import *
 from ..models import CopyJob, UploadFile
 from ..managers.auth_manager import token_required, get_logged_in_user
 from ..managers import cloud_connection_manager
-from ..utils import file_view, upload_pipes
+from ..utils import disk_full, file_view, upload_pipes
 from ..utils.rclone_connection import RcloneConnection, RcloneException
 
 
@@ -148,6 +150,7 @@ def put_chunk(job_id, index, offset, length, stream):
     except upload_pipes.PipeError as e:
         raise HTTP_409_CONFLICT({'message': str(e), 'written': e.written})
 
+    full = None
     if exited or pipe.written == upload_file.size:
         returncode, error = upload_pipes.finish(key, pipe)
         if returncode is None: # Aborted, or the file was started again meanwhile
@@ -164,10 +167,15 @@ def put_chunk(job_id, index, offset, length, stream):
             upload_file.state = 'failed'
             upload_file.error = error or 'rclone failed with exit status {}'.format(returncode)
             logging.info('Copy job %s: upload of %r failed: %s', job.id, upload_file.path, upload_file.error)
+            full = disk_full.scan(upload_file.error) if local else None
     else:
         upload_file.bytes_done = pipe.written
     _update_progress(job)
+    if full is not None:
+        _fail_disk_full(job, *full)
     db.session.commit()
+    if full is not None: # After the commit: a chunk that arrives now is refused
+        upload_pipes.abort_job(job.id)
 
     if not UploadFile.query.filter_by(copy_job_id=job.id, state='pending').count():
         _finish_job(job)
@@ -219,6 +227,8 @@ def describe(job):
     errors = '\n'.join('{}: {}'.format(f.path, f.error) for f in failed)
     if rows.get('failed', 0) > len(failed):
         errors += '\n... and {} more'.format(rows['failed'] - len(failed))
+    if job.progress_error: # Why the job failed (full disk, browser gone) first
+        errors = job.progress_error + ('\n\n' + errors if errors else '')
     return text, errors
 
 
@@ -227,6 +237,16 @@ def _update_progress(job):
     job.progress_current = 100 if not total else min(100, int(100 * _bytes_sent(job) / total))
     job.progress_execution_time = int((datetime.datetime.utcnow() - job.created_at).total_seconds())
     job.updated_at = datetime.datetime.utcnow()  # expire() looks at it
+
+
+def _fail_disk_full(job, name, line):
+    """Fails the job: its local destination is full (`name`: disk_full.FULL or QUOTA)"""
+    if job.progress_state != 'PROGRESS':
+        return
+    done = UploadFile.query.filter_by(copy_job_id=job.id, state='done').count()
+    job.progress_state = 'FAILED'
+    job.progress_error = disk_full.message(name, job.dst_resource_path, done, 'uploaded', line)
+    logging.warning('Copy job %s: upload stopped, the local destination is full (%s)', job.id, name)
 
 
 def _finish_job(job):

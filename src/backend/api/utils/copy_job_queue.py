@@ -9,6 +9,7 @@ import time
 import os
 import signal
 
+from . import disk_full
 from .abstract_connection import signals_unblocked, AbstractConnection, RcloneException, user_process_env
 
 class CopyJobQueue:
@@ -24,13 +25,20 @@ class CopyJobQueue:
         self._processes = {} # Mapping from id to subprocess.Popen
         self._error_text_lock = threading.Lock()
         self._latest_job_id = 0
+        self._local_dst = {} # Mapping from id to the local destination path (None: a cloud)
+        self._disk_full = {} # Mapping from id to (disk_full.FULL or QUOTA, rclone's last such line)
 
 
-    def push(self, command, env, job_id):
+    def push(self, command, env, job_id, local_dst=None):
+        """
+        @param local_dst: the destination path if it is on the local filesystem: rclone is
+                          stopped as soon as it reports that it is full (utils/disk_full.py)
+        """
         if self._job_id_exists(job_id):
             raise KeyError("Job with ID {} already submitted to {}".format(job_id, self.__class__))
 
         self._stop_events[job_id] = threading.Event()
+        self._local_dst[job_id] = local_dst
 
         try:
             self._execute_interactive(command, env, job_id)
@@ -44,7 +52,17 @@ class CopyJobQueue:
         return self._job_text[job_id]
 
     def copy_error_text(self, job_id):
-        return self._job_error_text[job_id]
+        full = self._disk_full.get(job_id)
+        if full is None:
+            return self._job_error_text[job_id]
+        name, line = full
+        message = disk_full.message(name, self._local_dst[job_id], self._files_done(job_id), line=line)
+        return message + '\n\n' + self._job_error_text[job_id]
+
+    def copy_disk_full(self, job_id):
+        """disk_full.FULL or QUOTA if the job was stopped because its destination is full"""
+        full = self._disk_full.get(job_id)
+        return full[0] if full is not None else None
 
     def copy_percent(self, job_id):
         return self._job_percent[job_id]
@@ -105,6 +123,8 @@ class CopyJobQueue:
         finally:
             exitstatus = process.wait()
             stderr_thread.join(timeout=10)
+            if exitstatus == 0 and job_id in self._disk_full: # Stopped by us, never a success
+                exitstatus = 1
             self._job_exitstatus[job_id] = exitstatus
             self._job_percent[job_id] = 100
             logging.info("Copy process exited with exit status {}".format(exitstatus))
@@ -138,6 +158,7 @@ class CopyJobQueue:
 
             line = line.replace(reset_sequence1, '')
             line = line.replace(reset_sequence2, '')
+            self._check_disk_full(process, job_id, line)
 
             match = re.search(r'(ERROR.*)', line)
             if match is not None:
@@ -184,7 +205,39 @@ class CopyJobQueue:
 
     def _read_stderr(self, process, job_id):
         for raw_line in process.stderr:
-            self._append_error_text(job_id, raw_line.decode('utf-8', errors='replace').strip())
+            line = raw_line.decode('utf-8', errors='replace').strip()
+            self._append_error_text(job_id, line)
+            self._check_disk_full(process, job_id, line)
+
+
+    def _check_disk_full(self, process, job_id, line):
+        """
+        A full local destination ends the job at once: rclone would fail every following
+        file and retry them all (--retries). It is stopped like Stop does (its process
+        group), and copy_error_text starts with the reason.
+        """
+        if self._local_dst.get(job_id) is None:
+            return
+        name = disk_full.kind(line)
+        if name is None:
+            return
+        with self._error_text_lock:
+            first = job_id not in self._disk_full
+            self._disk_full[job_id] = (name, disk_full.clean(line)) # The last such line
+        if not first:
+            return
+        logging.warning("Copy job %s: the local destination is full (%s), stopping rclone", job_id, name)
+        if process.poll() is None:
+            try:
+                os.killpg(process.pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+
+
+    def _files_done(self, job_id):
+        """The files rclone has copied so far (its "Transferred: 3 / 10, 30%" line)"""
+        match = re.match(r'\s*(\d+)\s*/', self._job_status[job_id].get('Transferred', ''))
+        return int(match[1]) if match is not None else 0
 
 
     def __process_copy_status(self, job_id):
