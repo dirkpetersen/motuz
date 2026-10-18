@@ -368,9 +368,15 @@ hj = wait_job('hashsum-jobs', hj['id'], A)
 check_r('hashsum local vs Azure identical', hj['progress_state'] == 'SUCCESS' and json.loads(hj['progress_src_tree']) == [] and json.loads(hj['progress_dst_tree']) == [], hj)
 # Upload from the browser into Azure: rclone rcat as alice with the connection's credentials
 def azure_sha256(path):
-    out = sh('app', f"sudo -u alice {RCLONE} --config /home/alice/.config/rclone/rclone.conf cat 'azurite:motuztest/upload/{path}' > /tmp/upload-check "
+    # `rclone cat` of a missing object reads an empty "folder" and succeeds: list it first
+    rclone = f"sudo -u alice {RCLONE} --config /home/alice/.config/rclone/rclone.conf"
+    folder, _, name = f'upload/{path}'.rpartition('/')
+    listed = sh('app', f"{rclone} lsf --files-only 'azurite:motuztest/{folder}'").stdout.split('\n')
+    if name not in listed:
+        return None
+    out = sh('app', f"{rclone} cat 'azurite:motuztest/upload/{path}' > /tmp/upload-check "
                     "&& sha256sum < /tmp/upload-check; status=$?; rm -f /tmp/upload-check; exit $status")
-    return out.stdout.split()[0] if out.returncode == 0 and out.stdout.strip() else None
+    return out.stdout.split()[0] if out.returncode == 0 else None
 
 
 check_browser_upload(req, A, B, c5['id'], '/motuztest/upload', 'upload to Azure', azure_sha256)
