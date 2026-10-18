@@ -9,6 +9,7 @@ import types
 import unittest
 from unittest import mock
 
+from api.utils import job_runner
 from api.utils import rclone_tuning as tuning
 from api.utils.rclone_tuning import MiB, GiB, TuningError, TuningConfigError
 from api.utils.rclone_connection import RcloneConnection
@@ -496,6 +497,46 @@ class TestRcloneCommand(unittest.TestCase):
             with self.assertRaises(TuningConfigError, msg=bad) as caught:
                 settings(md5_simd_servers=bad)
             self.assertIn('MOTUZ_RCLONE_MD5_SIMD_SERVERS', str(caught.exception))
+
+    def test_sha256_between_local_paths(self):
+        """A local-to-local copy is checked with SHA-256 (RCLONE_LOCAL_HASHES), others with MD5"""
+        command, env = self.command(PLAIN, dst=None)
+        self.assertEqual(env['RCLONE_LOCAL_HASHES'], 'sha256')
+        self.assertIn('RCLONE_LOCAL_HASHES', command[command.index('sudo') + 2])
+        self.assertFalse([a for a in command if 'hashes' in a], 'never a flag')
+        _, env = self.command(PLAIN, dst=_s3_connection())
+        self.assertNotIn('RCLONE_LOCAL_HASHES', env, 'S3 has no SHA-256 to compare with')
+        self.assertEqual(job_runner.hashsum_type(True, True), 'sha256')
+        for sides in ((True, False), (False, True), (False, False)):
+            self.assertEqual(job_runner.hashsum_type(*sides), 'md5', sides)
+
+    def test_hashsum_command_of_each_hash(self):
+        connection = RcloneConnection()
+        pushed = {}
+        with mock.patch.object(tuning, '_settings', PLAIN), \
+                mock.patch.object(connection._hashsum_job_queue, 'push',
+                                  side_effect=lambda command, env, job_id, **_: pushed.update(command=command)):
+            connection.md5sum(None, '/home/alice/x', 'alice', '1_src', hash_type='sha256')
+            self.assertEqual(pushed['command'][-3:], ['hashsum', 'sha256', '/home/alice/x'])
+            connection.md5sum(None, '/home/alice/x', 'alice', '1_src')
+            self.assertEqual(pushed['command'][-2:], ['md5sum', '/home/alice/x'])
+            with self.assertRaises(KeyError):
+                connection.md5sum(None, '/home/alice/x', 'alice', '1_src', hash_type='--config=/x')
+
+    def test_hashsum_output_of_both_hashes_is_parsed(self):
+        from api.utils.hashsum_job_queue import HashsumJobQueue
+        import os, sys, time
+        sha = 'a' * 64
+        out = '{}  dir/x.bin\n{}  y.txt\n{}  no-hash.bin\n'.format(sha, 'b' * 32, ' ' * 64)
+        queue = HashsumJobQueue()
+        queue.push([sys.executable, '-c', 'import sys; sys.stdout.write({!r})'.format(out)], dict(os.environ), 'p')
+        for _ in range(100):
+            if queue.hashsum_finished('p'):
+                break
+            time.sleep(0.05)
+        self.assertEqual(queue.hashsum_text('p'), [
+            {'Name': 'dir/x.bin', 'md5chksum': sha}, {'Name': 'y.txt', 'md5chksum': 'b' * 32},
+            {'Name': 'no-hash.bin', 'md5chksum': None}])
 
     def test_installation_defaults_and_hashsum_checkers(self):
         s = settings(checkers='64', extra_flags='--fast-list')

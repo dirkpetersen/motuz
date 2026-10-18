@@ -15,6 +15,15 @@ from .file_utils import generate_file_tree, remove_identical_branches
 HASHSUM_SIDES = ('src', 'dst')
 
 
+def hashsum_type(src_local, dst_local):
+    """
+    The hash an integrity check compares: SHA-256 if both sides are local (the CPU's SHA
+    instructions make it about twice as fast as MD5 per stream), else MD5, the hash that
+    clouds record (S3's ETag, ...)
+    """
+    return 'sha256' if src_local and dst_local else 'md5'
+
+
 def exit_state(exitstatus):
     """progress_state of a job whose rclone exited with `exitstatus` (-1: never set)"""
     if exitstatus == -1:

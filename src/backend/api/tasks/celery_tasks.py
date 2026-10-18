@@ -278,6 +278,8 @@ def ec2_dispatch():
 
 def _hashsum_job_run(self, hashsum_job, connection, start_time):
     """md5sum of both sides (job_runner.run_hashsum), writing progress once per second"""
+    hash_type = job_runner.hashsum_type(hashsum_job.src_cloud is None, hashsum_job.dst_cloud is None)
+
     def start_side(side, run_id):
         connection.md5sum(
             data=getattr(hashsum_job, f'{side}_cloud'),
@@ -286,6 +288,7 @@ def _hashsum_job_run(self, hashsum_job, connection, start_time):
             job_id=run_id,
             download=hashsum_job.option_download,
             performance=hashsum_job.performance,
+            hash_type=hash_type,
         )
 
     def tick(side, percent, tree, error_text):

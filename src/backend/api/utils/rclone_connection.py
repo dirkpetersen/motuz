@@ -488,6 +488,11 @@ class RcloneConnection(AbstractConnection):
         else:
             src = 'src:{}'.format(src_resource_path)
 
+        if src_local and dst_local:
+            # rclone checks a copy with the first hash both sides have, MD5; SHA-256 uses
+            # the CPU's SHA instructions: about half the CPU time of the check
+            extra_env = {**(extra_env or {}), **LOCAL_TO_LOCAL_ENV}
+
         if dst_local:
             dst = _local_path(dst_resource_path)
             # A full disk is fatal for rclone, and CopyJobQueue stops it (utils/disk_full.py)
@@ -559,6 +564,7 @@ class RcloneConnection(AbstractConnection):
             job_id,
             download=False,
             performance=None,
+            hash_type='md5',
     ):
         if data is None:
             _local_path(resource_path) # before reading any credentials
@@ -572,6 +578,7 @@ class RcloneConnection(AbstractConnection):
             download=download,
             extra_flags=rclone_tuning.hashsum_flags(performance), # --checkers
             extra_env=rclone_tuning.md5_env(),
+            hash_type=hash_type,
         )
 
 
@@ -585,9 +592,11 @@ class RcloneConnection(AbstractConnection):
             download=False,
             extra_flags=(),
             extra_env=None,
+            hash_type='md5',
     ):
         """
-        Starts `rclone md5sum` as `user`; the remote, if any, is `src` in `credentials`
+        Starts `rclone md5sum` (or `rclone hashsum sha256`, `hash_type`, see
+        job_runner.hashsum_type) as `user`; the remote, if any, is `src` in `credentials`
         (RCLONE_CONFIG_SRC_*) for either side of an integrity check. See
         copy_with_credentials for the other parameters.
         """
@@ -612,7 +621,7 @@ class RcloneConnection(AbstractConnection):
             '--config=/dev/null',
             *_rate_limit_flags(credentials),
             *_checked_flags(extra_flags),
-            'md5sum',
+            *_HASHSUM_COMMANDS[hash_type],
             src,
             option_exclude_dot_snapshot,
             option_download
@@ -962,6 +971,12 @@ class RcloneConnection(AbstractConnection):
                 raise
             raise RcloneException(stderr)
 
+
+# The rclone command of each hash of an integrity check (job_runner.hashsum_type)
+_HASHSUM_COMMANDS = {'md5': ('md5sum',), 'sha256': ('hashsum', 'sha256')}
+
+# A copy between two local paths (copy_with_credentials)
+LOCAL_TO_LOCAL_ENV = {'RCLONE_LOCAL_HASHES': 'sha256'}
 
 # rclone's exit status for "directory not found" (docs: rclone.org/docs/#exit-code)
 _RCLONE_DIRECTORY_NOT_FOUND = 3
