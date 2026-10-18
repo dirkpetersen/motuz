@@ -18,6 +18,9 @@ class HashsumJob(db.Model, TimestampMixin):
     notification_email = db.Column(db.String)
     # rclone performance overrides (only `checkers`, utils/rclone_tuning.py)
     performance = db.Column(db.JSON, nullable=True)
+    # The AWS egress cost the user confirmed for a check with download from AWS
+    # (managers/egress_manager.py); NULL when no AWS fee applies
+    egress_estimate = db.Column(db.JSON, nullable=True)
 
     owner = db.Column(db.String)
 

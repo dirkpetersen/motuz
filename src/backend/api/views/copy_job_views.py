@@ -4,7 +4,7 @@ from flask import request
 from flask_restx import Resource, Namespace, fields, reqparse
 
 from ..exceptions import HTTP_EXCEPTION
-from ..managers import copy_job_manager, upload_manager
+from ..managers import copy_job_manager, egress_manager, upload_manager
 
 api = Namespace('copy-jobs', description='CopyJob related operations')
 
@@ -18,6 +18,15 @@ class Performance(fields.Raw):
     __schema_type__ = ['object', 'null']
     __schema_example__ = {'transfers': 32, 'checkers': 64}
 
+class EgressEstimate(fields.Raw):
+    """
+    The AWS egress cost the user confirmed in the dialog (managers/egress_manager.py):
+    the estimate of GET /copy-jobs/egress-estimate/ with confirmed: true. Required for a
+    job that reads out of AWS (else 400); stored with the server's own kind and rates.
+    """
+    __schema_type__ = ['object', 'null']
+    __schema_example__ = {'confirmed': True, 'bytes': 3400000000000, 'files': 1200}
+
 job_dto = api.model('copy-job', {
     'id': fields.Integer(readonly=True, example=1234),
     'description': fields.String(required=True, example='Task Description'),
@@ -29,6 +38,7 @@ job_dto = api.model('copy-job', {
     'copy_links': fields.Boolean(required=True, example=True),
     'notification_email': fields.String(required=False, example='hello@example.com'),
     'performance': Performance(required=False, example={'transfers': 32, 'multi_thread_streams': 16, 's3_chunk_size': '64Mi'}),
+    'egress_estimate': EgressEstimate(required=False),
 
     'owner': fields.String(required=False, example='owner'),
 
@@ -62,6 +72,11 @@ list_dto = api.model('copy-job-list', {
 
 performance_parser = reqparse.RequestParser()
 performance_parser.add_argument('dst_cloud_id', help='Destination connection (none or 0: local filesystem)', type=int, default=0)
+
+egress_parser = reqparse.RequestParser()
+egress_parser.add_argument('src_cloud_id', help='Source connection (none or 0: local filesystem)', type=int, default=0)
+egress_parser.add_argument('src_resource_path', help='Source path; repeat it for several', action='append', required=True)
+egress_parser.add_argument('dst_cloud_id', help='Destination connection (none or 0: local filesystem)', type=int, default=0)
 
 list_arg_parser = reqparse.RequestParser()
 list_arg_parser.add_argument('page', help='Current page', type=int, default=1)
@@ -115,6 +130,37 @@ class CopyJobPerformance(Resource):
             api.abort(400, 'dst_cloud_id must be a connection id')
         try:
             return copy_job_manager.performance(int(dst_cloud_id))
+        except HTTP_EXCEPTION as e:
+            api.abort(e.code, e.payload)
+        except Exception as e:
+            logging.exception(e, exc_info=True)
+            api.abort(500, str(e))
+
+
+def connection_id_arg(name):
+    """A connection id of the query (0 if absent: the local filesystem), else 400"""
+    value = request.args.get(name) or '0'
+    if not value.isdigit():
+        api.abort(400, '{} must be a connection id'.format(name))
+    return int(value)
+
+
+@api.route('/egress-estimate/')
+class CopyJobEgressEstimate(Resource):
+    @api.expect(egress_parser)
+    def get(self):
+        """
+        The AWS egress cost of copying these source paths (New Copy Job dialog):
+        {applies: false} or {applies, kind: internet|inter-region|same-region, bytes,
+        files, low_usd, high_usd, rate_low_per_gb, rate_high_per_gb, free_gb_per_month,
+        pricing_date, note}; bytes and the prices are null if the size could not be
+        measured in time
+        """
+        src_cloud_id = connection_id_arg('src_cloud_id')
+        dst_cloud_id = connection_id_arg('dst_cloud_id')
+        try:
+            return egress_manager.copy_estimate(
+                src_cloud_id, request.args.getlist('src_resource_path'), dst_cloud_id)
         except HTTP_EXCEPTION as e:
             api.abort(e.code, e.payload)
         except Exception as e:

@@ -8,8 +8,7 @@ from ..application import db
 from ..exceptions import *
 from ..models import HashsumJob
 from ..managers.auth_manager import token_required, get_logged_in_user
-from ..managers.cloud_connection_manager import owned_cloud_id
-from ..managers import job_routing, worker_manager
+from ..managers import cloud_connection_manager, egress_manager, job_routing, worker_manager
 from ..utils import rclone_tuning
 
 
@@ -30,16 +29,21 @@ def list(page_size=50, offset=0):
 @token_required
 def create(data):
     owner = get_logged_in_user(request)
+    # The logged in user's connections (404 for anyone else's), None: local filesystem
+    src_cloud = cloud_connection_manager.retrieve(data['src_cloud_id']) if data.get('src_cloud_id') else None
+    dst_cloud = cloud_connection_manager.retrieve(data['dst_cloud_id']) if data.get('dst_cloud_id') else None
 
     hashsum_job = HashsumJob(**{
-        'src_cloud_id': owned_cloud_id(data.get('src_cloud_id')),
+        'src_cloud_id': src_cloud.id if src_cloud is not None else None,
         'src_resource_path': data.get('src_resource_path', None),
-        'dst_cloud_id': owned_cloud_id(data.get('dst_cloud_id')),
+        'dst_cloud_id': dst_cloud.id if dst_cloud is not None else None,
         'dst_resource_path': data.get('dst_resource_path', None),
 
         'option_download': data.get('option_download', None),
         'notification_email': data.get('notification_email', None),
         'performance': _validate_performance(data.get('performance')),
+        'egress_estimate': egress_manager.confirmed_hashsum(
+            src_cloud, dst_cloud, data.get('option_download'), data.get('egress_estimate')),
 
         'progress_current': 0,
         'progress_total': 100,

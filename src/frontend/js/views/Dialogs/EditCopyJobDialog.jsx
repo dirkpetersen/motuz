@@ -6,6 +6,7 @@ import UriResource from 'components/UriResource.jsx';
 import parseTime from 'utils/parseTime.jsx'
 import serializeForm from 'utils/serializeForm.jsx'
 import {describePerformance} from 'utils/copyPerformance.js'
+import {describeConfirmed} from 'utils/egressCost.js'
 import {jobLocationDetail} from 'utils/jobLocation.js'
 import {canCheckIntegrity} from 'utils/s3Providers.js'
 import {UPLOAD_PROTOCOL} from 'utils/desktopDrop.js'
@@ -123,6 +124,18 @@ class EditCopyJobDialog extends React.Component {
                                 </div>
                                 <div className="col-1"></div>
                             </div>
+
+                            {describeConfirmed(data.egress_estimate) && (
+                                <div className="row mb-3">
+                                    <div className="col-4 text-end">
+                                        <b>AWS egress cost</b>
+                                    </div>
+                                    <div className="col-7 text-start job-egress">
+                                        {describeConfirmed(data.egress_estimate)}
+                                    </div>
+                                    <div className="col-1"></div>
+                                </div>
+                            )}
 
                             {this.outputErrorText(data)}
 

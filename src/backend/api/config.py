@@ -136,6 +136,9 @@ class Config:
     LARGE_JOB_BYTES = int(_optional_env('MOTUZ_LARGE_JOB_BYTES', str(300 * 1000 ** 3)))
     LARGE_JOB_FILES = int(_optional_env('MOTUZ_LARGE_JOB_FILES', '50000'))
     JOB_SIZE_TIMEOUT = int(_optional_env('MOTUZ_JOB_SIZE_TIMEOUT', '60'))
+    # The AWS egress cost estimate of the New Copy Job dialog (managers/egress_manager.py)
+    # measures the source with `rclone size` for at most this many seconds
+    EGRESS_SIZE_TIMEOUT = int(_optional_env('MOTUZ_EGRESS_SIZE_TIMEOUT', '120'))
     # A claimed job fails when its worker has not reported for this long
     WORKER_LEASE_SECONDS = int(_optional_env('MOTUZ_WORKER_LEASE_SECONDS', '120'))
     # Lifetime of a worker's access token (it signs in again with its credential)

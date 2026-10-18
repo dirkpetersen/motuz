@@ -10,7 +10,7 @@ from ..models import CopyJob
 from ..managers.auth_manager import token_required, get_logged_in_user
 from ..managers import cloud_connection_manager
 from ..utils import rclone_tuning
-from ..managers import job_routing, worker_manager, upload_manager
+from ..managers import egress_manager, job_routing, worker_manager, upload_manager
 from ..utils.email_utils import Email
 
 
@@ -92,6 +92,7 @@ def create(data):
         'copy_links': data.get('copy_links', None),
         'notification_email': data.get('notification_email', None),
         'performance': validate_performance(data.get('performance'), dst_cloud),
+        'egress_estimate': egress_manager.confirmed_copy(src_cloud, dst_cloud, data.get('egress_estimate')),
 
         'progress_current': 0,
         'progress_total': 100,

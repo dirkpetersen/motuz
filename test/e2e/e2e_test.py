@@ -6,6 +6,7 @@ import json
 import re
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
 from common import (BASE, CTX, DOCUMENT_FIXTURES_CODE, NUMBERED_LOG_CODE, VIEWER_FIXTURES_CODE, check, check_browser_upload,
@@ -327,6 +328,28 @@ status, body, _ = view_image(B, '/b/x.png', cid)
 check('bob cannot view an image with alice connection', status == 404, (status, body))
 status, body, _ = req('POST', '/api/system/files/', B, {'path': '/b', 'connection_id': cid})
 check('bob cannot list with alice connection', status == 404, (status, body))
+
+# --- AWS egress cost (utils/egress_cost.py): the fake AWS connection cannot be measured
+# (MOTUZ_EGRESS_SIZE_TIMEOUT=5 in the e2e stack), so the estimate has no size
+def egress(token, src, path, dst=0):
+    query = urllib.parse.urlencode({'src_cloud_id': src, 'src_resource_path': path, 'dst_cloud_id': dst})
+    return req('GET', '/api/copy-jobs/egress-estimate/?' + query, token)
+status, body, _ = egress(A, 0, '/home/alice/src')
+check('egress estimate: none for a local source', status == 200 and body == {'applies': False}, (status, body))
+status, minio, _ = req('POST', '/api/connections/', A, {'name': 'alice-minio', 'type': 's3', 'bucket': 'b', 's3_provider': 'Minio',
+                                                         's3_endpoint': 'http://127.0.0.1:9', 's3_access_key_id': 'k', 's3_secret_access_key': 's'})
+status, body, _ = egress(A, minio['id'], '/b')
+check('egress estimate: none for another S3 provider', status == 200 and body == {'applies': False}, (status, body))
+status, body, _ = egress(A, cid, '/b')
+check('egress estimate: AWS to local is internet egress, size unknown',
+      status == 200 and body.get('applies') is True and body.get('kind') == 'internet' and body.get('bytes') is None
+      and body.get('rate_low_per_gb') == 0.05 and body.get('rate_high_per_gb') == 0.09, (status, body))
+status, body, _ = egress(B, cid, '/b')
+check('egress estimate: bob cannot use alice connection', status == 404, (status, body))
+status, body, _ = req('POST', '/api/copy-jobs/', A, {'description': 'x', 'src_cloud_id': cid, 'src_resource_path': '/b',
+                                                    'dst_resource_path': '/home/alice/x', 'copy_links': True})
+check('copy out of AWS without the confirmation -> 400', status == 400 and 'Confirm the AWS egress cost' in str(body), (status, body))
+check('logs: no secret of the fake AWS connection', 'topsecret' not in service_logs('app'), 'secret in the app log')
 
 # --- local copy job
 job = {'description': 'local copy', 'src_resource_path': '/home/alice/src', 'dst_resource_path': '/home/alice/dst', 'copy_links': True}

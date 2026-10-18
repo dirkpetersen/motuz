@@ -45,6 +45,10 @@ export const RETRIEVE_COPY_JOB_PERFORMANCE_REQUEST = '@@api/RETRIEVE_COPY_JOB_PE
 export const RETRIEVE_COPY_JOB_PERFORMANCE_SUCCESS = '@@api/RETRIEVE_COPY_JOB_PERFORMANCE_SUCCESS';
 export const RETRIEVE_COPY_JOB_PERFORMANCE_FAILURE = '@@api/RETRIEVE_COPY_JOB_PERFORMANCE_FAILURE';
 
+export const RETRIEVE_EGRESS_ESTIMATE_REQUEST = '@@api/RETRIEVE_EGRESS_ESTIMATE_REQUEST';
+export const RETRIEVE_EGRESS_ESTIMATE_SUCCESS = '@@api/RETRIEVE_EGRESS_ESTIMATE_SUCCESS';
+export const RETRIEVE_EGRESS_ESTIMATE_FAILURE = '@@api/RETRIEVE_EGRESS_ESTIMATE_FAILURE';
+
 export const STOP_COPY_JOB_REQUEST = '@@api/STOP_COPY_JOB_REQUEST';
 export const STOP_COPY_JOB_SUCCESS = '@@api/STOP_COPY_JOB_SUCCESS';
 export const STOP_COPY_JOB_FAILURE = '@@api/STOP_COPY_JOB_FAILURE';
@@ -309,6 +313,29 @@ export const retrieveCopyJobPerformance = (dstCloudId) => ({
         ],
     }
 });
+
+// AWS egress cost of a copy job ('copy-jobs') or an integrity check with download
+// ('hashsum-jobs'): {srcCloudId, srcPaths, dstCloudId, dstPaths}; connection 0 is local
+export const retrieveEgressEstimate = (jobType, {srcCloudId, srcPaths, dstCloudId, dstPaths = []}) => {
+    const query = [
+        `src_cloud_id=${encodeURIComponent(srcCloudId || 0)}`,
+        `dst_cloud_id=${encodeURIComponent(dstCloudId || 0)}`,
+        ...srcPaths.map(path => `src_resource_path=${encodeURIComponent(path)}`),
+        ...dstPaths.map(path => `dst_resource_path=${encodeURIComponent(path)}`),
+    ].join('&');
+    return {
+        [RSAA]: {
+            endpoint: `/api/${jobType === 'hashsum-jobs' ? 'hashsum-jobs' : 'copy-jobs'}/egress-estimate/?${query}`,
+            method: 'GET',
+            headers: withAuth({ 'Content-Type': 'application/json' }),
+            types: [
+                RETRIEVE_EGRESS_ESTIMATE_REQUEST,
+                RETRIEVE_EGRESS_ESTIMATE_SUCCESS,
+                RETRIEVE_EGRESS_ESTIMATE_FAILURE,
+            ],
+        }
+    };
+};
 
 const _createCopyJob = (data) => ({
     [RSAA]: {

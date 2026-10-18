@@ -24,6 +24,10 @@ class CopyJob(db.Model, TimestampMixin):
     # {"files": count, "bytes": total, "mode": "overwrite"|"skip", "name": shown as the
     # source}; its files are the job's upload_file rows
     upload = db.Column(db.JSON, nullable=True)
+    # The AWS egress cost the user confirmed for a copy out of AWS (utils/egress_cost.py,
+    # managers/egress_manager.py): {kind, bytes, files, low_usd, high_usd, rates,
+    # confirmed}; NULL when no AWS fee applies
+    egress_estimate = db.Column(db.JSON, nullable=True)
 
     owner = db.Column(db.String, index=True)
 

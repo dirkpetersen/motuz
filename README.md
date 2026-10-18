@@ -224,6 +224,7 @@ stops with a message naming the missing piece (it says when to run `install.sh` 
     - [Google Drive](#google-drive)
     - [Privacy policy and terms](#privacy-policy-and-terms)
     - [Performance tuning](#performance-tuning)
+    - [AWS egress cost](#aws-egress-cost)
     - [File viewer](#file-viewer)
     - [Uploads from the desktop](#uploads-from-the-desktop)
     - [Remote workers (HTTPS only)](#remote-workers-https-only)
@@ -1536,6 +1537,47 @@ Users can never pass flags: per-job settings are a fixed set of names whose valu
 parsed as numbers or sizes and formatted by Motuz, one argv item per flag
 (`--transfers=32`), without a shell. The flags appear in the rclone command in the
 celery log (credentials stay masked).
+
+### AWS egress cost
+
+AWS charges for data that leaves it. When a copy job reads from an S3 connection on
+Amazon S3 (provider "Amazon S3", or a connection without provider and endpoint), the
+New Copy Job dialog measures the source (`rclone size` as the user, at most
+`MOTUZ_EGRESS_SIZE_TIMEOUT` seconds, default 120) and shows the expected data transfer
+fee; the job can only be created after the user ticks "I understand this copy costs
+about $A–$B". The server refuses such a job without that confirmation (400 "Confirm
+the AWS egress cost in the dialog") and stores the confirmed estimate with it (shown in
+the job details); Retry asks again. An integrity check with "Download" reads every side
+on AWS to the server, so the New Hashsum Job dialog asks the same when Download is on.
+
+| Destination | Charge | Motuz shows |
+|---|---|---|
+| local filesystem, other clouds, other S3 providers | data transfer out to the internet | a range: size × $0.05 – size × $0.09 per GB |
+| Amazon S3, another region | inter-region transfer | about $0.02 per GB |
+| Amazon S3, same region | none | a note, no confirmation |
+
+AWS S3 data transfer out to the internet, standard regions (aws.amazon.com/s3/pricing,
+as of 2026-10; per account and month, decimal GB = 10^9 bytes):
+
+| Volume per month | Price per GB |
+|---|---|
+| first 100 GB (all AWS services and regions of the account) | free |
+| up to 10 TB | $0.09 |
+| next 40 TB | $0.085 |
+| next 100 TB | $0.07 |
+| over 150 TB | $0.05 |
+
+Motuz cannot know the account's monthly volume, discounts, Direct Connect or the AWS
+Global Data Egress Waiver some research institutions have, so it shows the lowest and
+the highest rate times the size. If the size cannot be measured in time, the dialog shows
+the price per TB ($50–$90) and still asks for the confirmation. Regions come from the
+connections' Region field (empty: rclone's `us-east-1`); a connection from an AWS
+profile without a region, or two AWS connections whose regions are not both known,
+count as another region. Connections from an rclone remote in the user's home are not
+recognized as AWS (the remote decides the provider). The estimate assumes the copy runs
+inside AWS when both sides are on AWS; through a server outside AWS the data leaves
+AWS on the way. The prices are in one table, `src/backend/api/utils/egress_cost.py`;
+update it and this section together.
 
 ### File viewer
 
