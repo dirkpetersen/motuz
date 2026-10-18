@@ -491,11 +491,14 @@ def send_upload(token, job_id, index, data, chunk_bytes):
     return status, body
 
 
-def check_browser_upload(req, token, other_token, connection_id, folder, label, sha256_of):
+def check_browser_upload(req, token, other_token, connection_id, folder, label, sha256_of, storage_known=True):
     """
     An upload from the browser into `folder` of `connection_id` (managers/upload_manager.py):
     conflicts, overwrite, skip, stop, the user's scope. `sha256_of(path)` returns the
     SHA-256 (hex) of a file below `folder`, read as the user, or None if it does not exist.
+    `storage_known` False: Motuz cannot identify the connection's storage (e.g. an rclone
+    remote profile; utils/motuz_destinations.storage_key), so what it wrote there is never
+    overwritten (overwrite policy).
     """
     import hashlib
     big = os.urandom(20 << 20 | 12345)  # 3 chunks, the last one short
@@ -521,8 +524,13 @@ def check_browser_upload(req, token, other_token, connection_id, folder, label, 
         got = sha256_of(n)
         check(f'{label}: {n} arrived intact', got == hashlib.sha256(files[n]).hexdigest(), got)
     status, conflicts, _ = req('POST', '/api/copy-jobs/uploads/conflicts/', token, dict(destination, names=['up', 'new']))
-    check(f'{label}: the uploaded folder is a conflict now, which may be overwritten (Motuz wrote it)',
-          conflicts.get('existing') == ['up'] and conflicts.get('overwrite') is True, conflicts)
+    if storage_known:
+        check(f'{label}: the uploaded folder is a conflict now, which may be overwritten (Motuz wrote it)',
+              conflicts.get('existing') == ['up'] and conflicts.get('overwrite') is True, conflicts)
+    else:
+        check(f'{label}: the uploaded folder is a conflict now, kept: Motuz cannot identify the storage',
+              conflicts.get('existing') == ['up'] and conflicts.get('overwrite') is False
+              and 'Motuz cannot tell' in (conflicts.get('overwrite_message') or ''), conflicts)
     status, skipped, _ = req('POST', '/api/copy-jobs/uploads/', token, dict(
         destination, mode='skip', files=[{'path': n, 'size': len(files[n])} for n in names] + [{'path': 'up/new.txt', 'size': 3}]))
     check(f'{label}: skip mode sends only the new file', status == 201 and skipped['pending'] == [3], (status, skipped))

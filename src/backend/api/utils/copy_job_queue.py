@@ -9,7 +9,7 @@ import time
 import os
 import signal
 
-from . import disk_full
+from . import disk_full, kept_files
 from .abstract_connection import signals_unblocked, AbstractConnection, RcloneException, user_process_env
 
 class CopyJobQueue:
@@ -28,18 +28,22 @@ class CopyJobQueue:
         self._local_dst = {} # Mapping from id to the local destination path (None: a cloud)
         self._disk_full = {} # Mapping from id to (disk_full.FULL or QUOTA, rclone's last such line)
         self._kept = defaultdict(lambda: [0, []]) # Mapping from id to [count, first KEPT_SAMPLE names]
+        self._kept_files = {} # Mapping from id to (rclone's --combined report or None, its user)
 
 
-    def push(self, command, env, job_id, local_dst=None):
+    def push(self, command, env, job_id, local_dst=None, kept_file=None, user=None):
         """
         @param local_dst: the destination path if it is on the local filesystem: rclone is
                           stopped as soon as it reports that it is full (utils/disk_full.py)
+        @param kept_file: rclone's --combined report of the job (utils/kept_files.py), read
+                          and removed as `user` when rclone has exited (copy_kept)
         """
         if self._job_id_exists(job_id):
             raise KeyError("Job with ID {} already submitted to {}".format(job_id, self.__class__))
 
         self._stop_events[job_id] = threading.Event()
         self._local_dst[job_id] = local_dst
+        self._kept_files[job_id] = (kept_file, user)
 
         try:
             self._execute_interactive(command, env, job_id)
@@ -71,7 +75,8 @@ class CopyJobQueue:
     def copy_kept(self, job_id):
         """
         {count, sample}: the existing destination files rclone kept (--ignore-existing,
-        rclone_tuning.KEEP_EXISTING_FLAGS) and the first KEPT_SAMPLE of their paths
+        rclone_tuning.KEEP_EXISTING_FLAGS) and the first KEPT_SAMPLE of their paths; known
+        once rclone has exited (copy_finished)
         """
         count, sample = self._kept[job_id]
         return {'count': count, 'sample': list(sample)}
@@ -137,6 +142,7 @@ class CopyJobQueue:
             self._job_exitstatus[job_id] = exitstatus
             self._job_percent[job_id] = 100
             logging.info("Copy process exited with exit status {}".format(exitstatus))
+            self._read_kept(job_id)
             stop_event.set()
 
 
@@ -155,7 +161,7 @@ class CopyJobQueue:
                 time.sleep(0.5)
                 continue
 
-            if _combined_line(line.rstrip('\r\n'), self._kept[job_id]):
+            if _combined_line(line.rstrip('\r\n')):
                 continue
             line = line.strip()
 
@@ -204,6 +210,18 @@ class CopyJobQueue:
                     os.killpg(process.pid, signal.SIGTERM)
                 except ProcessLookupError:
                     pass
+
+
+    def _read_kept(self, job_id):
+        """The kept files from rclone's report (read and removed as the user), into copy_kept and the text"""
+        kept_file, user = self._kept_files.get(job_id) or (None, None)
+        if kept_file is None:
+            return
+        try:
+            self._kept[job_id] = kept_files.read(user, kept_file)
+        except Exception as e: # never fail the job for its report
+            logging.exception(e)
+        self.__process_copy_text(job_id)
 
 
     def _append_error_text(self, job_id, text):
@@ -319,24 +337,15 @@ class CopyJobQueue:
 
 
 # Paths of kept files collected per job (copy_kept); the rest is only counted
-KEPT_SAMPLE = 1000
-# rclone's --combined report (rclone_tuning.KEEP_EXISTING_FLAGS), one line per file at
-# the start of a line: '= ' exists in the destination (kept with --ignore-existing),
-# '+ ' new, '* ' differs, '- ' only in the destination, '! ' error. The progress lines
-# never start like this (their list items start with ' * '); rclone escapes control
-# characters in names, so a name is always one line.
+KEPT_SAMPLE = kept_files.KEPT_SAMPLE
+# Lines of rclone's --combined report, one per file at the start of a line: '= ' exists
+# in the destination, '+ ' new, '* ' differs, '- ' only in the destination, '! ' error.
+# The report goes to a file (utils/kept_files.py); should such a line ever reach stdout
+# it is ignored, never parsed as a status line (a name with ": " would look like one).
+# The progress lines never start like this (their list items start with ' * ').
 _COMBINED_PREFIXES = ('= ', '+ ', '* ', '- ', '! ')
 
 
-def _combined_line(line, kept):
-    """
-    True if `line` (stdout without its line end) is a line of rclone's --combined
-    report; a kept file is counted into `kept` ([count, sample])
-    """
-    if not line.startswith(_COMBINED_PREFIXES):
-        return False
-    if line.startswith('= '):
-        kept[0] += 1
-        if len(kept[1]) < KEPT_SAMPLE:
-            kept[1].append(line[2:])
-    return True
+def _combined_line(line):
+    """True if `line` (stdout without its line end) is a line of rclone's --combined report"""
+    return line.startswith(_COMBINED_PREFIXES)

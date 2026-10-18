@@ -462,14 +462,15 @@ check('job detail returns the settings', pj.get('performance') == {'transfers': 
 check('settings stored on the job', json.loads(psql(f"select performance from copy_job where id={pj['id']}") or 'null')
       == {'transfers': 32, 'checkers': 64})
 celery_log = service_logs('celery')
-# Fresh destinations: existing files are kept (overwrite policy, rclone_tuning.KEEP_EXISTING_FLAGS)
+# Fresh destinations: existing files are kept (overwrite policy, rclone_tuning.KEEP_EXISTING_FLAGS),
+# rclone reports them to a file of the job's (utils/kept_files.py)
+KEPT = r' --ignore-existing --combined=/tmp/motuz-kept-\d+-[0-9a-f]{32} '
 check('rclone got the preset flags (celery log)',
-      '--transfers=32 --checkers=64 --buffer-size=0B --ignore-existing --combined=- copyto /home/alice/src /home/alice/dst-perf' in celery_log,
+      re.search('--transfers=32 --checkers=64 --buffer-size=0B' + KEPT + 'copyto /home/alice/src /home/alice/dst-perf', celery_log),
       [line for line in celery_log.splitlines() if 'dst-perf' in line][-1:])
 # a local source: no read-ahead (rclone_tuning.LOCAL_SOURCE_BUFFER_SIZE)
 check('a job without settings: the installation defaults only (celery log)',
-      '--contimeout=5m --transfers=16 --checkers=16 --buffer-size=0B --ignore-existing --combined=- copyto /home/alice/src /home/alice/dst '
-      in celery_log)
+      re.search('--contimeout=5m --transfers=16 --checkers=16 --buffer-size=0B' + KEPT + 'copyto /home/alice/src /home/alice/dst ', celery_log))
 
 jobs_before = psql("select count(*) from copy_job")
 for name, performance, expected in [

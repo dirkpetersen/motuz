@@ -9,6 +9,7 @@ from collections import defaultdict
 
 from .abstract_connection import AbstractConnection, RcloneException, check_output, sudo_as, user_process_env
 from . import disk_full
+from . import kept_files
 from . import local_credentials
 from .file_times import rfc3339_to_iso_utc
 from . import file_view
@@ -553,6 +554,15 @@ class RcloneConnection(AbstractConnection):
         else:
             option_copy_links = ''
 
+        # --ignore-existing: rclone reports the kept files to a new file of the job's, never
+        # to stdout, where the report would make it redraw its progress after every file.
+        # Made here, where rclone runs (never from a ticket: older tickets had --combined=-)
+        extra_flags = [flag for flag in _checked_flags(extra_flags)
+                       if flag.split('=', 1)[0] != kept_files.COMBINED_FLAG]
+        kept_file = kept_files.new_path(job_id) if rclone_tuning.KEEP_EXISTING_FLAG in extra_flags else None
+        if kept_file is not None:
+            extra_flags.append(kept_files.combined_flag(kept_file))
+
         command = [
             *sudo_as(user, {**credentials, **(extra_env or {})}), # extra_env too (not logged)
             RCLONE,
@@ -579,7 +589,8 @@ class RcloneConnection(AbstractConnection):
         credentials.update(extra_env or {})
 
         try:
-            self._copy_job_queue.push(command, credentials, job_id, local_dst=dst if dst_local else None)
+            self._copy_job_queue.push(command, credentials, job_id, local_dst=dst if dst_local else None,
+                                      kept_file=kept_file, user=user)
         except RcloneException as e:
             raise RcloneException(str(e))
 

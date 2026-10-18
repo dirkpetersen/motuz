@@ -124,7 +124,7 @@ class FlagTest(unittest.TestCase):
 
     def test_copy_flags(self):
         self.assertEqual(rclone_tuning.copy_flags(None, None, self.PLAIN, overwrite=False),
-                         ['--transfers=4', '--checkers=32', '--ignore-existing', '--combined=-'])
+                         ['--transfers=4', '--checkers=32', '--ignore-existing'])
         self.assertNotIn('--ignore-existing', rclone_tuning.copy_flags(None, None, self.PLAIN))
         self.assertNotIn('--ignore-existing', rclone_tuning.copy_flags(None, None, self.PLAIN, overwrite=True))
 
@@ -142,68 +142,125 @@ class FlagTest(unittest.TestCase):
             connection.copy(None, '/data/a', None, '/data/b', 'alice', False, 1, overwrite=False)
         command = queue.push.call_args.args[0]
         self.assertLess(command.index('--ignore-existing'), command.index('copyto'))
+        # The report goes to an unpredictable file of the job's, made where rclone runs
+        kept_file = queue.push.call_args.kwargs['kept_file']
+        self.assertRegex(kept_file, r'^/tmp/motuz-kept-1-[0-9a-f]{32}$')
+        self.assertIn('--combined=' + kept_file, command)
+        self.assertLess(command.index('--combined=' + kept_file), command.index('copyto'))
+        self.assertEqual(queue.push.call_args.kwargs['user'], 'alice')
+        self.assertNotIn('--combined=-', command)
+
+    def test_report_file_only_with_ignore_existing_and_never_from_a_ticket(self):
+        connection = RcloneConnection()
+        with mock.patch.object(connection, '_copy_job_queue') as queue:
+            connection.copy_with_credentials({}, src_resource_path='/a', src_local=True, dst_resource_path='/b',
+                                             dst_local=True, user='alice', copy_links=False, job_id=7,
+                                             extra_flags=['--transfers=4', '--combined=-'])
+            command = queue.push.call_args.args[0]
+            self.assertFalse([f for f in command if f.startswith('--combined')], command)
+            self.assertIsNone(queue.push.call_args.kwargs['kept_file'])
+            connection.copy_with_credentials({}, src_resource_path='/a', src_local=True, dst_resource_path='/b',
+                                             dst_local=True, user='alice', copy_links=False, job_id=8,
+                                             extra_flags=['--ignore-existing', '--combined=-'])
+            command = queue.push.call_args.args[0]
+            self.assertEqual([f for f in command if f.startswith('--combined')],
+                             ['--combined=' + queue.push.call_args.kwargs['kept_file']])
 
 
-# stdout of rclone v1.76.0 `--ignore-existing --combined=- copyto src/data dst/data
-# --progress --stats 2s` (non-TTY) where dst/data had x.txt and "sub dir/y: z.txt"
-RCLONE_STDOUT = '''
-Transferred:   \t          0 B / 0 B, -, 0 B/s, ETA -
-Checks:                 0 / 0, -, Listed 5
-Elapsed time:         0.0s
-+ z.txt
-= x.txt
+# A fake rclone: what rclone v1.76.0 `--ignore-existing --combined=<file> copyto src/data
+# dst/data --progress --stats 2s` writes (non-TTY), where dst/data had x.txt and
+# "sub dir/y: z.txt": the progress on stdout, the report in the file
+FAKE_RCLONE = r'''
+import sys
+report = [a.split('=', 1)[1] for a in sys.argv if a.startswith('--combined=')][0]
+with open(report, 'w') as f:
+    f.write(sys.argv[-1])
+sys.stdout.write("""
 Transferred:   \t          0 B / 3 B, 0%, 0 B/s, ETA -
 Checks:                 1 / 2, 50%, Listed 7
 Transferred:            0 / 1, 0%
 Elapsed time:         0.0s
-Checking:
- *                              sub dir/y: z.txt: checking
 Transferring:
  *                                         z.txt:  0% / 3 B, 0 B/s, -
-= sub dir/y: z.txt
-= = eq
-= new␊line
+= stray report line: never a status
 Transferred:   \t          3 B / 3 B, 100%, 0 B/s, ETA -
 Checks:                 2 / 2, 100%, Listed 7
 Transferred:            1 / 1, 100%
 Elapsed time:         0.0s
+""")
 '''
+REPORT = '+ z.txt\n= x.txt\n= sub dir/y: z.txt\n= = eq\n= new\u240aline\n'
 
 
 class KeptFilesTest(unittest.TestCase):
 
-    def run_queue(self, stdout):
+    def setUp(self):
+        from api.utils import kept_files
+        self.kept_files = kept_files
+        # READER as this user (no sudo in the tests)
+        patcher = mock.patch.object(kept_files, 'reader_command', lambda user, path: [
+            sys.executable, '-I', '-S', '-c', kept_files.READER, path, str(kept_files.KEPT_SAMPLE)])
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def run_queue(self, report):
         from api.utils.copy_job_queue import CopyJobQueue
         queue = CopyJobQueue()
-        queue.push([sys.executable, '-c', 'import sys; sys.stdout.write(sys.argv[1])', stdout], {}, 1)
-        for _ in range(100):
+        path = self.kept_files.new_path(1)
+        self.addCleanup(lambda: os.path.exists(path) and os.remove(path))
+        command = [sys.executable, '-c', FAKE_RCLONE, self.kept_files.combined_flag(path), 'copyto', report]
+        queue.push(command, {}, 1, kept_file=path, user='alice')
+        for _ in range(200):
             if queue.copy_finished(1):
                 break
             time.sleep(0.05)
         self.assertTrue(queue.copy_finished(1))
+        self.assertFalse(os.path.exists(path), 'the report is removed after reading')
         return queue
 
-    def test_kept_files_from_rclone_output(self):
-        queue = self.run_queue(RCLONE_STDOUT)
+    def test_kept_files_from_the_report_file(self):
+        queue = self.run_queue(REPORT)
         self.assertEqual(queue.copy_exitstatus(1), 0)
-        self.assertEqual(queue.copy_kept(1), {'count': 4, 'sample': ['x.txt', 'sub dir/y: z.txt', '= eq', 'new␊line']})
+        self.assertEqual(queue.copy_kept(1), {'count': 4, 'sample': ['x.txt', 'sub dir/y: z.txt', '= eq', 'new\u240aline']})
         text = queue.copy_text(1)
         self.assertIn('Kept: 4 existing files (not overwritten)', text)
         self.assertIn('Transferred: 1 / 1, 100%', text)
-        self.assertNotIn('z.txt', text, 'report lines are not status lines (a name with ": " would be one)')
+        self.assertNotIn('stray', text, 'a report line on stdout is no status line')
         self.assertEqual(queue.copy_error_text(1), '')
 
     def test_sample_is_bounded(self):
-        from api.utils import copy_job_queue
-        queue = self.run_queue(''.join('= f{}\n'.format(i) for i in range(copy_job_queue.KEPT_SAMPLE + 5)))
+        queue = self.run_queue(''.join('= f{}\n'.format(i) for i in range(self.kept_files.KEPT_SAMPLE + 5)))
         kept = queue.copy_kept(1)
-        self.assertEqual(kept['count'], copy_job_queue.KEPT_SAMPLE + 5)
-        self.assertEqual(len(kept['sample']), copy_job_queue.KEPT_SAMPLE)
+        self.assertEqual(kept['count'], self.kept_files.KEPT_SAMPLE + 5)
+        self.assertEqual(len(kept['sample']), self.kept_files.KEPT_SAMPLE)
 
     def test_nothing_kept(self):
-        queue = self.run_queue('Transferred:            1 / 1, 100%\n+ a.txt\n')
+        queue = self.run_queue('+ a.txt\n')
         self.assertEqual(queue.copy_kept(1), {'count': 0, 'sample': []})
         self.assertNotIn('Kept', queue.copy_text(1))
+
+    def test_no_report_file(self):
+        """rclone failed before it made the file: nothing kept, no error"""
+        self.assertEqual(self.kept_files.read('alice', self.kept_files.new_path(2)), [0, []])
+
+    def test_reader_never_follows_a_link(self):
+        with tempfile.TemporaryDirectory() as directory:
+            target = os.path.join(directory, 'target')
+            with open(target, 'w') as f:
+                f.write('= secret\n')
+            link = os.path.join(directory, 'link')
+            os.symlink(target, link)
+            self.assertEqual(self.kept_files.read('alice', link), [0, []])
+            self.assertTrue(os.path.exists(target), 'the target is untouched')
+
+    def test_paths_are_unpredictable(self):
+        self.assertNotEqual(self.kept_files.new_path(3), self.kept_files.new_path(3))
+        self.assertRegex(self.kept_files.new_path('x/../y'), r'^/tmp/motuz-kept-job-[0-9a-f]{32}$')
+
+    def test_parse(self):
+        self.assertEqual(self.kept_files.parse(b'{"count": 2, "sample": ["a", 3]}'), [2, ['a']])
+        for bad in (b'', b'[]', b'{"count": -1, "sample": []}', b'{"count": "x", "sample": []}', b'\xff'):
+            self.assertEqual(self.kept_files.parse(bad), [0, []], bad)
 
     def test_record_kept_validates(self):
         job = SimpleNamespace(skipped_existing=None, skipped_existing_sample=None)
@@ -360,7 +417,8 @@ class PolicyTest(unittest.TestCase):
             ticket = worker_manager.claim(worker, {'pool': 'onprem'})
         self.assertEqual(ticket['job']['id'], job['id'])
         self.assertIn('--ignore-existing', ticket['rclone_flags'])
-        self.assertIn('--combined=-', ticket['rclone_flags'])
+        self.assertFalse([f for f in ticket['rclone_flags'] if f.startswith('--combined')],
+                         'the report file is made where rclone runs, never in the ticket')
         # The worker reports the kept files with its progress and its result
         with self.app.test_request_context(base_url='https://motuz.test'):
             worker_manager.progress(worker, ticket['ticket_id'], ticket['ticket_token'],

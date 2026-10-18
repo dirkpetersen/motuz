@@ -380,7 +380,8 @@ def azure_sha256(path):
     return out.stdout.split()[0] if out.returncode == 0 else None
 
 
-check_browser_upload(req, A, B, c5['id'], '/motuztest/upload', 'upload to Azure', azure_sha256)
+# An rclone remote profile: Motuz cannot identify its storage (overwrite policy)
+check_browser_upload(req, A, B, c5['id'], '/motuztest/upload', 'upload to Azure', azure_sha256, storage_known=False)
 # Cloud listing: rclone's ModTime normalized to ISO 8601 UTC ('Z') in `modified`
 status, azls, raw = req('POST', '/api/system/files/', A, {'path': '/motuztest/copy', 'connection_id': c5['id']})
 entries = {f['Name']: f for f in (azls or {}).get('files', [])} if status == 200 else {}
