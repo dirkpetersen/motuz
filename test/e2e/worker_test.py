@@ -183,7 +183,7 @@ check('job says where it ran (pool onprem, worker w1)',
 owners = worker_sh('stat -c %U /home/alice/wdst/f1.txt /home/alice/wdst/sub/d.txt').stdout.split()
 check('copied files owned by alice (rclone ran as the owner via sudo)', owners == ['alice', 'alice'], owners)
 check('rclone ran on the worker, not by celery, with the job\'s performance flags from the ticket',
-      '--transfers=7 --checkers=9 copyto /home/alice/wsrc /home/alice/wdst' in logs('worker')
+      '--transfers=7 --checkers=9 --buffer-size=0B copyto /home/alice/wsrc /home/alice/wdst' in logs('worker')
       and '/home/alice/wdst' not in logs('celery'), [l for l in logs('worker').splitlines() if 'copyto' in l][-1:])
 
 status, bad = req('POST', '/api/copy-jobs/', A, {'description': 'relative', 'src_resource_path': '--config=/etc/shadow',

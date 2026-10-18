@@ -382,10 +382,11 @@ check('job detail returns the settings', pj.get('performance') == {'transfers': 
 check('settings stored on the job', json.loads(psql(f"select performance from copy_job where id={pj['id']}") or 'null')
       == {'transfers': 32, 'checkers': 64})
 celery_log = service_logs('celery')
-check('rclone got the preset flags (celery log)', '--transfers=32 --checkers=64 copyto /home/alice/src /home/alice/dst-perf' in celery_log,
+check('rclone got the preset flags (celery log)', '--transfers=32 --checkers=64 --buffer-size=0B copyto /home/alice/src /home/alice/dst-perf' in celery_log,
       [line for line in celery_log.splitlines() if 'dst-perf' in line][-1:])
+# a local source: no read-ahead (rclone_tuning.LOCAL_SOURCE_BUFFER_SIZE)
 check('a job without settings: the installation defaults only (celery log)',
-      '--contimeout=5m --transfers=16 --checkers=16 copyto /home/alice/src /home/alice/dst ' in celery_log)
+      '--contimeout=5m --transfers=16 --checkers=16 --buffer-size=0B copyto /home/alice/src /home/alice/dst ' in celery_log)
 
 jobs_before = psql("select count(*) from copy_job")
 for name, performance, expected in [
