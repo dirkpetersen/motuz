@@ -257,10 +257,12 @@ load_versions() {
     # shellcheck source=../../deployment/systemd/versions.env
     source "$REPO_DIR/deployment/systemd/versions.env"
     local dockerfile="$REPO_DIR/deployment/docker/app/Dockerfile"
+    RCLONE_RELEASES=$(sed -n 's/^ARG RCLONE_RELEASES=//p' "$dockerfile")
     RCLONE_VERSION=$(sed -n 's/^ARG RCLONE_VERSION=//p' "$dockerfile")
     RCLONE_SHA256_AMD64=$(sed -n 's/^ARG RCLONE_SHA256_AMD64=//p' "$dockerfile")
     RCLONE_SHA256_ARM64=$(sed -n 's/^ARG RCLONE_SHA256_ARM64=//p' "$dockerfile")
     [ -n "$RCLONE_VERSION" ] && [ -n "$RCLONE_SHA256_AMD64" ] || die "no rclone version in $dockerfile"
+    [[ "$RCLONE_RELEASES" =~ ^https://[A-Za-z0-9./_-]+$ ]] || die "no https RCLONE_RELEASES in $dockerfile"
 }
 
 # The data mover's TCP settings (install.sh, /etc/sysctl.d/61-motuz-network.conf): send and

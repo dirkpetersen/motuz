@@ -163,7 +163,7 @@ if [ "$(/usr/local/bin/rclone version 2>/dev/null | head -1)" != "rclone v${RCLO
     log "rclone ${RCLONE_VERSION}"
     sha="RCLONE_SHA256_${ARCH^^}"
     name="rclone-v${RCLONE_VERSION}-linux-${ARCH}"
-    fetch_checked "https://downloads.rclone.org/v${RCLONE_VERSION}/${name}.zip" "${!sha}" "$TMP/rclone.zip"
+    fetch_checked "${RCLONE_RELEASES}/v${RCLONE_VERSION}/${name}.zip" "${!sha}" "$TMP/rclone.zip"
     unzip -q "$TMP/rclone.zip" -d "$TMP"
     install -m 755 -o root -g root "$TMP/$name/rclone" /usr/local/bin/rclone
 fi

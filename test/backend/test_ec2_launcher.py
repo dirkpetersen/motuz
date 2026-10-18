@@ -652,7 +652,8 @@ class TestUserData(Ec2TestBase):
         self.assertIn("SOURCE_REF={}\n".format('a' * 40), script)
         self.assertIn("MAX_RUNTIME_MINUTES={}\n".format(24 * 60 + ec2_launcher.RUNTIME_GRACE_MINUTES), script)
         self.assertIn("ONCE_WAIT=1200\n", script)
-        self.assertIn("RCLONE_VERSION=1.75.1\n", script)
+        self.assertIn("RCLONE_VERSION=1.76.0-md5simd.2\n", script)
+        self.assertIn("RCLONE_RELEASES={}\n".format(ec2_config.RCLONE_RELEASES), script)
         self.assertIn('MOTUZ_WORKER_RUN_AS=motuzjob', script)
         self.assertIn('motuz ALL=(motuzjob) NOPASSWD:SETENV: /usr/local/bin/rclone', script)
         self.assertIn('--once', script)
@@ -674,6 +675,7 @@ class TestUserData(Ec2TestBase):
     def test_rclone_pin_matches_the_dockerfile(self):
         with open(os.path.join(REPO, 'deployment', 'docker', 'app', 'Dockerfile')) as f:
             dockerfile = f.read()
+        self.assertIn('ARG RCLONE_RELEASES={}\n'.format(ec2_config.RCLONE_RELEASES), dockerfile)
         self.assertIn('ARG RCLONE_VERSION={}\n'.format(ec2_config.RCLONE_VERSION), dockerfile)
         self.assertIn('ARG RCLONE_SHA256_AMD64={}\n'.format(ec2_config.RCLONE_SHA256['amd64']), dockerfile)
         self.assertIn('ARG RCLONE_SHA256_ARM64={}\n'.format(ec2_config.RCLONE_SHA256['arm64']), dockerfile)

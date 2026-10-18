@@ -56,9 +56,13 @@ ENV MOTUZ_HEIC_SITE=/opt/motuz-heic/site
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-ARG RCLONE_VERSION=1.75.1
-ARG RCLONE_SHA256_AMD64=982b5aa772841168f8e380f139e9e787b2a105403e32b94da8676a0e1c0a13ab
-ARG RCLONE_SHA256_ARM64=03f2504174034b6d004152ed7369251c9a9ec1f7e0836eda420f5c7a5ec0dff9
+# rclone with md5-simd and CRC32C part checksums for S3 (--md5-simd, --s3-part-checksum),
+# branch s3-md5-simd of github.com/dirkpetersen/rclone; the stock releases are
+# RCLONE_RELEASES=https://downloads.rclone.org (same file names)
+ARG RCLONE_RELEASES=https://github.com/dirkpetersen/rclone/releases/download
+ARG RCLONE_VERSION=1.76.0-md5simd.2
+ARG RCLONE_SHA256_AMD64=7a42863dc2a2f92d2618ca9fd97f55bbf6fbd29ca3bd7e1878a7c0b354ed7b57
+ARG RCLONE_SHA256_ARM64=40673084f4a26f210b3c827120a986879f6e1b9e402c8a8d7c2fa70138f7994f
 ARG TARGETARCH=amd64
 
 RUN set -x \
@@ -74,7 +78,7 @@ RUN set -x \
         unzip \
     && if [ "$TARGETARCH" = "arm64" ]; then RCLONE_SHA256="$RCLONE_SHA256_ARM64"; else RCLONE_SHA256="$RCLONE_SHA256_AMD64"; fi \
     && RCLONE_NAME="rclone-v${RCLONE_VERSION}-linux-${TARGETARCH}" \
-    && curl -fLO "https://downloads.rclone.org/v${RCLONE_VERSION}/${RCLONE_NAME}.zip" \
+    && curl -fLO "${RCLONE_RELEASES}/v${RCLONE_VERSION}/${RCLONE_NAME}.zip" \
     && echo "${RCLONE_SHA256}  ${RCLONE_NAME}.zip" | sha256sum -c - \
     && unzip "${RCLONE_NAME}.zip" \
     && cp "${RCLONE_NAME}/rclone" /usr/local/bin/ \

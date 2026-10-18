@@ -211,6 +211,7 @@ def build_user_data(s, token, job_ref, central_url, template_path=TEMPLATE):
         'SOURCE_URL': s.source_url,
         'SOURCE_REF': s.source_ref,
         'MOTUZ_VERSION': VERSION,
+        'RCLONE_RELEASES': ec2_config.RCLONE_RELEASES,
         'RCLONE_VERSION': ec2_config.RCLONE_VERSION,
         'RCLONE_SHA256_AMD64': ec2_config.RCLONE_SHA256['amd64'],
         'RCLONE_SHA256_ARM64': ec2_config.RCLONE_SHA256['arm64'],

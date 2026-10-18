@@ -394,11 +394,12 @@ systemctl disable --now valkey.service valkey-sentinel.service; systemctl mask v
 
 ```bash
 . deployment/systemd/versions.env
+RCLONE_RELEASES=$(sed -n 's/^ARG RCLONE_RELEASES=//p' deployment/docker/app/Dockerfile)
 RCLONE_VERSION=$(sed -n 's/^ARG RCLONE_VERSION=//p' deployment/docker/app/Dockerfile)
 RCLONE_SHA256_AMD64=$(sed -n 's/^ARG RCLONE_SHA256_AMD64=//p' deployment/docker/app/Dockerfile)
 ARCH=amd64; UVARCH=x86_64      # arm64 / aarch64 on ARM (then RCLONE_SHA256_ARM64, TRAEFIK_SHA256_ARM64, UV_SHA256_ARM64)
 T=$(mktemp -d); cd "$T"
-curl -fsSLO https://downloads.rclone.org/v$RCLONE_VERSION/rclone-v$RCLONE_VERSION-linux-$ARCH.zip
+curl -fsSLO $RCLONE_RELEASES/v$RCLONE_VERSION/rclone-v$RCLONE_VERSION-linux-$ARCH.zip
 echo "$RCLONE_SHA256_AMD64  rclone-v$RCLONE_VERSION-linux-$ARCH.zip" | sha256sum -c -
 unzip -q rclone-v$RCLONE_VERSION-linux-$ARCH.zip && install -m 755 rclone-v$RCLONE_VERSION-linux-$ARCH/rclone /usr/local/bin/rclone
 curl -fsSLO https://github.com/traefik/traefik/releases/download/v$TRAEFIK_VERSION/traefik_v${TRAEFIK_VERSION}_linux_$ARCH.tar.gz

@@ -21,6 +21,7 @@ JOB=@@JOB@@
 SOURCE_URL=@@SOURCE_URL@@
 SOURCE_REF=@@SOURCE_REF@@
 MOTUZ_VERSION=@@MOTUZ_VERSION@@
+RCLONE_RELEASES=@@RCLONE_RELEASES@@
 RCLONE_VERSION=@@RCLONE_VERSION@@
 RCLONE_SHA256_AMD64=@@RCLONE_SHA256_AMD64@@
 RCLONE_SHA256_ARM64=@@RCLONE_SHA256_ARM64@@
@@ -105,7 +106,7 @@ if [ "$(/usr/local/bin/rclone version 2>/dev/null | head -n 1)" != "rclone v$RCL
     W=$(mktemp -d) || halt "mktemp"
     NAME="rclone-v$RCLONE_VERSION-linux-$ARCH"
     curl -fsS --retry 5 --retry-all-errors --connect-timeout 20 -o "$W/rclone.zip" \
-        "https://downloads.rclone.org/v$RCLONE_VERSION/$NAME.zip" || halt "rclone download failed"
+        "$RCLONE_RELEASES/v$RCLONE_VERSION/$NAME.zip" || halt "rclone download failed"
     echo "$RCLONE_SHA256  $W/rclone.zip" | sha256sum -c --quiet - || halt "rclone checksum mismatch"
     python3 -I -c 'import sys, zipfile; zipfile.ZipFile(sys.argv[1]).extract(sys.argv[2], sys.argv[3])' \
         "$W/rclone.zip" "$NAME/rclone" "$W" || halt "cannot unpack rclone"
