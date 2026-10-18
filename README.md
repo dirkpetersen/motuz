@@ -1170,7 +1170,8 @@ Advanced options:
 [`s3-md5-simd`](https://github.com/dirkpetersen/rclone/tree/s3-md5-simd) (rclone master plus
 these options, proposed upstream): `--md5-simd` computes MD5s with
 [md5-simd](https://github.com/minio/md5-simd), up to 16 streams at once per core (local files,
-Check Integrity, S3 upload parts), and `--s3-part-checksum md5|crc32c|none` chooses the checksum
+Check Integrity, S3 upload parts; x86-64 with AVX2 or AVX512 only, other CPUs such as arm64 use
+the standard MD5), and `--s3-part-checksum md5|crc32c|none` chooses the checksum
 of each upload part. Motuz passes both as rclone variables (`RCLONE_MD5_SIMD*`,
 `RCLONE_S3_PART_CHECKSUM`), which a stock rclone ignores, so they are safe with either. Measured
 on 8 vCPUs, AWS us-west-2, 33 GB of 100 MB files, 32 transfers, upload concurrency 16, chunked
