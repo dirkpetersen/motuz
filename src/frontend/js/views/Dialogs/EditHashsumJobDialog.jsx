@@ -190,7 +190,7 @@ class EditHashsumJobDialog extends React.Component {
                                         ,
                                         <span className="rc-node-color-missing ms-2">
                                             <span className="rc-tree-node-content-wrapper p-1">
-                                                Missing MD5 Hash
+                                                Missing Hash
                                             </span>
                                         </span>
                                     </div>
@@ -198,14 +198,14 @@ class EditHashsumJobDialog extends React.Component {
                                 <div className="row mt-3">
                                     <div className="col-12">
                                         <i>
-                                            <b>*</b> The md5sums above might have changed since the time this check was performed
+                                            <b>*</b> The checksums above might have changed since the time this check was performed
                                         </i>
                                     </div>
                                 </div>
                                 <div className="row">
                                     <div className="col-12">
                                         <i>
-                                            <b>**</b> Under particular circumstances, the md5sums above might be incorrect
+                                            <b>**</b> Under particular circumstances, the checksums above might be incorrect
                                         </i>
                                     </div>
                                 </div>

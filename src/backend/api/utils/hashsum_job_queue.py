@@ -124,13 +124,9 @@ class HashsumJobQueue:
                 time.sleep(0.5)
                 continue
 
-            # The output of the command is 32 md5sum characters,
-            # followed by 2 spaces
-            # followed by the filename
-            groups = re.search(
-                r'^({})\s\s(.*)'.format('.' * 32), # 32 character md5sum
-                line,
-            )
+            # The output of the command is the hash (32 characters for md5sum, 64 for
+            # hashsum sha256; spaces if the backend has none), 2 spaces, the file name
+            groups = re.search(r'^([0-9a-f]{64}| {64}|.{32})\s\s(.*)', line)
             if groups is None:
                 logging.info("No match in {}".format(line))
                 continue

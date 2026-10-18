@@ -1235,6 +1235,20 @@ file systems, where the read-ahead may help, set e.g. `MOTUZ_RCLONE_BUFFER_SIZE=
 the rest is the kernel's sending and file reading, and TLS. `rclone md5sum` of the same files:
 8.7 instead of 14.2 CPU-seconds with md5-simd.
 
+**Local to local: SHA-256 instead of MD5.** When both sides of a job are local paths, the copy is
+checked with SHA-256 (`RCLONE_LOCAL_HASHES=sha256`) and Check Integrity runs `rclone hashsum
+sha256` instead of `md5sum`. Go's SHA-256 uses the CPU's SHA instructions (x86 SHA-NI, ARMv8
+SHA2): 1.8 GB/s per stream against 0.8 GB/s for MD5 on an AMD EPYC 9534. Copy of 3 GB (30 files
+of 100 MB) between two local folders, 16 transfers, median of 3 runs:
+
+| Check after the copy | Time | User CPU |
+|---|---|---|
+| MD5 (rclone's default) | 1.68 s | 7.8 s |
+| SHA-256 | 1.07 s | 3.5 s |
+| none | 0.99 s | 0.1 s |
+
+Whenever a cloud is involved, both stay MD5: clouds record MD5 (the S3 ETag), not SHA-256.
+
 ### OneDrive: own app registration
 
 "Sign in with Microsoft" (Clouds > New connection > OneDrive) uses rclone's
@@ -1624,6 +1638,8 @@ failed, with rclone's message for each failed file.
 - Empty folders are not uploaded, at most 100,000 files per drop. Uploads always run on
   the central node, never on remote workers, and have no Retry or Check Integrity (the
   source was in the browser).
+- When a local destination is full (or the user's disk quota is exceeded), the whole
+  upload fails at once with that reason instead of failing file by file.
 
 ### Remote workers (HTTPS only)
 
@@ -1639,6 +1655,11 @@ access, open no ports and need no VPN. Typical setups:
 A worker runs the same job code as the Motuz server's Celery worker: rclone as the job's
 owner (`sudo -n --preserve-env=<names> -u <owner>`), the same output parsing, Stop, progress and final state in
 the UI. Local paths are the worker's own mounts.
+
+A copy job whose local destination is full (no space left on device, or the user's disk
+quota is exceeded) stops at once, on the Motuz server and on workers alike: rclone is
+stopped instead of failing and retrying every remaining file, and the job's error text
+starts with the reason, the destination and how many files were copied before.
 
 **Which jobs go where** (`.env` of the Motuz server, passed to the `app` container; `motuz.env` without Docker):
 

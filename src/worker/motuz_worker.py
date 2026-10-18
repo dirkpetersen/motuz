@@ -443,6 +443,7 @@ class JobRun:
 
     def hashsum(self):
         job, options = self.job, self.job.get('options') or {}
+        hash_type = job_runner.hashsum_type(bool(job['src'].get('local')), bool(job['dst'].get('local')))
 
         def start_side(side, run_id):
             entry = job[side]
@@ -455,6 +456,7 @@ class JobRun:
                 download=bool(options.get('download')),
                 extra_flags=self.ticket.get('rclone_flags') or [],
                 extra_env={**self.config.rclone_env, **checked_job_env(self.ticket.get('rclone_job_env'))},
+                hash_type=hash_type,
             )
 
         def tick(side, percent, tree, error_text):

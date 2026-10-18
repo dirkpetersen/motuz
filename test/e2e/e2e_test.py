@@ -10,7 +10,7 @@ import urllib.request
 
 from common import (BASE, CTX, DOCUMENT_FIXTURES_CODE, NUMBERED_LOG_CODE, VIEWER_FIXTURES_CODE, check, check_browser_upload,
                     check_chunked_reads, put_chunk, check_document_view, check_image_view, finish,
-                    numbered_log, data_key_material, db_password, pg_dump, psql, service_logs, sh, stored_secret)
+                    numbered_log, data_key_material, db_password, pg_dump, psql, service_logs, sh, skip, stored_secret)
 
 
 def req(method, path, token=None, body=None):
@@ -418,15 +418,16 @@ dst_tree = json.loads(hj.get('progress_dst_tree') or '[]')
 dst_names = sorted(n['title'] for n in dst_tree)
 check('hashsum with extra dst files finishes (no infinite loop)', hj['progress_state'] == 'SUCCESS', hj['progress_state'])
 check('hashsum reports differences', dst_names == ['f2.txt', 'zz1.txt', 'zz2.txt'], dst_tree)
-check('hashsum: rclone md5sum got the installation --checkers (celery log)',
-      '--checkers=16 md5sum /home/alice/src' in service_logs('celery'))
+check('hashsum: local to local is rclone hashsum sha256 with the installation --checkers (celery log)',
+      '--checkers=16 hashsum sha256 /home/alice/src' in service_logs('celery'))
 
 status, hj, _ = req('POST', '/api/hashsum-jobs/', A, {'src_resource_path': '/home/alice/src', 'dst_resource_path': '/home/alice/dst-perf',
                                                       'option_download': False, 'performance': {'checkers': 24}})
 check('hashsum with checkers accepted', status == 201 and hj.get('performance') == {'checkers': 24}, (status, hj))
 hj = wait_job('hashsum-jobs', hj['id'], A)
 check('hashsum with checkers SUCCESS and identical', hj['progress_state'] == 'SUCCESS' and json.loads(hj['progress_dst_tree']) == [], hj)
-check("hashsum: rclone md5sum got the job's --checkers (celery log)", '--checkers=24 md5sum /home/alice/dst-perf' in service_logs('celery'))
+# Both sides local: SHA-256 (job_runner.hashsum_type)
+check("hashsum: rclone hashsum sha256 got the job's --checkers (celery log)", '--checkers=24 hashsum sha256 /home/alice/dst-perf' in service_logs('celery'))
 for performance in ({'transfers': 4}, {'checkers': '8 --rc'}, {'checkers': 1000}):
     status, body, _ = req('POST', '/api/hashsum-jobs/', A, {'src_resource_path': '/home/alice/src', 'dst_resource_path': '/home/alice/dst',
                                                             'option_download': False, 'performance': performance})
@@ -456,6 +457,58 @@ check('job stays STOPPED', after['progress_state'] == 'STOPPED', after['progress
 status, hc, _ = req('POST', '/api/copy-jobs/', A, {'description': 'after stop', 'src_resource_path': '/home/alice/src', 'dst_resource_path': '/home/alice/dst2', 'copy_links': True})
 hc = wait_job('copy-jobs', hc['id'], A)
 check('worker still processes jobs after stop', hc['progress_state'] == 'SUCCESS', hc)
+
+# --- a full local destination fails the job at once (utils/disk_full.py): a 1 MiB tmpfs
+# owned by alice. Needs root with mount rights where the jobs run: the systemd install
+# (VM, privileged AL2027 container); the Docker stack's containers may not mount
+FULL = '/home/alice/full'
+mounted = sh('celery', f"mkdir -p {FULL} && mount -t tmpfs -o size=1m,mode=0755,uid=$(id -u alice),gid=$(id -g alice) "
+                       f"motuz-e2e-full {FULL} && test \"$(stat -f -c %T {FULL})\" = tmpfs")
+if mounted.returncode != 0:
+    sh('celery', f"rmdir {FULL}")
+    skip('a copy to a full local disk fails at once', 'cannot mount a tmpfs where the jobs run: ' + mounted.stderr.strip()[-200:])
+    skip('an upload to a full local disk fails at once', 'no tmpfs')
+else:
+    try:
+        status, fj, _ = req('POST', '/api/copy-jobs/', A, {'description': 'full disk', 'src_resource_path': '/home/alice/many',
+                                                          'dst_resource_path': FULL + '/many', 'copy_links': True})
+        fj = wait_job('copy-jobs', fj['id'], A, timeout=120)
+        error = fj.get('progress_error_text') or ''
+        check('a copy to a full local disk FAILED', fj['progress_state'] == 'FAILED', fj['progress_state'])
+        check("the job says the destination is full, how many files were copied, and rclone's line",
+              re.match(r'The destination filesystem is full \(no space left on device\) at /home/alice/full/many: '
+                       r'\d+ files? (was|were) copied before\. Free space or choose another destination\.\nrclone: .*'
+                       r'(no space left on device|file too big for remaining disk space)\n', error) is not None, error[:600])
+        check('rclone stopped at the first full write, not after failing every file',
+              len(re.findall(r'no space left on device|remaining disk space', error)) < 200 and fj['progress_execution_time'] < 60,
+              (len(re.findall(r'no space left on device|remaining disk space', error)), fj['progress_execution_time']))
+        left = sh('celery', RCLONE_PIDS).stdout.strip()
+        check('no rclone left after the full disk', left == '', left)
+
+        if sh('app', f'test "$(stat -f -c %T {FULL})" = tmpfs').returncode != 0:
+            skip('an upload to a full local disk fails at once', 'the tmpfs is not mounted where the app runs')
+        else:
+            sh('app', f"sudo -u alice rm -rf {FULL}/many")
+            size = 2 * 1024 * 1024
+            status, created, _ = req('POST', '/api/copy-jobs/uploads/', A, {
+                'dst_cloud_id': 0, 'dst_resource_path': FULL, 'mode': 'overwrite',
+                'files': [{'path': 'big1.bin', 'size': size}, {'path': 'big2.bin', 'size': size}]})
+            uj = created['job']['id'] if status == 201 else None
+            status, body = put_chunk(A, uj, 0, 0, (b'full-disk-needle' * (size // 16))[:size])
+            check('an upload to a full local disk: the file fails and the job with it', status == 200
+                  and body['file_state'] == 'failed' and body['job_state'] == 'FAILED', (status, body))
+            status, body = put_chunk(A, uj, 1, 0, b'x' * 1024)
+            check("the upload's other files are refused", status == 409 and body.get('job_state') == 'FAILED', (status, body))
+            status, job, _ = req('GET', f'/api/copy-jobs/{uj}', A)
+            check('the upload says the destination is full', status == 200 and (job.get('progress_error') or '').startswith(
+                'The destination filesystem is full (no space left on device) at /home/alice/full: 0 files were uploaded before.'),
+                (status, job.get('progress_error'), job.get('progress_error_text')))
+            listing = sh('app', f"ls -A {FULL}").stdout.strip()
+            check('no temporary upload file left', listing == '', listing)
+            check('upload contents never logged (full disk)', 'full-disk-needle' not in service_logs('app'), 'contents in the app log')
+    finally:
+        sh('celery', f"umount {FULL} || umount -l {FULL}; rmdir {FULL}")
+
 
 # --- uploads from the browser: rclone rcat as alice into her home
 def local_sha256(path):

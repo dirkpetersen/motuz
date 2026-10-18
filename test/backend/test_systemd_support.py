@@ -47,7 +47,7 @@ class TestSudoPrefix(unittest.TestCase):
         connection = RcloneConnection()
         pushed = {}
         with mock.patch.object(connection._copy_job_queue, 'push',
-                               side_effect=lambda command, env, job_id: pushed.update(command=command, env=env)):
+                               side_effect=lambda command, env, job_id, **_: pushed.update(command=command, env=env)):
             connection.copy_with_credentials({}, src_resource_path='/a', src_local=True, dst_resource_path='/b',
                                              dst_local=True, user='alice', copy_links=False, job_id=1,
                                              extra_env={'HTTPS_PROXY': 'http://proxy:3128', 'SSL_CERT_FILE': '/etc/motuz-worker/ca.pem'})
