@@ -19,6 +19,36 @@ fetch_checked() { # url sha256 file
 }
 
 # The account's configuration and data (the units use the same paths below %h)
+# Filesystems the service account's home must not be on: it holds PostgreSQL, Redis and
+# the systemd --user state, which need a local disk (locking, fsync, uid ownership)
+NETWORK_FS_RE='^(nfs.*|cifs|smb.*|fuse.*|autofs|ceph|glusterfs|lustre|gpfs|beegfs|afs|9p|virtiofs|sshfs)$'
+
+home_choice() { # fstype-of-/home same-filesystem(0|1) free-bytes-/home free-bytes-/var/lib
+    # "home" if the account's home should go under /home: a local filesystem other than
+    # /var/lib's with more free space; else "var"
+    if [[ "$1" =~ $NETWORK_FS_RE ]] || [ -z "$1" ] || [ "$2" = 1 ] || [ "$3" -le "$4" ]; then
+        echo var
+    else
+        echo home
+    fi
+}
+
+default_home() { # account
+    # The home of a new service account when install.sh gets no --home: /home/<account>
+    # or /var/lib/<account> (home_choice). /home must exist and be local.
+    local fstype same=0 home_free var_free
+    [ -d /home ] || { echo "/var/lib/$1"; return; }
+    fstype=$(findmnt -n -o FSTYPE --target /home 2>/dev/null) || fstype=""
+    [ "$(findmnt -n -o TARGET --target /home 2>/dev/null)" != "$(findmnt -n -o TARGET --target /var/lib 2>/dev/null)" ] || same=1
+    home_free=$(df --output=avail -B1 /home 2>/dev/null | tail -1 | tr -d ' ') || home_free=0
+    var_free=$(df --output=avail -B1 /var/lib 2>/dev/null | tail -1 | tr -d ' ') || var_free=0
+    if [ "$(home_choice "$fstype" "$same" "${home_free:-0}" "${var_free:-0}")" = home ]; then
+        echo "/home/$1"
+    else
+        echo "/var/lib/$1"
+    fi
+}
+
 motuz_paths() { # home
     CONFIG_DIR="$1/.config/motuz"
     SETTINGS="$CONFIG_DIR/motuz.env"

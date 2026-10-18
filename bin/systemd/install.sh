@@ -15,7 +15,8 @@
 #                       log in with local /etc/shadow accounts (not for SSSD/Kerberos)
 #   --sudo-group=GROUP  Motuz may act only as members of GROUP (default: any user but root)
 #   --user=NAME         the service account (default motuz)
-#   --home=DIR          its home directory, on local disk (default /var/lib/motuz)
+#   --home=DIR          its home directory, on local disk (default /home/motuz if /home is a
+#                       local filesystem with more free space than /var/lib, else /var/lib/motuz)
 #   --system-postgres   use the distribution's own PostgreSQL 18 service (the default on
 #                       Ubuntu): its cluster (Ubuntu: 18/main, created with pg_createcluster
 #                       if missing; Amazon Linux: postgresql-setup --initdb), on localhost
@@ -83,7 +84,7 @@ source "$(dirname "$0")/_system_services.sh"
 LOCAL_ACCOUNTS=0
 SUDO_GROUP=""
 ACCOUNT=motuz
-HOME_DIR=/var/lib/motuz
+HOME_DIR="" # default_home
 WORKER_ONLY=0
 CENTRAL_URL=""
 POOL=""
@@ -121,7 +122,11 @@ done
 
 [ "$(id -u)" = 0 ] || die "run as root"
 [[ "$ACCOUNT" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]] || die "invalid account name $ACCOUNT"
+[ -n "$HOME_DIR" ] || HOME_DIR=$(default_home "$ACCOUNT")
 [[ "$HOME_DIR" = /* ]] || die "--home must be absolute"
+if [ "$HOME_DIR" != /var/lib/"$ACCOUNT" ] && [[ "$(findmnt -n -o FSTYPE --target "$(dirname "$HOME_DIR")" 2>/dev/null)" =~ $NETWORK_FS_RE ]]; then
+    die "$HOME_DIR is on a network filesystem; the account's home must be on local disk"
+fi
 [ -z "$SUDO_GROUP" ] || getent group "$SUDO_GROUP" >/dev/null || die "group $SUDO_GROUP does not exist"
 if [ "$WORKER_ONLY" = 1 ]; then
     [ "$LOCAL_ACCOUNTS" = 0 ] || die "--local-accounts is for the server, not --worker-only"
@@ -197,7 +202,9 @@ if ! id "$ACCOUNT" >/dev/null 2>&1; then
     useradd --system --user-group --create-home --home-dir "$HOME_DIR" --shell /bin/bash \
         --comment "Motuz service account" "$ACCOUNT"
 fi
+WANTED_HOME=$HOME_DIR
 HOME_DIR=$(getent passwd "$ACCOUNT" | cut -d: -f6)
+[ "$HOME_DIR" = "$WANTED_HOME" ] || warn "the account $ACCOUNT exists with the home $HOME_DIR, not $WANTED_HOME: kept (README, \"Moving the account's home\")"
 GROUP=$(id -gn "$ACCOUNT")
 chmod 750 "$HOME_DIR"
 # The account's pinned binaries (bin/systemd/tools.sh): /var/lib is root's, so only root

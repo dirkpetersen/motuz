@@ -421,6 +421,32 @@ def bash_lib(script, **env):
     return subprocess.run(['bash', '-c', code], capture_output=True, text=True, env=dict(os.environ, **env))
 
 
+class TestDefaultHome(unittest.TestCase):
+    """install.sh's home of a new account (_lib.sh home_choice / default_home)"""
+
+    def choice(self, *facts):
+        return bash_lib('home_choice ' + ' '.join(map(str, facts))).stdout.strip()
+
+    def test_more_space_on_a_local_home(self):
+        self.assertEqual(self.choice('ext4', 0, 32 << 30, 2 << 30), 'home')
+        self.assertEqual(self.choice('xfs', 0, 32 << 30, 2 << 30), 'home')
+
+    def test_var_lib_otherwise(self):
+        for fstype in ('nfs4', 'nfs', 'cifs', 'smb3', 'fuse.sshfs', 'autofs', 'ceph', 'lustre', 'gpfs', 'beegfs', '9p'):
+            self.assertEqual(self.choice(fstype, 0, 32 << 30, 2 << 30), 'var', fstype)
+        self.assertEqual(self.choice('ext4', 1, 32 << 30, 2 << 30), 'var', 'the same filesystem')
+        self.assertEqual(self.choice('ext4', 0, 2 << 30, 32 << 30), 'var', 'less space')
+        self.assertEqual(self.choice('ext4', 0, 5, 5), 'var', 'as much space')
+
+    def test_default_home_is_one_of_the_two(self):
+        self.assertIn(bash_lib('default_home motuz').stdout.strip(), ('/home/motuz', '/var/lib/motuz'))
+
+    def test_install_uses_it_and_refuses_a_network_home(self):
+        install = open(os.path.join(REPO, 'bin/systemd/install.sh')).read()
+        self.assertIn('HOME_DIR=$(default_home "$ACCOUNT")', install)
+        self.assertIn('is on a network filesystem', install)
+
+
 class TestNetworkTuning(unittest.TestCase):
     """install.sh's /etc/sysctl.d/61-motuz-network.conf (_lib.sh network_tuning_conf)"""
 

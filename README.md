@@ -947,6 +947,31 @@ them: `--purge` drops only the database `motuz` and the role `motuz_user` (and o
 lines) of the system PostgreSQL, and removes `/etc/redis/motuz.conf` and the drop-in. Packages
 stay installed.
 
+### The account's home: /home or /var/lib
+
+The account's home holds the checkout, the settings and secrets, and in the private modes the
+database (`~/data`), so it needs space. Without `--home`, `install.sh` creates it as
+`/home/motuz` if `/home` is a local filesystem (not NFS, CIFS, FUSE, autofs, Ceph, Lustre,
+GPFS, ...) other than the one of `/var/lib` with more free space, and as `/var/lib/motuz`
+otherwise; a home on a network filesystem is refused. `/var/lib/motuz-runas` (the rclone the
+users run) stays in `/var/lib`. An existing account keeps its home (`install.sh` warns).
+
+**Moving the account's home** starts from an empty database (the stored connections, jobs and
+logins are lost; the users create their connections again):
+
+1. As `motuz`, save what you want to keep: `~/.config/motuz/motuz.env` (settings, e.g. the
+   OneDrive/Google app ids) and `~/data/certs/` (your TLS certificate, if not Let's Encrypt),
+   e.g. `(umask 077 && tar -C ~ -czf /tmp/motuz-keep.tgz .config/motuz/motuz.env data/certs)`.
+   Keep the secrets of `secrets.env` you set yourself (`config.sh show` lists their names),
+   such as an OAuth client secret; the database password and the keys are created again.
+2. As root, from a root-only checkout: `bin/systemd/uninstall.sh --purge --yes`.
+3. As root: `bin/systemd/install.sh` with the options of the first install; it prints the
+   new home (`account motuz (/home/motuz)`).
+4. As `motuz`: clone the repository into `~/motuz`, restore `motuz.env` and `data/certs/`
+   (only the settings you changed: the database settings are written by `deploy.sh`), set
+   your secrets with `bin/systemd/config.sh ask-secret NAME`, then run
+   `~/motuz/bin/systemd/deploy.sh`. `bin/systemd/bootstrap.sh` does steps 3 and 4 in one.
+
 ## Install on Amazon Linux 2027 (default on EC2)
 
 On EC2, install Motuz on Amazon Linux 2027 (AL2027, a public preview since September 2026)
