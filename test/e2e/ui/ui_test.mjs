@@ -414,10 +414,10 @@ if (PHASE === 'paste') {
             ['Preset', 'Parallel transfers', 'Parallel checkers', 'Multi-thread streams', 'Multi-thread cutoff']), labels);
         check('performance: server defaults as placeholders',
             await page.getAttribute('#performance-checkers', 'placeholder') === 'default 16'
-            && await page.getAttribute('#performance-transfers', 'placeholder') === 'default 16');
+            && await page.getAttribute('#performance-transfers', 'placeholder') === 'default 48');
         await page.selectOption('#performance-preset', 'small_files');
         check('performance: "Many small files" fills the fields',
-            await page.inputValue('#performance-transfers') === '32' && await page.inputValue('#performance-checkers') === '64'
+            await page.inputValue('#performance-transfers') === '48' && await page.inputValue('#performance-checkers') === '256'
             && await page.inputValue('#performance-multi_thread_streams') === '');
         await shot('copy-performance-small-files');
 
@@ -438,10 +438,10 @@ if (PHASE === 'paste') {
         await page.click('.modal-footer button[type=submit]');
         for (let i = 0; i < 50 && !posts.length; i++) await page.waitForTimeout(200);
         check('performance: POST carries the preset', posts.length === 1
-            && JSON.stringify(posts[0].performance) === JSON.stringify({ transfers: 32, checkers: 64 }), posts);
+            && JSON.stringify(posts[0].performance) === JSON.stringify({ transfers: 48, checkers: 256 }), posts);
         await page.waitForSelector('.modal-content .job-performance', { timeout: 10000 });
         check('performance: job detail shows the settings',
-            (await page.textContent('.modal-content .job-performance')).trim() === '32 transfers · 64 checkers');
+            (await page.textContent('.modal-content .job-performance')).trim() === '48 transfers · 256 checkers');
         let job = null;
         for (let i = 0; i < 60; i++) {
             const jobs = await (await api.get('/api/copy-jobs/', { headers: auth })).json();
@@ -450,7 +450,7 @@ if (PHASE === 'paste') {
             await page.waitForTimeout(1000);
         }
         check('performance: job SUCCESS with its settings', job && job.progress_state === 'SUCCESS'
-            && JSON.stringify(job.performance) === JSON.stringify({ transfers: 32, checkers: 64 }), job);
+            && JSON.stringify(job.performance) === JSON.stringify({ transfers: 48, checkers: 256 }), job);
         page.off('request', listener);
         await page.click('.modal-footer button:has-text("Close")');
         await page.waitForSelector('.modal-content', { state: 'detached', timeout: 10000 });

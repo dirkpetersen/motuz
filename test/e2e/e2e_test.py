@@ -437,7 +437,7 @@ status, body, _ = req('POST', '/api/copy-jobs/uploads/', A, {'dst_cloud_id': 0, 
 check('overwrite policy: an upload in overwrite mode is refused (403)', status == 403 and read_alice('/home/alice/owup/x.txt') == 'old\n', (status, body))
 
 # --- rclone performance settings (utils/rclone_tuning.py). compose.yml sets
-# MOTUZ_RCLONE_CHECKERS=16 and MOTUZ_RCLONE_MAX_TRANSFERS=48
+# MOTUZ_RCLONE_CHECKERS=16, MOTUZ_RCLONE_MAX_TRANSFERS=48 and MOTUZ_RCLONE_MEMORY_BUDGET=8G
 status, perf, _ = req('GET', '/api/copy-jobs/performance/?dst_cloud_id=0', A)
 fields = {f['name']: f for f in perf.get('fields', [])} if status == 200 else {}
 check('performance settings of a local destination', status == 200
@@ -446,7 +446,7 @@ check('performance settings of a local destination', status == 200
       (status, perf))
 presets = {p['id']: p for p in perf.get('presets', [])} if status == 200 else {}
 check('presets', list(presets) == ['default', 'small_files', 'large_files', 'maximum']
-      and presets['small_files']['values'] == {'transfers': 32, 'checkers': 64}
+      and presets['small_files']['values'] == {'transfers': 48, 'checkers': 256}
       and presets['maximum']['values']['transfers'] <= 48, presets)
 status, body, _ = req('GET', f'/api/copy-jobs/performance/?dst_cloud_id={cid}', B)
 check('bob cannot read performance settings for alice connection', status == 404, (status, body))
@@ -454,21 +454,21 @@ check('bob cannot read performance settings for alice connection', status == 404
 job = {'description': 'many small files', 'src_resource_path': '/home/alice/src', 'dst_resource_path': '/home/alice/dst-perf',
        'copy_links': True, 'performance': presets.get('small_files', {}).get('values')}
 status, pj, _ = req('POST', '/api/copy-jobs/', A, job)
-check('create copy job with the "Many small files" preset', status == 201 and pj['performance'] == {'transfers': 32, 'checkers': 64},
+check('create copy job with the "Many small files" preset', status == 201 and pj['performance'] == {'transfers': 48, 'checkers': 256},
       (status, pj))
 pj = wait_job('copy-jobs', pj['id'], A)
 check('copy job with preset SUCCESS', pj['progress_state'] == 'SUCCESS', pj)
-check('job detail returns the settings', pj.get('performance') == {'transfers': 32, 'checkers': 64}, pj.get('performance'))
+check('job detail returns the settings', pj.get('performance') == {'transfers': 48, 'checkers': 256}, pj.get('performance'))
 check('settings stored on the job', json.loads(psql(f"select performance from copy_job where id={pj['id']}") or 'null')
-      == {'transfers': 32, 'checkers': 64})
+      == {'transfers': 48, 'checkers': 256})
 celery_log = service_logs('celery')
 # Fresh destinations: existing files are kept (overwrite policy, rclone_tuning.KEEP_EXISTING_FLAGS)
 check('rclone got the preset flags (celery log)',
-      '--transfers=32 --checkers=64 --buffer-size=0B --ignore-existing --combined=- copyto /home/alice/src /home/alice/dst-perf' in celery_log,
+      '--transfers=48 --checkers=256 --buffer-size=0B --ignore-existing --combined=- copyto /home/alice/src /home/alice/dst-perf' in celery_log,
       [line for line in celery_log.splitlines() if 'dst-perf' in line][-1:])
 # a local source: no read-ahead (rclone_tuning.LOCAL_SOURCE_BUFFER_SIZE)
 check('a job without settings: the installation defaults only (celery log)',
-      '--contimeout=5m --transfers=16 --checkers=16 --buffer-size=0B --ignore-existing --combined=- copyto /home/alice/src /home/alice/dst '
+      '--contimeout=5m --transfers=48 --checkers=16 --buffer-size=0B --ignore-existing --combined=- copyto /home/alice/src /home/alice/dst '
       in celery_log)
 
 jobs_before = psql("select count(*) from copy_job")

@@ -16,10 +16,15 @@ from api.utils.rclone_connection import RcloneConnection
 from api.utils.abstract_connection import sudo_as
 
 
+# The default memory budget is a quarter of the machine's memory: fixed for the tests
+TEST_BUDGET = 16 * GiB
+
+
 def settings(**env):
     """Settings from MOTUZ_RCLONE_* (without md5-simd unless md5_simd_servers is given)"""
     env.setdefault('md5_simd_servers', '0')
-    return tuning.load_settings({'MOTUZ_RCLONE_' + k.upper(): v for k, v in env.items()})
+    with mock.patch.object(tuning, 'default_memory_budget', return_value=TEST_BUDGET):
+        return tuning.load_settings({'MOTUZ_RCLONE_' + k.upper(): v for k, v in env.items()})
 
 
 def plain_settings(**env):
@@ -84,7 +89,7 @@ class TestSizes(unittest.TestCase):
 
     def test_size_in_bytes(self):
         # the API may give sizes as a number of bytes
-        self.assertEqual(tuning.validate_overrides({'s3_chunk_size': 64 * MiB}, 's3', DEFAULT), {'s3_chunk_size': 64 * MiB})
+        self.assertEqual(tuning.validate_overrides({'s3_chunk_size': 20 * MiB}, 's3', DEFAULT), {'s3_chunk_size': 20 * MiB})
         with self.assertRaises(TuningError):
             tuning.validate_overrides({'s3_chunk_size': 64}, 's3', DEFAULT) # 64 bytes
 
@@ -98,23 +103,31 @@ class TestSizes(unittest.TestCase):
 class TestInstallationSettings(unittest.TestCase):
 
     def test_unset_means_motuz_defaults(self):
-        self.assertEqual(DEFAULT.defaults, {'transfers': 16, 'checkers': 32})
-        self.assertEqual(tuning.copy_flags(None, 's3', DEFAULT), ['--transfers=16', '--checkers=32'])
-        self.assertEqual(tuning.hashsum_flags(None, DEFAULT), ['--checkers=32'])
+        self.assertEqual(DEFAULT.defaults, {'transfers': 64, 'checkers': 128, 's3_upload_concurrency': 8,
+                                            's3_chunk_size': 16 * MiB})
+        self.assertEqual(tuning.copy_flags(None, 's3', DEFAULT),
+                         ['--transfers=64', '--checkers=128', '--s3-upload-concurrency=8', '--s3-chunk-size=16Mi'])
+        # the S3 values only for S3 destinations
+        self.assertEqual(tuning.copy_flags(None, None, DEFAULT), ['--transfers=64', '--checkers=128'])
+        self.assertEqual(tuning.hashsum_flags(None, DEFAULT), ['--checkers=128'])
         # a job's own value wins
-        self.assertEqual(tuning.copy_flags({'transfers': 4}, None, DEFAULT), ['--transfers=4', '--checkers=32'])
+        self.assertEqual(tuning.copy_flags({'transfers': 4}, None, DEFAULT), ['--transfers=4', '--checkers=128'])
 
     def test_motuz_defaults_yield_to_caps_and_budget(self):
-        self.assertEqual(settings(max_transfers='8', max_checkers='10').defaults, {'transfers': 8, 'checkers': 10})
-        self.assertEqual(settings(transfers='2').defaults, {'transfers': 2, 'checkers': 32})
+        self.assertEqual(settings(max_transfers='8', max_checkers='10').defaults,
+                         {'transfers': 8, 'checkers': 10, 's3_upload_concurrency': 8, 's3_chunk_size': 16 * MiB})
+        self.assertEqual(settings(transfers='2').defaults['checkers'], 128)
+        # a smaller budget halves transfers and the S3 upload concurrency instead of dropping them
+        self.assertEqual(settings(memory_budget='4G').defaults,
+                         {'transfers': 32, 'checkers': 64, 's3_upload_concurrency': 4, 's3_chunk_size': 16 * MiB})
         # an installation that fits the budget with rclone's 4 transfers still starts
         self.assertEqual(settings(buffer_size='256M').defaults, {'buffer_size': 256 * MiB})
 
     def test_without_motuz_defaults_rclone_defaults(self):
         self.assertEqual(PLAIN.defaults, {})
         self.assertEqual(PLAIN.extra_flags, ())
-        self.assertEqual(DEFAULT.memory_budget, 8 * GiB)
-        self.assertEqual(DEFAULT.caps, {'transfers': 64, 'checkers': 128, 'multi_thread_streams': 32,
+        self.assertEqual(DEFAULT.memory_budget, TEST_BUDGET)
+        self.assertEqual(DEFAULT.caps, {'transfers': 128, 'checkers': 256, 'multi_thread_streams': 32,
                                         'upload_concurrency': 64})
         self.assertEqual(tuning.copy_flags(None, 's3', PLAIN), [])
         self.assertEqual(tuning.copy_flags({}, None, PLAIN), [])
@@ -122,7 +135,8 @@ class TestInstallationSettings(unittest.TestCase):
 
     def test_local_sources_get_no_read_ahead(self):
         self.assertEqual(tuning.copy_flags(None, 's3', DEFAULT, src_local=True),
-                         ['--transfers=16', '--checkers=32', '--buffer-size=0B'])
+                         ['--transfers=64', '--checkers=128', '--s3-upload-concurrency=8', '--s3-chunk-size=16Mi',
+                          '--buffer-size=0B'])
         self.assertEqual(tuning.copy_flags(None, None, PLAIN, src_local=True), ['--buffer-size=0B'])
         # the installation's own buffer size wins
         s = settings(buffer_size='32M')
@@ -173,16 +187,16 @@ class TestInstallationSettings(unittest.TestCase):
             self.assertIn(name, str(raised.exception))
 
     def test_default_above_cap(self):
-        with self.assertRaisesRegex(TuningConfigError, 'MOTUZ_RCLONE_TRANSFERS=100 is above MOTUZ_RCLONE_MAX_TRANSFERS=64'):
-            settings(transfers='100')
-        self.assertEqual(settings(transfers='100', max_transfers='128', memory_budget='16G').defaults['transfers'], 100)
+        with self.assertRaisesRegex(TuningConfigError, 'MOTUZ_RCLONE_TRANSFERS=200 is above MOTUZ_RCLONE_MAX_TRANSFERS=128'):
+            settings(transfers='200')
+        self.assertEqual(settings(transfers='200', max_transfers='256', memory_budget='64G').defaults['transfers'], 200)
         with self.assertRaisesRegex(TuningConfigError, 'MOTUZ_RCLONE_MAX_UPLOAD_CONCURRENCY'):
             settings(azureblob_upload_concurrency='128')
 
     def test_defaults_above_memory_budget(self):
         # 32 transfers * (4 streams * 64 MiB + 16 * 64 MiB) = 40 GiB for S3 destinations
         with self.assertRaisesRegex(TuningConfigError, 'MOTUZ_RCLONE_MEMORY_BUDGET=8Gi'):
-            settings(transfers='32', buffer_size='64M', s3_upload_concurrency='16', s3_chunk_size='64M')
+            settings(transfers='32', buffer_size='64M', s3_upload_concurrency='16', s3_chunk_size='64M', memory_budget='8G')
         s = settings(transfers='32', buffer_size='64M', s3_upload_concurrency='16', s3_chunk_size='64M',
                      memory_budget='64G')
         self.assertEqual(tuning.estimate_memory(s.defaults, 's3'), 40 * GiB)
@@ -281,10 +295,10 @@ class TestOverrides(unittest.TestCase):
                 self.assertRegex(value, r'\A[0-9]+(Ki|Mi|Gi|Ti|B)?\Z')
 
     def test_caps(self):
-        with self.assertRaisesRegex(TuningError, 'Parallel transfers must be at most 64 on this server'):
-            tuning.validate_overrides({'transfers': 65}, None, DEFAULT)
-        with self.assertRaisesRegex(TuningError, 'at most 128'):
-            tuning.validate_overrides({'checkers': 129}, None, DEFAULT)
+        with self.assertRaisesRegex(TuningError, 'Parallel transfers must be at most 128 on this server'):
+            tuning.validate_overrides({'transfers': 129}, None, DEFAULT)
+        with self.assertRaisesRegex(TuningError, 'at most 256'):
+            tuning.validate_overrides({'checkers': 257}, None, DEFAULT)
         with self.assertRaisesRegex(TuningError, 'at most 32'):
             tuning.validate_overrides({'multi_thread_streams': 33}, None, DEFAULT)
         with self.assertRaisesRegex(TuningError, 'S3 upload concurrency must be at most 64'):
@@ -333,7 +347,7 @@ class TestMemory(unittest.TestCase):
     def test_budget(self):
         # 16 * (16 * 16 MiB + 16 * 64 MiB) = 20 GiB
         raw = {'transfers': 16, 'multi_thread_streams': 16, 's3_upload_concurrency': 16, 's3_chunk_size': '64M'}
-        with self.assertRaisesRegex(TuningError, r'about 20 GiB of memory, more than the 8 GiB'):
+        with self.assertRaisesRegex(TuningError, r'about 20 GiB of memory, more than the 16 GiB'):
             tuning.validate_overrides(raw, 's3', DEFAULT)
         # the same for a local destination: 16 * 16 * 16 MiB = 4 GiB
         self.assertEqual(tuning.validate_overrides(raw, None, DEFAULT), {'transfers': 16, 'multi_thread_streams': 16})
@@ -354,36 +368,40 @@ class TestPresets(unittest.TestCase):
     def test_default_budget(self):
         local = self.values(None)
         self.assertEqual(local['default']['values'], {})
-        self.assertEqual(local['small_files']['values'], {'transfers': 32, 'checkers': 64})
-        self.assertEqual(local['large_files']['values'], {'transfers': 4, 'multi_thread_streams': 16,
+        self.assertEqual(local['small_files']['values'], {'transfers': 128, 'checkers': 256})
+        self.assertEqual(local['large_files']['values'], {'transfers': 32, 'checkers': 64, 'multi_thread_streams': 16,
                                                           'multi_thread_cutoff': '64Mi'})
-        self.assertEqual(local['maximum']['values'], {'transfers': 32, 'checkers': 128, 'multi_thread_streams': 16,
+        # 128 transfers * 16 streams * 16 MiB would be 32 GiB: halved to the budget
+        self.assertEqual(local['maximum']['values'], {'transfers': 64, 'checkers': 256, 'multi_thread_streams': 16,
                                                       'multi_thread_cutoff': '64Mi'})
+        self.assertTrue(local['maximum']['reduced'])
         s3 = self.values('s3')
-        self.assertEqual(s3['large_files']['values'], {'transfers': 4, 'multi_thread_streams': 16,
+        self.assertEqual(s3['small_files']['values'], {'transfers': 128, 'checkers': 256, 's3_upload_concurrency': 4,
+                                                       's3_chunk_size': '16Mi'})
+        # 32 * (16 * 16 MiB + 16 * 16 MiB) = 16 GiB, the measured best for large files
+        self.assertEqual(s3['large_files']['values'], {'transfers': 32, 'checkers': 64, 'multi_thread_streams': 16,
                                                        'multi_thread_cutoff': '64Mi', 's3_upload_concurrency': 16,
-                                                       's3_chunk_size': '64Mi'})
+                                                       's3_chunk_size': '16Mi'})
         self.assertFalse(s3['large_files']['reduced'])
-        self.assertEqual(s3['maximum']['values'], {'transfers': 10, 'checkers': 128, 'multi_thread_streams': 16,
-                                                   'multi_thread_cutoff': '64Mi', 's3_upload_concurrency': 16,
-                                                   's3_chunk_size': '32Mi'})
+        self.assertEqual(s3['maximum']['values']['transfers'], 32)
         self.assertTrue(s3['maximum']['reduced'])
         az = self.values('azureblob')
-        self.assertEqual(az['maximum']['values']['azureblob_chunk_size'], '32Mi')
+        self.assertEqual(az['maximum']['values']['azureblob_chunk_size'], '16Mi')
 
     def test_large_budget(self):
         s3 = self.values('s3', settings(memory_budget='128G'))
-        # 64 * (16 * 16 MiB + 16 * 64 MiB) = 80 GiB
-        self.assertEqual(s3['maximum']['values'], {'transfers': 64, 'checkers': 128, 'multi_thread_streams': 16,
+        # 128 * (16 * 16 MiB + 16 * 16 MiB) = 64 GiB
+        self.assertEqual(s3['maximum']['values'], {'transfers': 128, 'checkers': 256, 'multi_thread_streams': 16,
                                                    'multi_thread_cutoff': '64Mi', 's3_upload_concurrency': 16,
-                                                   's3_chunk_size': '64Mi'})
+                                                   's3_chunk_size': '16Mi'})
         self.assertFalse(s3['maximum']['reduced'])
-        self.assertEqual(s3['maximum']['memory'], 80 * GiB)
+        self.assertEqual(s3['maximum']['memory'], 64 * GiB)
 
     def test_caps_clamp(self):
         s = settings(max_transfers='16', max_checkers='32', max_multi_thread_streams='8', max_upload_concurrency='8')
         s3 = self.values('s3', s)
-        self.assertEqual(s3['small_files']['values'], {'transfers': 16, 'checkers': 32})
+        self.assertEqual(s3['small_files']['values'], {'transfers': 16, 'checkers': 32, 's3_upload_concurrency': 4,
+                                                       's3_chunk_size': '16Mi'})
         self.assertTrue(s3['small_files']['reduced'])
         self.assertEqual(s3['large_files']['values']['multi_thread_streams'], 8)
 
@@ -414,9 +432,9 @@ class TestPresets(unittest.TestCase):
         self.assertEqual(names, ['transfers', 'checkers', 'multi_thread_streams', 'multi_thread_cutoff',
                                  's3_upload_concurrency', 's3_chunk_size'])
         transfers = d['fields'][0]
-        self.assertEqual((transfers['min'], transfers['max'], transfers['default']), (1, 64, 8))
-        self.assertEqual(d['fields'][-1]['default'], '5Mi')
-        self.assertEqual(d['memory_budget'], 8 * GiB)
+        self.assertEqual((transfers['min'], transfers['max'], transfers['default']), (1, 128, 8))
+        self.assertEqual(d['fields'][-1]['default'], '16Mi')
+        self.assertEqual(d['memory_budget'], TEST_BUDGET)
         self.assertEqual([p['id'] for p in d['presets']], ['default', 'small_files', 'large_files', 'maximum'])
         self.assertNotIn('s3_chunk_size', [f['name'] for f in tuning.describe(None, DEFAULT)['fields']])
 
@@ -454,10 +472,11 @@ class TestRcloneCommand(unittest.TestCase):
     def test_motuz_defaults_on_the_command(self):
         command, env = self.command(DEFAULT, dst=_s3_connection())
         # the source /tmp is local: no read-ahead
-        self.assertEqual(command[command.index('copyto') - 3:command.index('copyto')],
-                         ['--transfers=16', '--checkers=32', '--buffer-size=0B'])
+        self.assertEqual(command[command.index('copyto') - 5:command.index('copyto')],
+                         ['--transfers=64', '--checkers=128', '--s3-upload-concurrency=8', '--s3-chunk-size=16Mi',
+                          '--buffer-size=0B'])
         command, env = self.command(DEFAULT, dst=_s3_connection(), method='md5sum')
-        self.assertEqual(command[command.index('md5sum') - 1], '--checkers=32')
+        self.assertEqual(command[command.index('md5sum') - 1], '--checkers=128')
 
     def test_defaults_unset_command_unchanged(self):
         command, env = self.command(PLAIN, dst=_s3_connection())
@@ -473,8 +492,8 @@ class TestRcloneCommand(unittest.TestCase):
         preset = {p['id']: p for p in tuning.presets('s3', DEFAULT)}['maximum']['values']
         command, _ = self.command(DEFAULT, performance=preset, dst=_s3_connection())
         flags = command[command.index('--contimeout=5m') + 1:command.index('copyto')]
-        self.assertEqual(flags, ['--transfers=10', '--checkers=128', '--multi-thread-streams=16',
-                                 '--multi-thread-cutoff=64Mi', '--s3-upload-concurrency=16', '--s3-chunk-size=32Mi',
+        self.assertEqual(flags, ['--transfers=32', '--checkers=256', '--multi-thread-streams=16',
+                                 '--multi-thread-cutoff=64Mi', '--s3-upload-concurrency=16', '--s3-chunk-size=16Mi',
                                  '--buffer-size=0B'])
         self.assertEqual(command[-6:], ['copyto', '/tmp', 'dst:/bucket/x', '--progress', '--stats', '2s'])
 
@@ -576,7 +595,7 @@ class TestApi(unittest.TestCase):
         self.assertIsNone(copy_job_manager.validate_performance({}, None))
         self.assertEqual(copy_job_manager.validate_performance({'transfers': '16', 's3_chunk_size': '64M'}, s3),
                          {'transfers': 16, 's3_chunk_size': '64Mi'})
-        for raw in ({'transfers': '4 --config=/etc/shadow'}, {'transfers': 65}, {'buffer_size': '1G'},
+        for raw in ({'transfers': '4 --config=/etc/shadow'}, {'transfers': 129}, {'buffer_size': '1G'},
                     {'transfers': 16, 'multi_thread_streams': 16, 's3_upload_concurrency': 16, 's3_chunk_size': '64M'}):
             with self.assertRaises(HTTP_400_BAD_REQUEST, msg=raw):
                 copy_job_manager.validate_performance(raw, s3)

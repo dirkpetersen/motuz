@@ -120,7 +120,7 @@ class SettingTest(unittest.TestCase):
 
 
 class FlagTest(unittest.TestCase):
-    PLAIN = rclone_tuning.load_settings({'MOTUZ_RCLONE_TRANSFERS': '4'})
+    PLAIN = rclone_tuning.load_settings({'MOTUZ_RCLONE_TRANSFERS': '4', 'MOTUZ_RCLONE_CHECKERS': '32'})
 
     def test_copy_flags(self):
         self.assertEqual(rclone_tuning.copy_flags(None, None, self.PLAIN, overwrite=False),

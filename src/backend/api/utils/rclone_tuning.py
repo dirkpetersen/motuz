@@ -2,8 +2,9 @@
 rclone performance settings (README, "Performance tuning").
 
 - Installation defaults from the environment (MOTUZ_RCLONE_TRANSFERS, ...). Unset means
-  Motuz's own default (MOTUZ_DEFAULTS: 16 transfers, 32 checkers, since rclone's 4/8
-  leave a data mover mostly waiting on round trips), else rclone's default, i.e. no flag.
+  Motuz's own default (MOTUZ_DEFAULTS: 64 transfers, 128 checkers, S3 parts of 16 MiB
+  sent 8 at a time, measured 2026-10-18; rclone's 4/8 leave a data mover mostly waiting
+  on round trips), else rclone's default, i.e. no flag.
 - Per-job overrides from the New Copy Job dialog (`performance` of a copy or hashsum
   job): only the parameters in PARAMS with `per_job`, validated, capped by
   MOTUZ_RCLONE_MAX_* and by the memory budget.
@@ -67,12 +68,17 @@ PARAMS = (
 PARAMS_BY_NAME = {p.name: p for p in PARAMS}
 PER_JOB = tuple(p.name for p in PARAMS if p.per_job)
 
-# Motuz's defaults when MOTUZ_RCLONE_<NAME> is unset (lowered to a smaller cap). rclone's
-# 4 transfers / 8 checkers are too few for many files or high-latency object storage;
-# 16 transfers cost at most 16 x the buffer (256 MiB with rclone's 16M) per job.
+# Motuz's defaults when MOTUZ_RCLONE_<NAME> is unset (lowered to a smaller cap). Measured
+# 2026-10-18 from local files to AWS S3 (8 vCPUs, CRC32C parts, buffer 0), GB/s for 100 MB
+# / 1 MB files: rclone's 4 transfers and 5 MiB parts 2.2 / 0.18 with 16 transfers; 32
+# transfers with 16 MiB parts x 16 4.0 / 0.37; these values 3.8 / 0.67; 128 transfers
+# 3.3 / 1.2. 64 MiB parts were slower (1.8). Estimate: 64 x (8 x 16 MiB + 4 x 16M buffer
+# from a cloud source) = 12 GiB, within the default budget of a machine with >= 48 GiB.
 MOTUZ_DEFAULTS = {
-    'transfers': 16,
-    'checkers': 32,
+    'transfers': 64,
+    'checkers': 128,
+    's3_upload_concurrency': 8,
+    's3_chunk_size': 16 * MiB,
 }
 
 # rclone's defaults (rclone help flags, v1.75), only used for the memory estimate
@@ -90,8 +96,8 @@ RCLONE_DEFAULTS = {
 
 # MOTUZ_RCLONE_MAX_<NAME>: (default, sanity bounds of the parameter it caps)
 CAPS = {
-    'transfers': 64,
-    'checkers': 128,
+    'transfers': 128,
+    'checkers': 256,
     'multi_thread_streams': 32,
     'upload_concurrency': 64, # S3 and Azure Blob
 }
@@ -101,7 +107,9 @@ _CAP_BOUNDS = {
     'multi_thread_streams': (0, 256),
     'upload_concurrency': (1, 256),
 }
-DEFAULT_MEMORY_BUDGET = 8 * GiB
+# MOTUZ_RCLONE_MEMORY_BUDGET unset: a quarter of the memory the server may use (its RAM or
+# its cgroup limit), between these bounds (default_memory_budget)
+DEFAULT_MEMORY_BUDGET_RANGE = (4 * GiB, 64 * GiB)
 _MEMORY_BUDGET_BOUNDS = (64 * MiB, 64 * TiB)
 
 # Backends whose chunk size / upload concurrency are in the estimate and the flags
@@ -237,7 +245,7 @@ def load_settings(environ=None):
 
     name = 'MOTUZ_RCLONE_MEMORY_BUDGET'
     raw = _env(environ, name)
-    memory_budget = DEFAULT_MEMORY_BUDGET
+    memory_budget = default_memory_budget()
     if raw is not None:
         memory_budget = parse_size(raw)
         lo, hi = _MEMORY_BUDGET_BOUNDS
@@ -281,18 +289,56 @@ def load_settings(environ=None):
     return settings
 
 
+def default_memory_budget(meminfo='/proc/meminfo', cgroup='/sys/fs/cgroup/memory.max'):
+    """
+    A quarter of the memory this server may use: MemTotal, or a lower cgroup v2 limit
+    (a container), within DEFAULT_MEMORY_BUDGET_RANGE; the lower bound if unknown
+    """
+    lo, hi = DEFAULT_MEMORY_BUDGET_RANGE
+    total = None
+    try:
+        with open(meminfo) as f:
+            for line in f:
+                if line.startswith('MemTotal:'):
+                    total = int(line.split()[1]) * KiB
+                    break
+    except (OSError, ValueError, IndexError):
+        pass
+    try:
+        with open(cgroup) as f:
+            limit = f.read().strip()
+        if limit.isdigit():
+            total = min(total, int(limit)) if total else int(limit)
+    except OSError:
+        pass
+    if not total:
+        return lo
+    return max(lo, min(hi, total // 4 // GiB * GiB))
+
+
 def _add_motuz_defaults(defaults, caps, memory_budget):
     """
     MOTUZ_DEFAULTS for the parameters the environment leaves unset, lowered to their
-    caps. Only if they fit the memory budget with the other settings: they must never
-    stop an installation that worked with rclone's defaults (e.g. a large buffer size).
+    caps and, on a smaller server, halved (transfers down to 16, S3 upload concurrency
+    down to 4) until they fit the memory budget with the other settings; dropped if even
+    that does not fit: they must never stop an installation that worked with rclone's
+    defaults (e.g. a large buffer size).
     """
     added = dict(defaults)
-    for name, value in MOTUZ_DEFAULTS.items():
-        if name not in added:
-            cap = PARAMS_BY_NAME[name].cap
-            added[name] = min(value, caps[cap]) if cap else value
-    if all(estimate_memory(added, backend) <= memory_budget for backend in CHUNKED_BACKENDS + (None,)):
+    unset = [name for name in MOTUZ_DEFAULTS if name not in defaults]
+    for name in unset:
+        cap = PARAMS_BY_NAME[name].cap
+        added[name] = min(MOTUZ_DEFAULTS[name], caps[cap]) if cap else MOTUZ_DEFAULTS[name]
+
+    def fits():
+        return all(estimate_memory(added, backend) <= memory_budget for backend in CHUNKED_BACKENDS + (None,))
+
+    for name, floor in (('s3_upload_concurrency', 4), ('transfers', 16), ('s3_upload_concurrency', 4), ('transfers', 16)):
+        while not fits() and name in unset and added[name] // 2 >= floor:
+            added[name] //= 2
+            if name == 'transfers' and 'checkers' in unset:
+                added['checkers'] = max(added['transfers'] * 2, 32)
+    if fits():
         defaults.update(added)
 
 
@@ -495,28 +541,35 @@ def md5_env(tuning=None):
 # Target values; presets() clamps them to the caps and fits them to the memory budget
 PRESETS = (
     ('default', 'Default', 'The settings of this server', {}),
-    ('small_files', 'Many small files', 'Many files in parallel; for folders of files below ~100 MB', {
+    # Measured 2026-10-18, local files to AWS S3, 8 vCPUs (MOTUZ_DEFAULTS has the numbers):
+    # small files scale with transfers (128: 1.2 GB/s for 1 MB files), large files peak
+    # at 32 transfers with 16 MiB parts sent 16 at a time (4.0 GB/s); 64 MiB parts and few
+    # transfers were slow (4 transfers: 0.5 GB/s). fit_preset lowers them to the budget.
+    ('small_files', 'Many small files', 'Many files in parallel; for folders of files below ~30 MB', {
+        'transfers': 128,
+        'checkers': 256,
+        's3_upload_concurrency': 4,
+        's3_chunk_size': 16 * MiB,
+    }),
+    ('large_files', 'Large files', 'Fewer files, each sent in many parallel parts; for files of 100 MB and more', {
         'transfers': 32,
         'checkers': 64,
-    }),
-    ('large_files', 'Few large files', 'Each file split into parallel streams and large chunks', {
-        'transfers': 4,
         'multi_thread_streams': 16,
         'multi_thread_cutoff': 64 * MiB,
         's3_upload_concurrency': 16,
-        's3_chunk_size': 64 * MiB,
+        's3_chunk_size': 16 * MiB,
         'azureblob_upload_concurrency': 16,
-        'azureblob_chunk_size': 64 * MiB,
+        'azureblob_chunk_size': 16 * MiB,
     }),
-    ('maximum', 'Maximum', 'As much parallelism as this server allows, for 100 Gb/s links', {
-        'transfers': 64,
-        'checkers': 128,
+    ('maximum', 'Maximum', 'As much parallelism as this server allows, for mixed folders on 100 Gb/s links', {
+        'transfers': 128,
+        'checkers': 256,
         'multi_thread_streams': 16,
         'multi_thread_cutoff': 64 * MiB,
         's3_upload_concurrency': 16,
-        's3_chunk_size': 64 * MiB,
+        's3_chunk_size': 16 * MiB,
         'azureblob_upload_concurrency': 16,
-        'azureblob_chunk_size': 64 * MiB,
+        'azureblob_chunk_size': 16 * MiB,
     }),
 )
 

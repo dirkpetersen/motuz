@@ -30,6 +30,8 @@ x-env: &env
     # rclone performance (e2e_test.py): an installation default and a cap
     MOTUZ_RCLONE_CHECKERS: "16"
     MOTUZ_RCLONE_MAX_TRANSFERS: "48"
+    # Fixed: the default is a quarter of the machine's memory
+    MOTUZ_RCLONE_MEMORY_BUDGET: "8G"
     # AWS egress estimate (e2e_test.py): the fake AWS connection cannot be measured
     MOTUZ_EGRESS_SIZE_TIMEOUT: "5"
     # Image viewer (e2e_test.py): a small cap, so that 413 needs no big file

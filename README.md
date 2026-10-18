@@ -1486,9 +1486,10 @@ beyond a few Gb/s, however fast the link. Two levels of settings change that:
 - **Installation defaults** in `.env` (passed to `app` and `celery` by
   `docker-compose.yml`) or in `motuz.env` (the commented `MOTUZ_RCLONE_*` lines of
   `deployment/systemd/motuz.env.example`; run `deploy.sh` after changing them). Unset or
-  empty means Motuz's default of 16 transfers and 32 checkers (lowered to the `MAX_*`
-  caps, and left out if they would not fit the memory budget), and rclone's own default,
-  i.e. no flag, for everything else.
+  empty means Motuz's defaults: 64 transfers, 128 checkers, and for S3 16 MiB parts sent
+  8 at a time (lowered to the `MAX_*` caps; on a small server halved, to 16 transfers and
+  4 parts at the least, until they fit the memory budget), and rclone's own default, i.e.
+  no flag, for everything else.
 - **Per job**, in the collapsed "Performance" section of the New Copy Job dialog: a
   preset or custom values for the destination's type, within the server's caps and
   memory budget. The job detail shows them, Retry keeps them, and "Check Integrity"
@@ -1506,10 +1507,11 @@ beyond a few Gb/s, however fast the link. Two levels of settings change that:
 | `MOTUZ_RCLONE_AZUREBLOB_UPLOAD_CONCURRENCY` | `--azureblob-upload-concurrency` | 16 | yes (Azure destinations) |
 | `MOTUZ_RCLONE_AZUREBLOB_CHUNK_SIZE` | `--azureblob-chunk-size` | 4M | yes (Azure destinations) |
 
-Caps for the per-job values: `MOTUZ_RCLONE_MAX_TRANSFERS` (default 64),
-`MOTUZ_RCLONE_MAX_CHECKERS` (128), `MOTUZ_RCLONE_MAX_MULTI_THREAD_STREAMS` (32),
+Caps for the per-job values: `MOTUZ_RCLONE_MAX_TRANSFERS` (default 128),
+`MOTUZ_RCLONE_MAX_CHECKERS` (256), `MOTUZ_RCLONE_MAX_MULTI_THREAD_STREAMS` (32),
 `MOTUZ_RCLONE_MAX_UPLOAD_CONCURRENCY` (64, S3 and Azure), and the memory budget per job
-`MOTUZ_RCLONE_MEMORY_BUDGET` (default `8G`). `MOTUZ_RCLONE_MD5_SIMD_SERVERS` (default 2, 0 to
+`MOTUZ_RCLONE_MEMORY_BUDGET` (default: a quarter of the server's memory, or of its
+container's limit, between 4G and 64G; 15G on a 60 GB server). `MOTUZ_RCLONE_MD5_SIMD_SERVERS` (default 2, 0 to
 16, 0 = off) sets the md5-simd servers of copy and Check Integrity jobs, each using up to
 one core (README "S3 connections"; ignored by a stock rclone). Numbers are whole numbers, sizes use
 rclone's binary units and need a unit (`64M`, `1.5G`, `64Mi`). An invalid value, an
@@ -1518,22 +1520,35 @@ the worker at startup, with a message that names the variable.
 
 **What matters when**
 
-- *Many small files* (below ~100 MB): per-file overhead dominates. Raise
-  `--transfers` (16 to 64) and `--checkers` (32 to 128); streams and chunk sizes hardly
-  matter. On S3 the request rate of the bucket (prefix) may become the limit.
-- *Few large files*: a single file must be split. Raise `--multi-thread-streams`
-  (8 to 16), lower `--multi-thread-cutoff` (64M to 128M), and for S3/Azure raise the chunk
-  size (32M to 128M) and the upload concurrency (8 to 32). Transfers can stay small.
-- *Mixed data* needs both, which is what costs memory (see below).
+Measured 2026-10-18, local files to AWS S3 us-west-2 from 8 vCPUs (CRC32C parts, no
+read-ahead), GB/s, median of 2 runs:
+
+| transfers | S3 part × concurrency | 20 GB of 100 MB files | 2 GB of 1 MB files |
+|---|---|---|---|
+| 16 (the old default), rclone's 5M × 4 | | 2.17 | 0.18 |
+| 32 | 16M × 16 | **3.97** | 0.37 |
+| 64 (the default) | 16M × 8 | 3.76 | 0.67 |
+| 128 | 16M × 8 | 3.30 | **1.19** |
+| 16 | 64M × 16 | 1.80 | 0.18 |
+| 4 (the old "Few large files") | 64M × 16 | 0.49 | 0.05 |
+
+- *Many small files* (below ~30 MB, uploaded in one piece): per-file overhead dominates,
+  so more transfers help most (128: 1.2 GB/s for 1 MB files). On S3 the request rate of
+  the bucket (prefix) may become the limit.
+- *Large files* are sent in parts: 16 MiB parts were better than 64 MiB, and about 32
+  transfers with 16 parts each were the fastest. Few transfers are slow even with many
+  parts.
+- *Mixed data*: the default (64 transfers) is within 5% of the best for large files and
+  3.7 times faster than the old default for small ones.
 
 **Suggested installation defaults**, per link speed (one job; several jobs share the
 link and the node's memory):
 
 | Link | transfers | checkers | streams | cutoff | S3/Azure chunk | upload concurrency | memory estimate (S3) | budget |
 |---|---|---|---|---|---|---|---|---|
-| 10 Gb/s | 8 | 16 | 4 | 256M | 16M | 8 | 1.5 GiB | 8G (default) |
-| 100 Gb/s | 32 | 64 | 8 | 128M | 32M | 16 | 20 GiB | 32G |
-| 200 Gb/s | 64 | 128 | 16 | 64M | 64M | 16 | 80 GiB | 96G |
+| 10 Gb/s | 32 | 64 | 4 | 256M | 16M | 8 | 6 GiB | 8G |
+| 25-40 Gb/s (the defaults) | 64 | 128 | 4 | 256M | 16M | 8 | 12 GiB | 16G |
+| 100 Gb/s | 128 | 256 | 8 | 128M | 16M | 16 | 48 GiB | 64G |
 
 Beyond about 20 Gb/s a single rclone process is usually limited by CPU (TLS, MD5 of
 every part for S3) and by the storage on both sides: run several jobs in parallel, e.g.
@@ -1547,12 +1562,12 @@ estimate fits the budget, then marked "reduced"):
 | Preset | transfers | checkers | streams | cutoff | S3/Azure chunk × concurrency |
 |---|---|---|---|---|---|
 | Default | server defaults | | | | |
-| Many small files | 32 | 64 | | | |
-| Few large files | 4 | | 16 | 64M | 64M × 16 |
-| Maximum | 64 | 128 | 16 | 64M | 64M × 16 |
+| Many small files | 128 | 256 | | | 16M × 4 (S3) |
+| Large files | 32 | 64 | 16 | 64M | 16M × 16 |
+| Maximum | 128 | 256 | 16 | 64M | 16M × 16 |
 
-With the default budget of 8 GiB, "Maximum" becomes 10 transfers with 32M chunks for S3
-and Azure destinations and 32 transfers for local ones.
+With a budget of 16 GiB, "Maximum" becomes 32 transfers for S3 and Azure destinations
+and 64 for local ones; "Large files" fits as it is.
 
 **Memory estimate.** Each transfer buffers what it reads, per stream, and each upload to
 S3 or Azure holds its chunks in memory while they are sent. Motuz estimates the memory
