@@ -21,7 +21,7 @@ reviewed:
 
 | | Who | How often | What |
 | --- | --- | --- | --- |
-| 1 | **root** | once (again only when `deploy.sh` says so) | `sudo bin/systemd/install.sh`: packages, the account and its directory `/var/lib/motuz-bin`, its sudoers rule, PAM, PostgreSQL and Redis |
+| 1 | **root** | once (again only when `deploy.sh` says so) | `sudo bin/systemd/install.sh`: packages, the account and its directory `/var/lib/motuz-bin` for rclone, its sudoers rule, PAM, PostgreSQL and Redis |
 | 2 | **the account `motuz`** | on the first deploy and on every update | `~/motuz/bin/systemd/deploy.sh`: the pinned rclone, Traefik and uv, Python environment, frontend, settings, units, database, start |
 
 Before you start, the two things people most often get stuck on:
@@ -89,9 +89,11 @@ install.sh](#root-steps-without-installsh)):
 - installs packages: PostgreSQL 18, Redis (Ubuntu) or Valkey 9 (Amazon Linux), Node.js and npm,
   build tools, `git`, `curl`, `openssl`, `python3`, `sudo`;
 - installs the HEIC/HEIF converter (`pi-heif` and Pillow) into `/opt/motuz-heic`;
-- makes `/var/lib/motuz-bin`, owned by the account: the account itself puts the pinned **rclone,
-  Traefik and uv** there (SHA256 checked, `bin/systemd/tools.sh`, run by `deploy.sh`), so new
-  versions need no root, and root never runs them;
+- makes `/var/lib/motuz-bin`, owned by the account: the account itself puts the pinned
+  **rclone** there, and **Traefik and uv** into its `~/.local/bin` (SHA256 checked,
+  `bin/systemd/tools.sh`, run by `deploy.sh`), so new versions need no root, and root never
+  runs them. rclone is outside the home because the users run it (through sudo), and the
+  home stays closed to them;
 - creates the account **`motuz`** (system account, locked password, home `/var/lib/motuz`) and
   turns on `loginctl enable-linger`, so its services start at boot;
 - writes the account's only privilege, the sudoers rule `/etc/sudoers.d/motuz` (run `rclone`,
@@ -392,9 +394,9 @@ systemctl disable --now valkey.service valkey-sentinel.service; systemctl mask v
 [ "$(node -p 'process.versions.node.split(".")[0]')" = 24 ] || alternatives --set node /usr/bin/node-24
 ```
 
-**2. Pinned rclone, Traefik and uv**: nothing as root. The account downloads them into
-`/var/lib/motuz-bin` (`bin/systemd/tools.sh`, SHA256 checked, run by `deploy.sh`); root only
-makes that directory (step 3). The HEIC/HEIF converter in `/opt/motuz-heic` is optional
+**2. Pinned rclone, Traefik and uv**: nothing as root. The account downloads rclone into
+`/var/lib/motuz-bin` and Traefik and uv into `~/.local/bin` (`bin/systemd/tools.sh`, SHA256
+checked, run by `deploy.sh`); root only makes `/var/lib/motuz-bin` (step 3). The HEIC/HEIF converter in `/opt/motuz-heic` is optional
 (`install.sh` installs it with a uv of its own, downloaded for that step).
 
 **3. The account**, linger and its systemd user manager:
@@ -403,7 +405,7 @@ makes that directory (step 3). The HEIC/HEIF converter in `/opt/motuz-heic` is o
 useradd --system --user-group --create-home --home-dir /var/lib/motuz --shell /bin/bash \
   --comment "Motuz service account" motuz        # locked password; a uid below UID_MIN
 chmod 750 /var/lib/motuz
-install -d -m 755 -o motuz -g motuz /var/lib/motuz-bin   # the account's rclone, Traefik, uv
+install -d -m 755 -o motuz -g motuz /var/lib/motuz-bin   # the account's rclone
 loginctl enable-linger motuz
 systemctl start user@$(id -u motuz).service
 ```
@@ -547,7 +549,7 @@ Amazon Linux: the security group, or `firewall-cmd --permanent --add-service=htt
 Then the [steps as the `motuz` account](#steps-as-the-motuz-account).
 
 **What root is needed for later.** Updates of Motuz itself (`deploy.sh --pull`) need no
-root, also when they pin a new rclone, Traefik or uv (the account's own, in `/var/lib/motuz-bin`).
+root, also when they pin a new rclone, Traefik or uv (the account's own: `/var/lib/motuz-bin`, `~/.local/bin`).
 Run `install.sh` (or the steps above) again when `deploy.sh` says so: it does when
 `/var/lib/motuz-bin` is missing (installs from before it), `/etc/pam.d/motuz`
 or the login helper in the checkout differ from what is installed, or a system service was

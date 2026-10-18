@@ -9,7 +9,7 @@
 #   --user=NAME  the service account (default motuz)
 #   --purge      also delete the account with its home and all Motuz data (a private
 #                database, secrets, certificates), /var/lib/motuz-aws-config, the login
-#                helper's state, /var/lib/motuz-bin (the pinned rclone, Traefik, uv) and
+#                helper's state, /var/lib/motuz-bin (the pinned rclone) and
 #                /usr/local/bin/{rclone,traefik,uv} of older installs; needs --yes.
 #                With the distribution's PostgreSQL (MOTUZ_DATABASE_MODE=system) only the
 #                database motuz and the role motuz_user are dropped (and our pg_hba lines
@@ -148,6 +148,6 @@ if [ "$PURGE" = 1 ]; then
 else
     [ "$DB_MODE" != system ] || echo "    kept: the system PostgreSQL service with the database motuz and the role motuz_user (--purge drops only those)"
     [ "$BROKER_MODE" != system ] || echo "    kept: the system Redis with /etc/redis/motuz.conf (--purge removes our configuration only)"
-    [ -z "$HOME_DIR" ] || echo "    kept: the account $ACCOUNT and $HOME_DIR (checkout, ~/.config/motuz, ~/data), $TOOLS_DIR (rclone, Traefik, uv), /opt/motuz-heic (the HEIC converter's packages)"
+    [ -z "$HOME_DIR" ] || echo "    kept: the account $ACCOUNT and $HOME_DIR (checkout, ~/.config/motuz, ~/data), $TOOLS_DIR (rclone), /opt/motuz-heic (the HEIC converter's packages)"
 fi
 log "done"

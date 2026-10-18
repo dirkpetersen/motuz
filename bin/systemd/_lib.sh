@@ -7,9 +7,10 @@ log() { printf '\033[1m==> %s\033[0m\n' "$*"; }
 warn() { printf '\033[0;33mWARNING: %s\033[0m\n' "$*" >&2; }
 die() { printf '\033[0;31mERROR: %s\033[0m\n' "$*" >&2; exit 1; }
 
-# The pinned rclone, Traefik and uv of the account (bin/systemd/tools.sh): its own
-# directory, made by install.sh, outside its home (which stays closed to the users, who run
-# rclone through sudo). The sudoers rule, the units and MOTUZ_RCLONE name these paths.
+# The account's pinned rclone (bin/systemd/tools.sh): its own directory, made by install.sh,
+# outside its home, which stays closed to the users, who run rclone through sudo. The
+# sudoers rule, the units and MOTUZ_RCLONE name this path. Traefik and uv, which only the
+# account runs, are in ~/.local/bin of its home.
 TOOLS_DIR=/var/lib/motuz-bin
 
 fetch_checked() { # url sha256 file
@@ -30,6 +31,7 @@ motuz_paths() { # home
     ACME_DIR="$DATA_DIR/traefik"
     CHECKOUT="$1/motuz"
     VENV="$CHECKOUT/venv"
+    ACCOUNT_BIN="$1/.local/bin"
 }
 
 # Secrets of a fresh install; optional ones (empty = not configured) are added to an

@@ -6,10 +6,10 @@
 #     sudo -iu motuz ~/motuz/bin/systemd/deploy.sh [--pull]
 #   --pull   git pull --ff-only first
 #
-# Steps: the pinned rclone, Traefik and uv in /var/lib/motuz-bin (bin/systemd/tools.sh, as
-# this account: updating them needs no root), the Python venv (~/motuz/venv: Python and
-# requirements.txt by uv), the frontend (npm ci, npm run build), ~/.config/motuz/{motuz.env,secrets.env} on the first deploy
-# (never overwritten; secrets added by an update are generated), a self-signed
+# Steps: the pinned rclone (/var/lib/motuz-bin), Traefik and uv (~/.local/bin), by
+# bin/systemd/tools.sh as this account: updating them needs no root; the Python venv
+# (~/motuz/venv: Python and requirements.txt by uv), the frontend (npm ci, npm run
+# build), ~/.config/motuz/{motuz.env,secrets.env} on the first deploy (never overwritten; secrets added by an update are generated), a self-signed
 # certificate if there is none, Redis' and Traefik's generated configuration, the
 # database (the private cluster ~/data/pg with the role and database, or the distribution's
 # service prepared by install.sh, or an external server: MOTUZ_DATABASE_MODE), the units
@@ -77,15 +77,15 @@ if [ -n "${DISTRO_PYTHON:-}" ]; then
 else
     export UV_PYTHON_PREFERENCE=only-managed
     PYTHON="$PYTHON_VERSION"
-    "$TOOLS_DIR/uv" python install --quiet "$PYTHON_VERSION"
+    "$ACCOUNT_BIN/uv" python install --quiet "$PYTHON_VERSION"
 fi
 log "Python ${PYTHON_VERSION} venv and requirements.txt (uv ${UV_VERSION})"
 if [ ! -x "$VENV/bin/python" ] || ! "$VENV/bin/python" -c "import sys; sys.exit(sys.version_info[:2] != tuple(map(int, '$PYTHON_VERSION'.split('.'))))" 2>/dev/null; then
     rm -rf "$VENV"
-    "$TOOLS_DIR/uv" venv --quiet --python "$PYTHON" "$VENV"
+    "$ACCOUNT_BIN/uv" venv --quiet --python "$PYTHON" "$VENV"
 fi
 # uWSGI is built from source here, as in the docker image (build-essential)
-"$TOOLS_DIR/uv" pip install --quiet --python "$VENV/bin/python" -r "$CHECKOUT/requirements.txt"
+"$ACCOUNT_BIN/uv" pip install --quiet --python "$VENV/bin/python" -r "$CHECKOUT/requirements.txt"
 
 # ---------------------------------------------------------------- frontend
 log "frontend (npm ci, npm run build)"

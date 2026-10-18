@@ -57,11 +57,12 @@
 #     services are used or masked, see the options), Node.js/npm, build tools, git, curl,
 #     openssl (--worker-only: python3, sudo, curl, unzip)
 #   - the account, `loginctl enable-linger`, its sudoers rule (checked with visudo -c)
-#   - /var/lib/motuz-bin, owned by the account: the account itself puts the pinned rclone,
-#     Traefik and uv there (bin/systemd/tools.sh, run by deploy.sh; with --worker-only
-#     rclone, run by this script as the account), so updating them needs no root; the
-#     sudoers rule names /var/lib/motuz-bin/rclone. Root runs none of them (the HEIC
-#     converter below is installed with a uv of its own, downloaded for that step only).
+#   - /var/lib/motuz-bin, owned by the account: the account itself puts the pinned rclone
+#     there (bin/systemd/tools.sh, run by deploy.sh; with --worker-only run by this script
+#     as the account), and Traefik and uv into ~/.local/bin, so updating them needs no
+#     root; the sudoers rule names /var/lib/motuz-bin/rclone (outside the home, which stays
+#     750, because the users run it). Root runs none of them (the HEIC converter below is
+#     installed with a uv of its own, downloaded for that step only).
 #   - sysctl: net.ipv4.ip_unprivileged_port_start=80 (Traefik is a user service on
 #     :80/:443), vm.overcommit_memory=1 (Redis) (not with --worker-only)
 #   - network tuning for the data mover, also with --worker-only (/etc/sysctl.d/61-motuz-network.conf,

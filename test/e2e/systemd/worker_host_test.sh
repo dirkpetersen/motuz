@@ -97,7 +97,7 @@ as_motuz_systemctl='runuser -u motuz -- env XDG_RUNTIME_DIR=/run/user/$(id -u mo
 check "install.sh --worker-only (no credential): installed, not started" \
     '[[ "$out" == *"Worker installed, not started"* ]] && ! worker "$as_motuz_systemctl is-active --quiet motuz-worker"' "$(tail -3 <<<"$out")"
 [ "$INSIDE" = 1 ] || check "no server pieces on the worker host (rclone only: no Traefik, uv, PostgreSQL, Valkey, PAM service)" \
-    'worker "test -x /var/lib/motuz-bin/rclone && ! test -e /var/lib/motuz-bin/traefik && ! test -e /var/lib/motuz-bin/uv && ! rpm -q postgresql18-server valkey >/dev/null && ! test -e /etc/pam.d/motuz"'
+    'worker "test -x /var/lib/motuz-bin/rclone && ! test -e ~motuz/.local/bin/traefik && ! test -e ~motuz/.local/bin/uv && ! rpm -q postgresql18-server valkey >/dev/null && ! test -e /etc/pam.d/motuz"'
 env_file=$(worker 'cat ~motuz/.config/motuz-worker/worker.env; stat -c MODE=%a:%U ~motuz/.config/motuz-worker/worker.env')
 check "worker.env: MOTUZ_HOME, central URL, pool, no required mounts, mode 600" \
     'grep -qx "MOTUZ_HOME=\"$WORKER_HOME\"" <<<"$env_file" && grep -qx "MOTUZ_CENTRAL_URL=\"https://localhost\"" <<<"$env_file" \

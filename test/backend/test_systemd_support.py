@@ -110,9 +110,11 @@ class TestAbsoluteCommands(unittest.TestCase):
         self.assertNotIn('/usr/local/bin/rclone,', install_sh)
         for unit in ('motuz-app.service', 'motuz-celery.service'):
             self.assertIn('\nEnvironment=MOTUZ_RCLONE=/var/lib/motuz-bin/rclone\n', read('deployment', 'systemd', 'user', unit))
-        self.assertIn('\nExecStart=/var/lib/motuz-bin/traefik $TRAEFIK_ARGS\n', read('deployment', 'systemd', 'user', 'motuz-traefik.service'))
+        # Traefik and uv: only the account runs them, so they stay in its (closed) home
+        self.assertIn('\nExecStart=%h/.local/bin/traefik $TRAEFIK_ARGS\n', read('deployment', 'systemd', 'user', 'motuz-traefik.service'))
+        self.assertEqual(bash_lib('motuz_paths /var/lib/motuz; printf %s "$ACCOUNT_BIN"').stdout, '/var/lib/motuz/.local/bin')
         self.assertIn('\nMOTUZ_RCLONE=/var/lib/motuz-bin/rclone\n', read('src', 'worker', 'worker.env.example'))
-        self.assertIn('"$TOOLS_DIR/uv" pip install', read('bin', 'systemd', 'deploy.sh'))
+        self.assertIn('"$ACCOUNT_BIN/uv" pip install', read('bin', 'systemd', 'deploy.sh'))
 
     def test_root_never_runs_the_account_tools(self):
         # The account can replace them: root running one would hand it root
@@ -123,6 +125,7 @@ class TestAbsoluteCommands(unittest.TestCase):
                     continue
                 self.assertNotRegex(code, r'(^|[\s;&|(])"?\$TOOLS_DIR/', '{}: {}'.format(name, line))
                 self.assertNotRegex(code, r'/var/lib/motuz-bin/', '{}: {}'.format(name, line))
+                self.assertNotRegex(code, r'ACCOUNT_BIN|\.local/bin', '{}: {}'.format(name, line))
 
 
 class TestSignalMask(unittest.TestCase):

@@ -11,7 +11,7 @@ Motuz is a web UI + REST API for large data transfers between on-prem filesystem
 Invariants that hold everywhere (the details are in the sections below and in `.claude/rules/`, which load when you work on matching files).
 
 - Run commands as the logged-in user only through `abstract_connection.sudo_as(user, env)` with exactly one absolute path of the sudoers rule (`/var/lib/motuz-bin/rclone, /usr/bin/ls, /usr/bin/mkdir, /usr/bin/env`; rclone is `rclone_connection.RCLONE`, from `MOTUZ_RCLONE`: `/usr/local/bin/rclone` in Docker and on EC2 workers); never `-E`, `-i` or a login shell.
-- Systemd install: rclone, Traefik and uv are the account's own (`/var/lib/motuz-bin`, `bin/systemd/tools.sh`, run by `deploy.sh`); root never runs them and never downloads them for the account.
+- Systemd install: rclone, Traefik and uv are the account's own (`bin/systemd/tools.sh`, run by `deploy.sh`): rclone in `/var/lib/motuz-bin` (the users run it through sudo, so it is outside the closed home), Traefik and uv in `~/.local/bin`; root never runs them and never downloads them for the account.
 - Commands run as a user get only the allowlisted environment of `abstract_connection.user_process_env` (never the server's secrets or other `MOTUZ_*` variables).
 - User-supplied paths never become options: `--` before local paths, local rclone paths absolute (`_local_path`).
 - Every model has an `owner`; managers filter by it and return 404 (not 403) for other users' objects.
