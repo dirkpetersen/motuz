@@ -429,10 +429,12 @@ class RcloneConnection(AbstractConnection):
             copy_links,
             job_id,
             performance=None,
+            overwrite=True,
     ):
         """
         `performance`: the job's validated overrides (rclone_tuning), on top of the
-        installation's MOTUZ_RCLONE_* defaults
+        installation's MOTUZ_RCLONE_* defaults. `overwrite` False: existing destination
+        files are kept (rclone_tuning.KEEP_EXISTING_FLAG, managers/overwrite_policy.py)
         """
         if src_data is None:
             _local_path(src_resource_path) # before reading any credentials
@@ -453,7 +455,7 @@ class RcloneConnection(AbstractConnection):
             job_id=job_id,
             # One argv item per flag (--transfers=32), formatted from parsed values
             extra_flags=rclone_tuning.copy_flags(performance, dst_data.type if dst_data is not None else None,
-                                                src_local=src_data is None)
+                                                src_local=src_data is None, overwrite=overwrite)
                 + check_flags,
             extra_env={**rclone_tuning.md5_env(), **check_env},
         )
@@ -553,6 +555,9 @@ class RcloneConnection(AbstractConnection):
 
     def copy_percent(self, job_id):
         return self._copy_job_queue.copy_percent(job_id)
+
+    def copy_kept(self, job_id):
+        return self._copy_job_queue.copy_kept(job_id)
 
     def copy_stop(self, job_id):
         self._copy_job_queue.copy_stop(job_id)

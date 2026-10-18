@@ -381,6 +381,7 @@ if (PHASE === 'paste') {
         await page.waitForSelector('.modal-content:has-text("Files already exist")', { timeout: 15000 });
         const text = await page.textContent('.modal-content');
         check('conflict dialog lists the existing names', text.includes('desktop-a.txt') && text.includes('desktop-big.bin'), text);
+        check('conflict dialog offers Overwrite all: Motuz wrote these files (overwrite policy)', text.includes('Overwrite all'), text);
         await shot('upload-conflict-dialog');
         await page.click('.modal-content button:has-text("Skip existing")');
         await page.waitForSelector('.modal-content', { state: 'detached', timeout: 10000 });
@@ -400,6 +401,10 @@ if (PHASE === 'paste') {
             await page.waitForSelector('.modal-content .performance-section #performance-preset', { state: 'attached', timeout: 10000 });
         };
         await openDialog();
+        // ui-perf-dst/ui-src was never written by Motuz (managers/overwrite_policy.py)
+        await page.waitForSelector('.modal-content .copy-job-overwrite', { timeout: 10000 });
+        check('overwrite policy: the dialog says existing files are kept',
+            (await page.textContent('.modal-content .copy-job-overwrite')).includes('Existing files are kept'));
         check('performance: section collapsed, preset Default',
             !(await page.locator('.performance-section').evaluate(d => d.open))
             && (await page.textContent('.performance-summary')).trim() === 'Default');

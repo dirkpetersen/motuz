@@ -50,7 +50,7 @@ from ..models.worker import utcnow
 from ..utils.email_utils import Email
 from ..utils.rclone_connection import RCLONE, RcloneConnection
 from ..version import VERSION, WORKER_PROTOCOL
-from . import job_routing
+from . import job_routing, overwrite_policy
 from . import token_broker_manager
 
 
@@ -751,6 +751,12 @@ def _text(value, limit, tail=False):
     return value[-limit:] if tail else value[:limit]
 
 
+def _record_kept(job, kept):
+    """The existing files a copy kept, {count, sample} of the worker's report (WORKER_PROTOCOL 4)"""
+    if isinstance(kept, dict):
+        overwrite_policy.record_kept(job, kept.get('count'), kept.get('sample'))
+
+
 def progress(worker, ticket_id, ticket_token, body):
     """
     Progress of a running job: renews the lease. Returns {action: continue|stop, ...};
@@ -772,6 +778,8 @@ def progress(worker, ticket_id, ticket_token, body):
             remote_job.progress_text = body['side']
     elif body.get('text') is not None:
         remote_job.progress_text = _text(body.get('text'), MAX_TEXT)
+    if remote_job.job_type == 'copy' and job is not None:
+        _record_kept(job, body.get('kept'))
     if body.get('error_text') is not None:
         remote_job.progress_error_text = _text(body.get('error_text'), MAX_ERROR_TEXT, tail=True)
 
@@ -818,6 +826,7 @@ def finish(worker, ticket_id, ticket_token, body):
                 remote_job.progress_text = _text(body['text'], MAX_TEXT)
             if body.get('error_text') is not None:
                 remote_job.progress_error_text = _text(body['error_text'], MAX_ERROR_TEXT, tail=True)
+            _record_kept(job, body.get('kept'))
         else:
             for side in SIDES:
                 error_text = _text(body.get('{}_error_text'.format(side)), MAX_ERROR_TEXT, tail=True)

@@ -457,7 +457,7 @@ def check_browser_upload(req, token, other_token, connection_id, folder, label, 
     names = list(files)
     destination = {'dst_cloud_id': connection_id, 'dst_resource_path': folder}
     status, conflicts, _ = req('POST', '/api/copy-jobs/uploads/conflicts/', token, dict(destination, names=['up']))
-    check(f'{label}: no conflicts before the upload', status == 200 and conflicts == {'existing': []}, (status, conflicts))
+    check(f'{label}: no conflicts before the upload', status == 200 and conflicts.get('existing') == [], (status, conflicts))
     status, created, _ = req('POST', '/api/copy-jobs/uploads/', token, dict(
         destination, mode='overwrite', files=[{'path': n, 'size': len(files[n])} for n in names]))
     check(f'{label}: upload created', status == 201 and created['pending'] == [0, 1, 2]
@@ -475,10 +475,13 @@ def check_browser_upload(req, token, other_token, connection_id, folder, label, 
         got = sha256_of(n)
         check(f'{label}: {n} arrived intact', got == hashlib.sha256(files[n]).hexdigest(), got)
     status, conflicts, _ = req('POST', '/api/copy-jobs/uploads/conflicts/', token, dict(destination, names=['up', 'new']))
-    check(f'{label}: the uploaded folder is a conflict now', conflicts == {'existing': ['up']}, conflicts)
+    check(f'{label}: the uploaded folder is a conflict now, which may be overwritten (Motuz wrote it)',
+          conflicts.get('existing') == ['up'] and conflicts.get('overwrite') is True, conflicts)
     status, skipped, _ = req('POST', '/api/copy-jobs/uploads/', token, dict(
         destination, mode='skip', files=[{'path': n, 'size': len(files[n])} for n in names] + [{'path': 'up/new.txt', 'size': 3}]))
     check(f'{label}: skip mode sends only the new file', status == 201 and skipped['pending'] == [3], (status, skipped))
+    check(f'{label}: skip mode lists the kept files', (skipped['job'].get('skipped_existing'), skipped['job'].get('skipped_existing_sample'))
+          == (3, sorted(names)), skipped['job'])
     status, body = send_upload(token, skipped['job']['id'], 3, b'new', chunk_bytes)
     check(f'{label}: skip mode job SUCCESS', status == 200 and body['job_state'] == 'SUCCESS' and sha256_of('up/new.txt') == hashlib.sha256(b'new').hexdigest(), (status, body))
 

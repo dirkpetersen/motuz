@@ -10,7 +10,7 @@ from ..models import CopyJob
 from ..managers.auth_manager import token_required, get_logged_in_user
 from ..managers import cloud_connection_manager
 from ..utils import rclone_tuning
-from ..managers import job_routing, worker_manager, upload_manager
+from ..managers import job_routing, overwrite_policy, worker_manager, upload_manager
 from ..utils.email_utils import Email
 
 
@@ -76,11 +76,24 @@ def performance(dst_cloud_id=None):
 
 
 @token_required
+def describe_overwrite(dst_cloud_id=None, dst_resource_path=None):
+    """
+    Whether a copy to `dst_resource_path` of the user's connection `dst_cloud_id` would
+    overwrite existing files (New Copy Job dialog): only the decision and its reason,
+    never who wrote the destination before
+    """
+    dst_cloud = _owned_cloud(dst_cloud_id)
+    return overwrite_policy.describe(dst_cloud, dst_resource_path)
+
+
+@token_required
 def create(data):
     owner = get_logged_in_user(request)
 
     src_cloud = _owned_cloud(data.get('src_cloud_id'))
     dst_cloud = _owned_cloud(data.get('dst_cloud_id'))
+    # Before this job registers its destination: a first copy never overwrites
+    overwrite, _ = overwrite_policy.decide(dst_cloud, data.get('dst_resource_path'))
 
     copy_job = CopyJob(**{
         'description': data.get('description', None),
@@ -92,6 +105,7 @@ def create(data):
         'copy_links': data.get('copy_links', None),
         'notification_email': data.get('notification_email', None),
         'performance': validate_performance(data.get('performance'), dst_cloud),
+        'overwrite': overwrite,
 
         'progress_current': 0,
         'progress_total': 100,
@@ -100,6 +114,9 @@ def create(data):
     })
 
     db.session.add(copy_job)
+    db.session.flush()
+    # Written by Motuz from now on, also if the job fails or is stopped
+    overwrite_policy.register(dst_cloud, copy_job.dst_resource_path, 'copy', copy_job.id, owner)
     db.session.commit()
 
     task_id = copy_job.id

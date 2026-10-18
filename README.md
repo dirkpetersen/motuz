@@ -1604,7 +1604,9 @@ failed, with rclone's message for each failed file.
 
 - If some of the dropped names already exist there, one question per drop offers
   **Overwrite all**, **Skip existing** (only files that do not exist yet are uploaded, also
-  inside existing folders) or **Cancel**.
+  inside existing folders) or **Cancel**. **Overwrite all** is offered only where Motuz
+  may overwrite (see "Overwriting existing files"); the job details list the files that
+  were skipped.
 - The browser sends each file in chunks of 8 MiB, three files at a time. Each chunk goes
   to an `rclone rcat` that runs **as the logged-in user** (the same `sudo` rule as every
   file operation) and writes the file at its destination; nothing is stored on the
@@ -1618,6 +1620,38 @@ failed, with rclone's message for each failed file.
   source was in the browser).
 - When a local destination is full (or the user's disk quota is exceeded), the whole
   upload fails at once with that reason instead of failing file by file.
+
+### Overwriting existing files
+
+Copy jobs and uploads **overwrite existing files only within destinations that Motuz
+wrote before**, by any user, on the same storage. Everywhere else existing files are
+kept: new files are copied, existing ones are never modified (rclone `--ignore-existing`),
+and the job details say how many existing files were kept, with the first 20 names.
+
+- "Written by Motuz" means at or below the item an earlier copy job or upload wrote: a
+  copy of `data` into `/home/alice` registers `/home/alice/data` (not `/home/alice`),
+  an upload each dropped top-level file or folder. It counts from the moment the job is
+  created, also if the job fails or is stopped later. Paths match on whole names
+  (`/data/a` does not cover `/data/ab`).
+- "The same storage" is the local filesystem, or the storage a cloud connection points
+  to, whoever owns the connection: S3 by endpoint (AWS by partition), Azure by account (or
+  the SAS URL), SFTP by host and port, Swift by auth URL and account, WebDAV by URL,
+  OneDrive by drive id, Google Drive by shared drive or root folder id; buckets and
+  containers are part of the path. Where Motuz cannot tell the storage from what the
+  connection stores (Dropbox, Google Drive without a shared drive or root folder, S3
+  profile connections without an endpoint of their own), existing files are always kept.
+- The New Copy Job dialog says before you submit whether existing files will be
+  overwritten (`GET /api/copy-jobs/overwrite-policy/?dst_cloud_id=&dst_resource_path=`
+  answers only that, never who wrote the destination). For uploads, the conflict question
+  offers only **Skip existing** there, and the server refuses **Overwrite all** (403).
+- Whether a user may write a file at all is still decided by the operating system and the
+  storage, as always (rclone runs as the logged-in user): a destination another user's
+  copy wrote may be overwritten by your copy only if you have write permission there.
+- `MOTUZ_ALLOW_GENERAL_OVERWRITES=true` (default `false`; any value other than true/false
+  stops the app) overwrites changed files wherever the user may write, as Motuz did
+  before. Without Docker: `bin/systemd/config.sh set MOTUZ_ALLOW_GENERAL_OVERWRITES true`,
+  then `deploy.sh`; with Docker in `.env`.
+- Integrity checks only read, so they are unaffected.
 
 ### Remote workers (HTTPS only)
 

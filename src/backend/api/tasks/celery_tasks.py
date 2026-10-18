@@ -14,6 +14,7 @@ from ..utils.rclone_connection import RcloneConnection
 from ..utils.email_utils import Email
 from ..utils import job_runner
 from ..utils import node_check
+from ..managers import overwrite_policy
 
 
 @contextlib.contextmanager
@@ -135,11 +136,14 @@ def _copy_job_run(self, copy_job, connection, task_id, start_time):
         copy_links=copy_job.copy_links,
         job_id=task_id,
         performance=copy_job.performance,
+        overwrite=copy_job.overwrite is not False, # NULL: jobs from before the policy
     )
 
     def tick(percent, text, error_text):
         copy_job.progress_current = percent
         copy_job.progress_execution_time = int(time.time() - start_time)
+        kept = connection.copy_kept(task_id) # --ignore-existing kept these files
+        overwrite_policy.record_kept(copy_job, kept['count'], kept['sample'])
         db.session.commit()
 
         self.update_state(state='PROGRESS', meta={
@@ -147,7 +151,10 @@ def _copy_job_run(self, copy_job, connection, task_id, start_time):
             'error_text': error_text,
         })
 
-    return job_runner.watch_copy(connection, task_id, tick)
+    exitstatus = job_runner.watch_copy(connection, task_id, tick)
+    kept = connection.copy_kept(task_id) # the last ones after the last tick (the caller commits)
+    overwrite_policy.record_kept(copy_job, kept['count'], kept['sample'])
+    return exitstatus
 
 
 @celery.task(name='motuz.api.tasks.hashsum_job', bind=True)

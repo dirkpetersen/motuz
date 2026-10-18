@@ -429,9 +429,14 @@ class JobRun:
             extra_env={**self.config.rclone_env, **checked_job_env(self.ticket.get('rclone_job_env'))},
         )
 
+        def kept():
+            # Existing files --ignore-existing kept (the central node stores the first 100)
+            kept = self.connection.copy_kept(run_id)
+            return {'count': kept['count'], 'sample': kept['sample'][:100]}
+
         def tick(percent, text, error_text):
             self.check_shutdown()
-            self.report({'percent': percent, 'text': text, 'error_text': error_text})
+            self.report({'percent': percent, 'text': text, 'error_text': error_text, 'kept': kept()})
 
         exitstatus = job_runner.watch_copy(self.connection, run_id, tick)
         return {
@@ -439,6 +444,7 @@ class JobRun:
             'exit_status': exitstatus,
             'text': self.connection.copy_text(run_id),
             'error_text': self.connection.copy_error_text(run_id),
+            'kept': kept(),
         }
 
     def hashsum(self):

@@ -18,7 +18,8 @@ import flask_jwt_extended as flask_jwt
 
 from api.application import db, jwt, register_api
 from api.config import TestingConfig
-from api.models import CloudConnection, CopyJob, UploadFile
+from api.managers import overwrite_policy
+from api.models import CloudConnection, CopyJob, MotuzDestination, UploadFile
 from api.utils import upload_pipes
 from api.utils.rclone_connection import RcloneConnection
 
@@ -221,10 +222,46 @@ class UploadTest(unittest.TestCase):
         response = self.client.post('/api/copy-jobs/uploads/conflicts/', headers=self.alice, json={
             'dst_cloud_id': 0, 'dst_resource_path': self.dst, 'names': ['photos', 'c.txt', 'new.txt']})
         self.assertEqual(response.status_code, 200, response.get_json())
-        self.assertEqual(response.get_json(), {'existing': ['c.txt', 'photos']})
+        self.assertEqual(response.get_json(), {
+            'existing': ['c.txt', 'photos'], 'overwrite': False,
+            'overwrite_message': overwrite_policy.MESSAGES[overwrite_policy.NOT_MOTUZ_DESTINATION]})
         response = self.client.post('/api/copy-jobs/uploads/conflicts/', headers=self.alice, json={
             'dst_cloud_id': 0, 'dst_resource_path': self.dst, 'names': ['a/b']})
         self.assertEqual(response.status_code, 400)
+
+    def conflicts(self, names, headers=None):
+        response = self.client.post('/api/copy-jobs/uploads/conflicts/', headers=headers or self.alice, json={
+            'dst_cloud_id': 0, 'dst_resource_path': self.dst, 'names': names})
+        self.assertEqual(response.status_code, 200, response.get_json())
+        return response.get_json()
+
+    def test_overwrite_only_what_motuz_wrote(self):
+        self.listing[(self.dst, False)] = ['c.txt']
+        response = self.create([('c.txt', b'new')])
+        self.assertEqual(response.status_code, 403)
+        self.assertIn('Skip existing', response.get_json()['message'])
+        self.assertEqual(CopyJob.query.count(), 0)
+        # New names only: nothing to overwrite
+        self.assertEqual(self.create([('d.txt', b'd'), ('photos/a.jpg', b'a')]).status_code, 201)
+        self.assertEqual(sorted(d.path for d in MotuzDestination.query),
+                         [os.path.join(self.dst, 'd.txt'), os.path.join(self.dst, 'photos')])
+        # A skipped upload registers its items too: c.txt is written by Motuz from then on
+        skipped = self.create([('c.txt', b'new')], mode='skip').get_json()['job']
+        self.assertEqual((skipped['skipped_existing'], skipped['skipped_existing_sample']), (1, ['c.txt']))
+        self.assertEqual(self.conflicts(['c.txt'])['overwrite'], True)
+        self.listing[(self.dst, False)] = ['c.txt', 'photos/']
+        bob = self.headers('bob') # another user may overwrite them too (the OS decides)
+        self.assertEqual(self.conflicts(['photos', 'c.txt'], bob)['overwrite'], True)
+        self.assertEqual(self.create([('photos/a.jpg', b'b'), ('c.txt', b'b')], headers=bob).status_code, 201)
+        destination = MotuzDestination.query.filter_by(path=os.path.join(self.dst, 'photos')).one()
+        self.assertEqual((destination.storage_key, destination.job_type, destination.owner), ('local:', 'upload', 'alice'))
+
+    def test_general_overwrites(self):
+        self.app.config['ALLOW_GENERAL_OVERWRITES'] = True
+        self.addCleanup(self.app.config.update, ALLOW_GENERAL_OVERWRITES=False)
+        self.listing[(self.dst, False)] = ['c.txt']
+        self.assertEqual(self.conflicts(['c.txt']), {'existing': ['c.txt'], 'overwrite': True, 'overwrite_message': None})
+        self.assertEqual(self.create([('c.txt', b'new')]).status_code, 201)
 
     def test_skip_mode_uploads_only_new_files(self):
         self.listing[(self.dst, False)] = ['photos/', 'c.txt']

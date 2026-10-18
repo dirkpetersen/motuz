@@ -81,6 +81,9 @@ x-variables:
         MOTUZ_RCLONE_MEMORY_BUDGET: ${MOTUZ_RCLONE_MEMORY_BUDGET:-}
         MOTUZ_RCLONE_MD5_SIMD_SERVERS: ${MOTUZ_RCLONE_MD5_SIMD_SERVERS:-}
         MOTUZ_RCLONE_EXTRA_FLAGS: ${MOTUZ_RCLONE_EXTRA_FLAGS:-}
+        # true: copies overwrite changed files everywhere the user may write; unset/false:
+        # only within destinations Motuz wrote before (README, "Overwriting existing files")
+        MOTUZ_ALLOW_GENERAL_OVERWRITES: ${MOTUZ_ALLOW_GENERAL_OVERWRITES:-}
     - &viewer-environment
         # Largest image the file viewer shows, e.g. 25M (the default); larger is refused
         MOTUZ_VIEW_IMAGE_MAX_BYTES: ${MOTUZ_VIEW_IMAGE_MAX_BYTES:-}

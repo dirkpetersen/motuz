@@ -29,6 +29,11 @@ job_dto = api.model('copy-job', {
     'copy_links': fields.Boolean(required=True, example=True),
     'notification_email': fields.String(required=False, example='hello@example.com'),
     'performance': Performance(required=False, example={'transfers': 32, 'multi_thread_streams': 16, 's3_chunk_size': '64Mi'}),
+    # Overwrite policy (managers/overwrite_policy.py): false = existing files are kept
+    'overwrite': fields.Boolean(readonly=True, example=False),
+    # Existing destination files that were kept, and the first 100 of their paths
+    'skipped_existing': fields.Integer(readonly=True, example=2),
+    'skipped_existing_sample': fields.List(fields.String, readonly=True, example=['data/a.txt', 'data/b.txt']),
 
     'owner': fields.String(required=False, example='owner'),
 
@@ -62,6 +67,10 @@ list_dto = api.model('copy-job-list', {
 
 performance_parser = reqparse.RequestParser()
 performance_parser.add_argument('dst_cloud_id', help='Destination connection (none or 0: local filesystem)', type=int, default=0)
+
+overwrite_parser = reqparse.RequestParser()
+overwrite_parser.add_argument('dst_cloud_id', help='Destination connection (none or 0: local filesystem)', type=int, default=0)
+overwrite_parser.add_argument('dst_resource_path', help='The destination path of the copy', type=str, required=True)
 
 list_arg_parser = reqparse.RequestParser()
 list_arg_parser.add_argument('page', help='Current page', type=int, default=1)
@@ -115,6 +124,29 @@ class CopyJobPerformance(Resource):
             api.abort(400, 'dst_cloud_id must be a connection id')
         try:
             return copy_job_manager.performance(int(dst_cloud_id))
+        except HTTP_EXCEPTION as e:
+            api.abort(e.code, e.payload)
+        except Exception as e:
+            logging.exception(e, exc_info=True)
+            api.abort(500, str(e))
+
+
+@api.route('/overwrite-policy/')
+class CopyJobOverwritePolicy(Resource):
+    @api.expect(overwrite_parser)
+    def get(self):
+        """
+        Whether a copy to this destination would overwrite existing files:
+        {overwrite, reason, message} (README "Overwriting existing files")
+        """
+        dst_cloud_id = request.args.get('dst_cloud_id') or '0'
+        if not dst_cloud_id.isdigit():
+            api.abort(400, 'dst_cloud_id must be a connection id')
+        dst_resource_path = request.args.get('dst_resource_path')
+        if not dst_resource_path:
+            api.abort(400, 'dst_resource_path is required')
+        try:
+            return copy_job_manager.describe_overwrite(int(dst_cloud_id), dst_resource_path)
         except HTTP_EXCEPTION as e:
             api.abort(e.code, e.payload)
         except Exception as e:
