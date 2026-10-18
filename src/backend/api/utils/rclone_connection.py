@@ -368,7 +368,8 @@ class RcloneConnection(AbstractConnection):
             copy_links=copy_links,
             job_id=job_id,
             # One argv item per flag (--transfers=32), formatted from parsed values
-            extra_flags=rclone_tuning.copy_flags(performance, dst_data.type if dst_data is not None else None)
+            extra_flags=rclone_tuning.copy_flags(performance, dst_data.type if dst_data is not None else None,
+                                                src_local=src_data is None)
                 + check_flags,
             extra_env={**rclone_tuning.md5_env(), **check_env},
         )

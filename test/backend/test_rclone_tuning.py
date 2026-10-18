@@ -119,6 +119,15 @@ class TestInstallationSettings(unittest.TestCase):
         self.assertEqual(tuning.copy_flags({}, None, PLAIN), [])
         self.assertEqual(tuning.hashsum_flags(None, PLAIN), [])
 
+    def test_local_sources_get_no_read_ahead(self):
+        self.assertEqual(tuning.copy_flags(None, 's3', DEFAULT, src_local=True),
+                         ['--transfers=16', '--checkers=32', '--buffer-size=0B'])
+        self.assertEqual(tuning.copy_flags(None, None, PLAIN, src_local=True), ['--buffer-size=0B'])
+        # the installation's own buffer size wins
+        s = settings(buffer_size='32M')
+        self.assertEqual(tuning.copy_flags(None, None, s, src_local=True), tuning.copy_flags(None, None, s))
+        self.assertIn('--buffer-size=32Mi', tuning.copy_flags(None, None, s, src_local=True))
+
     def test_empty_values_are_unset(self):
         # docker-compose passes unset .env variables as empty strings
         self.assertEqual(settings(transfers='', s3_chunk_size='  ', memory_budget='').defaults, DEFAULT.defaults)
@@ -443,7 +452,9 @@ class TestRcloneCommand(unittest.TestCase):
 
     def test_motuz_defaults_on_the_command(self):
         command, env = self.command(DEFAULT, dst=_s3_connection())
-        self.assertEqual(command[command.index('copyto') - 2:command.index('copyto')], ['--transfers=16', '--checkers=32'])
+        # the source /tmp is local: no read-ahead
+        self.assertEqual(command[command.index('copyto') - 3:command.index('copyto')],
+                         ['--transfers=16', '--checkers=32', '--buffer-size=0B'])
         command, env = self.command(DEFAULT, dst=_s3_connection(), method='md5sum')
         self.assertEqual(command[command.index('md5sum') - 1], '--checkers=32')
 
@@ -452,7 +463,7 @@ class TestRcloneCommand(unittest.TestCase):
         self.assertEqual(command, [
             *sudo_as('alice', env), '/usr/local/bin/rclone', '--config=/dev/null',
             '--s3-disable-checksum', '--s3-no-check-bucket', '--s3-acl', 'bucket-owner-full-control',
-            '--exclude=\\.snapshot/', '--contimeout=5m', 'copyto', '/tmp', 'dst:/bucket/x', '--progress', '--stats', '2s'])
+            '--exclude=\\.snapshot/', '--contimeout=5m', '--buffer-size=0B', 'copyto', '/tmp', 'dst:/bucket/x', '--progress', '--stats', '2s'])
         command, env = self.command(PLAIN, dst=_s3_connection(), method='md5sum')
         self.assertEqual(command, [*sudo_as('alice', env), '/usr/local/bin/rclone', '--config=/dev/null',
                                    'md5sum', 'src:/bucket/x'])
@@ -462,7 +473,8 @@ class TestRcloneCommand(unittest.TestCase):
         command, _ = self.command(DEFAULT, performance=preset, dst=_s3_connection())
         flags = command[command.index('--contimeout=5m') + 1:command.index('copyto')]
         self.assertEqual(flags, ['--transfers=10', '--checkers=128', '--multi-thread-streams=16',
-                                 '--multi-thread-cutoff=64Mi', '--s3-upload-concurrency=16', '--s3-chunk-size=32Mi'])
+                                 '--multi-thread-cutoff=64Mi', '--s3-upload-concurrency=16', '--s3-chunk-size=32Mi',
+                                 '--buffer-size=0B'])
         self.assertEqual(command[-6:], ['copyto', '/tmp', 'dst:/bucket/x', '--progress', '--stats', '2s'])
 
     def test_md5_simd(self):

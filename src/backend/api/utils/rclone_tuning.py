@@ -116,6 +116,12 @@ CHUNKED_BACKENDS = ('s3', 'azureblob')
 DEFAULT_MD5_SIMD_SERVERS = 2
 _MD5_SIMD_SERVERS_BOUNDS = (0, 16)
 
+# --buffer-size of copy jobs from a local source when MOTUZ_RCLONE_BUFFER_SIZE is unset:
+# rclone's read-ahead only copies data the kernel's page cache already holds (about 10%
+# more throughput to S3 at 4 GB/s, README "S3 connections"). Cloud sources keep rclone's
+# 16M, which hides their latency.
+LOCAL_SOURCE_BUFFER_SIZE = 0
+
 
 # --- values ---------------------------------------------------------------------------
 
@@ -436,14 +442,17 @@ def effective(overrides, dst_type, tuning=None):
     return values
 
 
-def copy_flags(overrides, dst_type, tuning=None):
+def copy_flags(overrides, dst_type, tuning=None, *, src_local=False):
     """
     rclone flags of a copy job: the effective settings (none: rclone's defaults) plus the
-    extra flags. Re-validates stored overrides, since the caps may have changed.
+    extra flags. Re-validates stored overrides, since the caps may have changed. A local
+    source (`src_local`) gets LOCAL_SOURCE_BUFFER_SIZE unless the installation sets one.
     """
     tuning = tuning or settings()
     overrides = validate_overrides(overrides, dst_type, tuning)
     values = effective(overrides, dst_type, tuning)
+    if src_local:
+        values.setdefault('buffer_size', LOCAL_SOURCE_BUFFER_SIZE)
     flags = ['{}={}'.format(PARAMS_BY_NAME[name].flag, format_value(PARAMS_BY_NAME[name], value))
              for name, value in values.items()]
     return flags + list(tuning.extra_flags)

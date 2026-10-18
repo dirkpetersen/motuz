@@ -1186,9 +1186,10 @@ uploads, rclone's check after the copy skipped (release
 
 With CRC32C the SDK computes the checksum while it sends each part (an `aws-chunked` trailer), so it
 costs as little as no checksum while S3 still verifies every part: the recommended choice for
-Amazon S3. `MOTUZ_RCLONE_BUFFER_SIZE=0` saves the copy through rclone's read-ahead buffer, about 10%
-for local sources served from the page cache (test it for slow or network file systems, where the
-read-ahead may help). At that point the 8 vCPUs are busy (28% user, 29% system, 27% softirq):
+Amazon S3. A buffer size of 0 saves the copy through rclone's read-ahead buffer, about 10% for
+local sources served from the page cache, so copy jobs from a local source get `--buffer-size=0`
+unless `MOTUZ_RCLONE_BUFFER_SIZE` is set (cloud sources keep rclone's 16M). For slow or network
+file systems, where the read-ahead may help, set e.g. `MOTUZ_RCLONE_BUFFER_SIZE=16M`. At that point the 8 vCPUs are busy (28% user, 29% system, 27% softirq):
 the rest is the kernel's sending and file reading, and TLS. `rclone md5sum` of the same files:
 8.7 instead of 14.2 CPU-seconds with md5-simd.
 
@@ -1416,7 +1417,7 @@ beyond a few Gb/s, however fast the link. Two levels of settings change that:
 | `MOTUZ_RCLONE_CHECKERS` | `--checkers` (also for integrity checks) | 8 | yes |
 | `MOTUZ_RCLONE_MULTI_THREAD_STREAMS` | `--multi-thread-streams` (0: off) | 4 | yes |
 | `MOTUZ_RCLONE_MULTI_THREAD_CUTOFF` | `--multi-thread-cutoff` | 256M | yes |
-| `MOTUZ_RCLONE_BUFFER_SIZE` | `--buffer-size` | 16M | no |
+| `MOTUZ_RCLONE_BUFFER_SIZE` | `--buffer-size` (unset: 0 for local sources) | 16M | no |
 | `MOTUZ_RCLONE_S3_UPLOAD_CONCURRENCY` | `--s3-upload-concurrency` | 4 | yes (S3 destinations) |
 | `MOTUZ_RCLONE_S3_CHUNK_SIZE` | `--s3-chunk-size` (5M to 5G) | 5M | yes (S3 destinations) |
 | `MOTUZ_RCLONE_AZUREBLOB_UPLOAD_CONCURRENCY` | `--azureblob-upload-concurrency` | 16 | yes (Azure destinations) |

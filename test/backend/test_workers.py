@@ -377,7 +377,8 @@ class TestTicketScope(WorkerTestBase):
         tuning = worker_manager.job_routing.rclone_tuning.load_settings({'MOTUZ_RCLONE_CHECKERS': '16'})
         with mock.patch.object(worker_manager.job_routing.rclone_tuning, 'settings', return_value=tuning):
             ticket = self.claim(worker)
-        self.assertEqual(ticket['rclone_flags'], ['--transfers=7', '--checkers=16'])
+        # the job's source is local: no read-ahead (rclone_tuning.LOCAL_SOURCE_BUFFER_SIZE)
+        self.assertEqual(ticket['rclone_flags'], ['--transfers=7', '--checkers=16', '--buffer-size=0B'])
 
     def test_profile_connections_are_resolved_by_the_worker(self):
         profile = self.connection('alice', type='s3', subtype='profile', profile_source='aws', profile_name='lab', s3_region='eu-west-1')

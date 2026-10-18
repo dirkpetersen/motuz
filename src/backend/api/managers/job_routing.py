@@ -143,7 +143,8 @@ def rclone_flags(job_type, job):
     """
     if job_type == 'copy':
         dst_cloud = job.dst_cloud
-        return rclone_tuning.copy_flags(job.performance, dst_cloud.type if dst_cloud is not None else None) \
+        return rclone_tuning.copy_flags(job.performance, dst_cloud.type if dst_cloud is not None else None,
+                                        src_local=job.src_cloud is None) \
             + destination_checks(dst_cloud)[0]
     return rclone_tuning.hashsum_flags(job.performance)
 
