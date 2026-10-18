@@ -22,7 +22,7 @@ import urllib.request
 
 from common import (BASE, CTX, DOCUMENT_FIXTURES_CODE, NUMBERED_LOG_CODE, VIEWER_FIXTURES_CODE, check, check_chunked_reads,
                     check_document_view, check_image_view, finish, numbered_log, pg_dump, psql,
-                    service_logs, sh, skip, SSO_CONFIG_DIR)
+                    RCLONE, service_logs, sh, skip, SSO_CONFIG_DIR)
 
 AWS_PROFILE = os.environ.get('MOTUZ_E2E_AWS_PROFILE')
 REGION = os.environ.get('MOTUZ_E2E_AWS_REGION', 'us-west-2')
@@ -170,7 +170,7 @@ write_as('alice', f'/home/alice/{SSO_CACHE}', json.dumps({
 write_as('alice', '/home/alice/.config/rclone/rclone.conf', RCLONE_CONF)
 write_as('bob', '/home/bob/.config/rclone/rclone.conf', ENCRYPTED_RCLONE_CONF)
 sh('app', 'rm -f /tmp/motuz-pwned-marker'); sh('celery', 'rm -f /tmp/motuz-pwned-marker')
-out = sh('app', "sudo -u alice /usr/local/bin/rclone --config /home/alice/.config/rclone/rclone.conf mkdir azurite:motuztest")
+out = sh('app', f"sudo -u alice {RCLONE} --config /home/alice/.config/rclone/rclone.conf mkdir azurite:motuztest")
 check_r('azurite container created', out.returncode == 0, out.stderr)
 
 A = req('POST', '/api/auth/login/', body={'username': 'alice', 'password': 'AlicePass1'})[1]['access']
@@ -418,7 +418,7 @@ check('Azure pager: file contents never logged', 'of a numbered log' not in serv
 # The image viewer on Azure: lsjson --stat (a file above the cap is never read), then
 # rclone cat --count cap+1; the type from the first bytes, not from rclone's MimeType
 sh('app', 'sudo -u alice python3 - /home/alice/azviewer', stdin=VIEWER_FIXTURES_CODE)
-out = sh('app', "sudo -u alice /usr/local/bin/rclone --config /home/alice/.config/rclone/rclone.conf "
+out = sh('app', f"sudo -u alice {RCLONE} --config /home/alice/.config/rclone/rclone.conf "
                 "copy /home/alice/azviewer azurite:motuztest/viewer")
 check_r('viewer fixtures uploaded to Azurite', out.returncode == 0, out.stderr)
 check_image_view(A, B, '/motuztest/viewer', c5['id'], 'Azure image viewer', 404)
@@ -428,7 +428,7 @@ check_r('Azure Markdown: the text through the pager\'s endpoint', status == 200 
 # The document viewer on Azure: whole files after lsjson --stat (413 before any cat),
 # PDFs in ranges with rclone cat --offset --count (+ cat --count 1024 for the type)
 sh('app', 'sudo -u alice python3 - /home/alice/azdocs', stdin=DOCUMENT_FIXTURES_CODE)
-out = sh('app', "sudo -u alice /usr/local/bin/rclone --config /home/alice/.config/rclone/rclone.conf "
+out = sh('app', f"sudo -u alice {RCLONE} --config /home/alice/.config/rclone/rclone.conf "
                 "copy /home/alice/azdocs azurite:motuztest/docs")
 check_r('document fixtures uploaded to Azurite', out.returncode == 0, out.stderr)
 check_document_view(A, B, '/motuztest/docs', c5['id'], 'Azure document viewer', 404)
@@ -440,7 +440,7 @@ AZ_FOLLOW = '/motuztest/follow/f.log'
 
 def az_write(content):
     """Uploads the whole file (blob storage has no append), as alice with her rclone.conf"""
-    out = sh('app', "sudo -u alice /usr/local/bin/rclone --config /home/alice/.config/rclone/rclone.conf "
+    out = sh('app', f"sudo -u alice {RCLONE} --config /home/alice/.config/rclone/rclone.conf "
                     "rcat azurite:motuztest/follow/f.log", stdin=content)
     if out.returncode != 0:
         print('rcat failed:', out.stderr)
@@ -516,6 +516,6 @@ check('no secret in a database dump', len(dump) > 1000 and no_secret(dump), len(
 
 sh('app', 'rm -f /home/bob/.aws/credentials')
 if AWS_PROFILE:  # the test objects in the bucket
-    out = sh('app', f"sudo -u alice /usr/local/bin/rclone --config /home/alice/.config/rclone/rclone.conf purge s3remote:{BUCKET}/{PREFIX}")
+    out = sh('app', f"sudo -u alice {RCLONE} --config /home/alice/.config/rclone/rclone.conf purge s3remote:{BUCKET}/{PREFIX}")
     print('cleanup', f's3://{BUCKET}/{PREFIX}:', 'removed' if out.returncode == 0 else redact(out.stderr))
 finish()

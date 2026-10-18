@@ -65,6 +65,9 @@ async function pageShot(name) {
     }
 }
 
+// The rclone that runs as the users (common.py RCLONE)
+const RCLONE = process.env.MOTUZ_E2E_TARGET === 'systemd' ? '/var/lib/motuz-runas/rclone' : '/usr/local/bin/rclone';
+
 // Runs a shell command in the app container (fixtures), like common.py's sh(); with
 // MOTUZ_E2E_TARGET=systemd on this machine (as root, run_systemd.sh)
 function appShell(cmd, input) {
@@ -1433,7 +1436,7 @@ os.utime(os.path.join(d, 'dirB'), (now - 86400,) * 2)
         check('markdown: nothing executed after all', await page.evaluate(() => window.__mdXss === undefined));
 
         // The same on Azure (rclone as alice with the connection's credentials)
-        const out = appShell(`sudo -u alice /usr/local/bin/rclone --config /home/alice/.config/rclone/rclone.conf copy ${VIEWER_DIR} azurite:motuztest/ui-viewer && echo uploaded`);
+        const out = appShell(`sudo -u alice ${RCLONE} --config /home/alice/.config/rclone/rclone.conf copy ${VIEWER_DIR} azurite:motuztest/ui-viewer && echo uploaded`);
         check('Azure: viewer fixtures uploaded', out.includes('uploaded'), out);
         await paneGo('left', 'ui-azurite', '/motuztest/ui-viewer');
         await leftPane.getByText('pic.png', { exact: true }).waitFor({ timeout: 30000 });
@@ -1733,7 +1736,7 @@ os.utime(os.path.join(d, 'dirB'), (now - 86400,) * 2)
         }
 
         // The same on Azure (rclone as alice with the connection's credentials)
-        const out = appShell(`sudo -u alice /usr/local/bin/rclone --config /home/alice/.config/rclone/rclone.conf copy ${DOCS_DIR} azurite:motuztest/ui-docs && echo uploaded`);
+        const out = appShell(`sudo -u alice ${RCLONE} --config /home/alice/.config/rclone/rclone.conf copy ${DOCS_DIR} azurite:motuztest/ui-docs && echo uploaded`);
         check('Azure: document fixtures uploaded', out.includes('uploaded'), out);
         await paneGo('left', 'ui-azurite', '/motuztest/ui-docs');
         await leftPane.getByText('report.pdf', { exact: true }).waitFor({ timeout: 30000 });

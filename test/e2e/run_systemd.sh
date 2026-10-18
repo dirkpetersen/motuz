@@ -246,7 +246,7 @@ reveal() { # provider constant in oauth_manager.py
     local obscured
     obscured=$(awk "/^$1 = /{found=1} found && /rclone_obscured_client_secret=/{match(\$0, /\x27[^\x27]+\x27/); print substr(\$0, RSTART+1, RLENGTH-2); exit}" \
         "$REPO/src/backend/api/managers/oauth_manager.py")
-    /usr/local/bin/rclone reveal "$obscured"
+    /var/lib/motuz-runas/rclone reveal "$obscured"   # the account's rclone (bin/systemd/tools.sh)
 }
 RCLONE_SECRET=$(reveal ONEDRIVE) && [ -n "$RCLONE_SECRET" ] || die "could not reveal rclone's OneDrive client secret"
 GDRIVE_SECRET=$(reveal GDRIVE) && [ -n "$GDRIVE_SECRET" ] || die "could not reveal rclone's Google Drive client secret"

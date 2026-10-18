@@ -28,6 +28,8 @@ SYSTEMD_CONFIG = os.environ.get('MOTUZ_E2E_SYSTEMD_CONFIG', '/var/lib/motuz/.con
 # docker compose service -> systemd user unit
 # Where the server writes AWS SSO configs (MOTUZ_SSO_CONFIG_DIR of each install)
 SSO_CONFIG_DIR = '/var/lib/motuz-aws-config' if TARGET == 'systemd' else '/tmp/motuz-aws-config'
+# The rclone that runs as the users: root's in the image, the account's in the systemd install
+RCLONE = '/var/lib/motuz-runas/rclone' if TARGET == 'systemd' else '/usr/local/bin/rclone'
 SYSTEMD_UNITS = {'app': 'motuz-app.service', 'celery': 'motuz-celery.service', 'database': 'motuz-postgres.service'}
 
 
