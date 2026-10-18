@@ -63,9 +63,13 @@ class UploadTest(unittest.TestCase):
         def rename_local(connection, user, src, dst):
             os.replace(src, dst)
 
+        def remove_local(connection, user, path):
+            os.remove(path)
+
         for patcher in (
             mock.patch.object(RcloneConnection, 'upload_command', upload_command),
             mock.patch.object(RcloneConnection, 'rename_local', rename_local),
+            mock.patch.object(RcloneConnection, 'remove_local', remove_local),
             mock.patch.object(RcloneConnection, 'existing_names', self.existing_names),
         ):
             patcher.start()

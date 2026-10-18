@@ -21,6 +21,7 @@ import datetime
 import logging
 import posixpath
 import re
+import subprocess
 
 from flask import request
 from sqlalchemy import func, insert
@@ -167,6 +168,11 @@ def put_chunk(job_id, index, offset, length, stream):
             upload_file.state = 'failed'
             upload_file.error = error or 'rclone failed with exit status {}'.format(returncode)
             logging.info('Copy job %s: upload of %r failed: %s', job.id, upload_file.path, upload_file.error)
+            if local: # rclone leaves it on some errors, e.g. a full disk
+                try:
+                    RcloneConnection().remove_local(owner, _temporary(path, key))
+                except (RcloneException, OSError, subprocess.SubprocessError):
+                    pass # Never written, or already removed
             full = disk_full.scan(upload_file.error) if local else None
     else:
         upload_file.bytes_done = pipe.written

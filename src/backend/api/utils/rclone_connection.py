@@ -385,6 +385,13 @@ class RcloneConnection(AbstractConnection):
         self._execute(command)
 
 
+    def remove_local(self, user, path):
+        """Removes the local file `path` as `user` (rclone deletefile)"""
+        command = [*sudo_as(user), RCLONE, '--config=/dev/null', 'deletefile', _local_path(path)]
+        self._log_command(command, {})
+        self._execute(command)
+
+
     def existing_names(self, dst_data, user, path, recursive, timeout):
         """
         The names in the folder `path` of a destination (None: the local filesystem),
