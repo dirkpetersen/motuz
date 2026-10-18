@@ -167,14 +167,17 @@ def create(data):
 
 @token_required
 def retrieve(id):
+    return owned_by(id, get_logged_in_user(request))
+
+
+def owned_by(id, owner):
+    """
+    The connection `id` if `owner` owns it, else 404 (also without a request: the
+    scheduler runs a schedule's copies as its owner, managers/schedule_manager.py)
+    """
     cloud_connection = db.session.get(CloudConnection, id)
 
-    if cloud_connection is None:
-        raise HTTP_404_NOT_FOUND('Cloud Connection with id {} not found'.format(id))
-
-    owner = get_logged_in_user(request)
-
-    if cloud_connection.owner != owner:
+    if cloud_connection is None or cloud_connection.owner != owner:
         raise HTTP_404_NOT_FOUND('Cloud Connection with id {} not found'.format(id))
 
     return cloud_connection

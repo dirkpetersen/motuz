@@ -41,6 +41,10 @@ class CopyJob(db.Model, TimestampMixin):
     # managers/egress_manager.py): {kind, bytes, files, low_usd, high_usd, rates,
     # confirmed}; NULL when no AWS fee applies
     egress_estimate = db.Column(db.JSON, nullable=True)
+    # The scheduled repeating copy (models/copy_schedule.py) this job is a run of, else
+    # NULL; not a foreign key, so deleting the schedule keeps its jobs. Such a job
+    # never overwrites unless MOTUZ_ALLOW_GENERAL_OVERWRITES is true.
+    schedule_id = db.Column(db.Integer, nullable=True, index=True)
 
     owner = db.Column(db.String, index=True)
 

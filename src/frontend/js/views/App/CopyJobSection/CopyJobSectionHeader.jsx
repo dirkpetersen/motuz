@@ -34,6 +34,16 @@ class CopyJobSectionHeader extends React.PureComponent {
                     Verifications
                 </div>
                 <div
+                    className={classnames({
+                        'section-tab': true,
+                        'pe-4': true,
+                        'active': this.props.value === 2,
+                    })}
+                    onClick={() => this.props.onChange(2)}
+                >
+                    Schedules
+                </div>
+                <div
                     className='ms-auto section-tab'
                     onClick={() => this.props.onResizeToggle()}
                 >

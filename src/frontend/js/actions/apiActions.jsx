@@ -57,6 +57,24 @@ export const STOP_COPY_JOB_SUCCESS = '@@api/STOP_COPY_JOB_SUCCESS';
 export const STOP_COPY_JOB_FAILURE = '@@api/STOP_COPY_JOB_FAILURE';
 
 
+// Scheduled repeating copies (/api/copy-schedules/, README "Scheduled copies")
+export const LIST_COPY_SCHEDULES_REQUEST = '@@api/LIST_COPY_SCHEDULES_REQUEST';
+export const LIST_COPY_SCHEDULES_SUCCESS = '@@api/LIST_COPY_SCHEDULES_SUCCESS';
+export const LIST_COPY_SCHEDULES_FAILURE = '@@api/LIST_COPY_SCHEDULES_FAILURE';
+
+export const CREATE_COPY_SCHEDULE_REQUEST = '@@api/CREATE_COPY_SCHEDULE_REQUEST';
+export const CREATE_COPY_SCHEDULE_SUCCESS = '@@api/CREATE_COPY_SCHEDULE_SUCCESS';
+export const CREATE_COPY_SCHEDULE_FAILURE = '@@api/CREATE_COPY_SCHEDULE_FAILURE';
+
+export const UPDATE_COPY_SCHEDULE_REQUEST = '@@api/UPDATE_COPY_SCHEDULE_REQUEST';
+export const UPDATE_COPY_SCHEDULE_SUCCESS = '@@api/UPDATE_COPY_SCHEDULE_SUCCESS';
+export const UPDATE_COPY_SCHEDULE_FAILURE = '@@api/UPDATE_COPY_SCHEDULE_FAILURE';
+
+export const DELETE_COPY_SCHEDULE_REQUEST = '@@api/DELETE_COPY_SCHEDULE_REQUEST';
+export const DELETE_COPY_SCHEDULE_SUCCESS = '@@api/DELETE_COPY_SCHEDULE_SUCCESS';
+export const DELETE_COPY_SCHEDULE_FAILURE = '@@api/DELETE_COPY_SCHEDULE_FAILURE';
+
+
 export const LIST_HASHSUM_JOBS_REQUEST = '@@api/LIST_HASHSUM_JOBS_REQUEST';
 export const LIST_HASHSUM_JOBS_SUCCESS = '@@api/LIST_HASHSUM_JOBS_SUCCESS';
 export const LIST_HASHSUM_JOBS_FAILURE = '@@api/LIST_HASHSUM_JOBS_FAILURE';
@@ -362,6 +380,55 @@ const _createCopyJob = (data) => ({
         body: JSON.stringify(data),
         headers: withAuth({ 'Content-Type': 'application/json' }),
         types: [ CREATE_COPY_JOB_REQUEST, CREATE_COPY_JOB_SUCCESS, CREATE_COPY_JOB_FAILURE ],
+    }
+});
+
+export const listCopySchedules = () => ({
+    [RSAA]: {
+        endpoint: `/api/copy-schedules/`,
+        method: 'GET',
+        headers: withAuth({ 'Content-Type': 'application/json' }),
+        types: [ LIST_COPY_SCHEDULES_REQUEST, LIST_COPY_SCHEDULES_SUCCESS, LIST_COPY_SCHEDULES_FAILURE ],
+    }
+});
+
+// A schedule from the New Copy Job dialog; the dialog stays open on failure and shows why.
+// With run_now, the first run's job appears in the Transfers table.
+export const createCopySchedule = (data) => {
+    return async (dispatch) => {
+        const result = await dispatch({
+            [RSAA]: {
+                endpoint: `/api/copy-schedules/`,
+                method: 'POST',
+                body: JSON.stringify(data),
+                headers: withAuth({ 'Content-Type': 'application/json' }),
+                types: [ CREATE_COPY_SCHEDULE_REQUEST, CREATE_COPY_SCHEDULE_SUCCESS, CREATE_COPY_SCHEDULE_FAILURE ],
+            }
+        });
+        if (result && !result.error && result.payload && result.payload.last_job_id) {
+            dispatch(listCopyJobs(1));
+        }
+        return result;
+    }
+}
+
+// Pause ({enabled: false}) or resume ({enabled: true})
+export const updateCopySchedule = (id, data) => ({
+    [RSAA]: {
+        endpoint: `/api/copy-schedules/${id}`,
+        method: 'PATCH',
+        body: JSON.stringify(data),
+        headers: withAuth({ 'Content-Type': 'application/json' }),
+        types: [ UPDATE_COPY_SCHEDULE_REQUEST, UPDATE_COPY_SCHEDULE_SUCCESS, UPDATE_COPY_SCHEDULE_FAILURE ],
+    }
+});
+
+export const deleteCopySchedule = (id) => ({
+    [RSAA]: {
+        endpoint: `/api/copy-schedules/${id}`,
+        method: 'DELETE',
+        headers: withAuth({ 'Content-Type': 'application/json' }),
+        types: [ DELETE_COPY_SCHEDULE_REQUEST, DELETE_COPY_SCHEDULE_SUCCESS, DELETE_COPY_SCHEDULE_FAILURE ],
     }
 });
 

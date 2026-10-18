@@ -11,6 +11,8 @@ const initialState = {
     jobs: [],
     jobPages: 1,
     hashsumJobs: [],
+    // Scheduled repeating copies (GET /api/copy-schedules/)
+    schedules: [],
     jobErrors: {},
     cloudConnectionVerification: {
         loading: false,
@@ -156,6 +158,25 @@ export default (state=initialState, action) => {
     }
     case api.STOP_HASHSUM_JOB_FAILURE: {
         return state;
+    }
+
+
+
+    case api.LIST_COPY_SCHEDULES_SUCCESS: {
+        const schedules = [...action.payload];
+        schedules.sort((a, b) => b.id - a.id)
+        return {...state, schedules};
+    }
+    case api.CREATE_COPY_SCHEDULE_SUCCESS: {
+        return {...state, schedules: [action.payload, ...state.schedules]};
+    }
+    case api.UPDATE_COPY_SCHEDULE_SUCCESS: {
+        const schedule = action.payload;
+        return {...state, schedules: state.schedules.map(s => s.id === schedule.id ? schedule : s)};
+    }
+    case api.DELETE_COPY_SCHEDULE_SUCCESS: {
+        const schedule = action.payload;
+        return {...state, schedules: state.schedules.filter(s => s.id !== schedule.id)};
     }
 
 

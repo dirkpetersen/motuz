@@ -456,6 +456,50 @@ if (PHASE === 'paste') {
         await page.waitForSelector('.modal-content', { state: 'detached', timeout: 10000 });
     });
 
+    // The collapsed "Scheduled repeat" section (utils/copySchedule.js): local times in the
+    // browser's zone (America/Los_Angeles), stored in UTC; the Schedules tab
+    await flow('copy schedule', async () => {
+        const posts = [];
+        const listener = r => { if (r.url().endsWith('/api/copy-schedules/') && r.method() === 'POST') posts.push(r.postDataJSON()); };
+        page.on('request', listener);
+        const panes = page.locator('.grid-files');
+        await panes.nth(0).getByText('ui-src', { exact: true }).dragTo(panes.nth(1).getByText('ui-perf-dst', { exact: true }));
+        await page.waitForSelector('.modal-content .copy-job-schedule', { state: 'attached', timeout: 10000 });
+        check('schedule: section collapsed and off',
+            !(await page.locator('.copy-job-schedule').evaluate(d => d.open))
+            && (await page.textContent('.modal-footer button[type=submit]')).trim() === 'Submit Copy Job');
+        await page.click('.copy-job-schedule summary');
+        await page.click('.copy-job-schedule .react-toggle >> nth=0');
+        await page.waitForSelector('.copy-job-schedule .schedule-time-zone', { timeout: 5000 });
+        check('schedule: the times are in the browser time zone',
+            (await page.textContent('.copy-job-schedule .schedule-time-zone')).includes('America/Los_Angeles'));
+        check('schedule: add-only explained', (await page.textContent('.copy-job-schedule .schedule-add-only'))
+            .includes('nothing in the destination is deleted or overwritten'));
+        check('schedule: the button says Create schedule',
+            (await page.textContent('.modal-footer button[type=submit]')).trim() === 'Create schedule');
+        await page.fill('.copy-job-schedule input[name=schedule_time]', '02:30');
+        await page.click('.copy-job-schedule .react-toggle >> nth=1'); // run once now: off
+        await shot('copy-schedule-section');
+        await page.click('.modal-footer button[type=submit]');
+        for (let i = 0; i < 50 && !posts.length; i++) await page.waitForTimeout(200);
+        await page.waitForSelector('.modal-content', { state: 'detached', timeout: 10000 });
+        const offset = await page.evaluate(() => new Date().getTimezoneOffset());
+        const utcHour = (2 + Math.floor((30 + offset) / 60) + 24) % 24;
+        check('schedule: POST in UTC, no run now', posts.length === 1 && posts[0].frequency === 'daily'
+            && posts[0].hour === utcHour && posts[0].minute === 30 && posts[0].run_now === false, posts);
+        await page.click('.section-tab:has-text("Schedules")');
+        await page.waitForSelector('.copy-schedule-row', { timeout: 10000 });
+        const row = await page.textContent('.copy-schedule-row');
+        check('schedule: listed in local time', row.includes('Every day at 02:30') && row.includes('02:30'), row);
+        await shot('copy-schedule-table');
+        const schedules = await (await api.get('/api/copy-schedules/', { headers: auth })).json();
+        for (const s of schedules) {
+            await api.delete(`/api/copy-schedules/${s.id}`, { headers: auth });
+        }
+        await page.click('.section-tab:has-text("Transfers")');
+        page.off('request', listener);
+    });
+
     await flow('onedrive-sign-in', async () => {
         await openClouds();
         await newConnection('onedrive');

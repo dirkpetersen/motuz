@@ -91,17 +91,42 @@ def describe_overwrite(dst_cloud_id=None, dst_resource_path=None):
     return overwrite_policy.describe(dst_cloud, dst_resource_path)
 
 
+def owned_cloud(cloud_id, owner):
+    """The connection `cloud_id` of `owner` (else 404), None for the local filesystem (None or 0)"""
+    if not cloud_id:
+        return None
+    return cloud_connection_manager.owned_by(cloud_id, owner)
+
+
 @token_required
 def create(data):
-    owner = get_logged_in_user(request)
+    return create_for(get_logged_in_user(request), data)
 
-    src_cloud = _owned_cloud(data.get('src_cloud_id'))
-    dst_cloud = _owned_cloud(data.get('dst_cloud_id'))
+
+def create_for(owner, data, schedule=None):
+    """
+    Creates and queues a copy job of `owner` (the logged in user, or the owner of the
+    CopySchedule `schedule` whose run this is: managers/schedule_manager.py). Raises
+    the HTTP_4XX exceptions before anything is stored.
+    """
+    src_cloud = owned_cloud(data.get('src_cloud_id'), owner)
+    dst_cloud = owned_cloud(data.get('dst_cloud_id'), owner)
     # 409 if the local destination would be too full afterwards (MOTUZ_MAX_FILL_PERCENT)
     space_note = space_manager.check_copy(owner, src_cloud, data.get('src_resource_path'), dst_cloud,
                                           data.get('dst_resource_path'), data.get('copy_links'))
-    # Before this job registers its destination: a first copy never overwrites
-    overwrite, _ = overwrite_policy.decide(dst_cloud, data.get('dst_resource_path'))
+    if schedule is None:
+        # Before this job registers its destination: a first copy never overwrites
+        overwrite, _ = overwrite_policy.decide(dst_cloud, data.get('dst_resource_path'))
+        egress_estimate = egress_manager.confirmed_copy(src_cloud, dst_cloud, data.get('egress_estimate'))
+    else:
+        # A scheduled run only adds new files: it never overwrites, also within a Motuz
+        # destination, unless MOTUZ_ALLOW_GENERAL_OVERWRITES is true (README "Scheduled
+        # copies"); copyto never deletes anything
+        overwrite = overwrite_policy.general_overwrites()
+        # The schedule's confirmation stands for every run (no new one per run)
+        egress_estimate = egress_manager.confirmed_copy(src_cloud, dst_cloud, schedule.egress_estimate)
+        if egress_estimate is not None:
+            egress_estimate['schedule_id'] = schedule.id
 
     copy_job = CopyJob(**{
         'description': data.get('description', None),
@@ -115,7 +140,8 @@ def create(data):
         'performance': validate_performance(data.get('performance'), dst_cloud),
         'space_check': space_note,
         'overwrite': overwrite,
-        'egress_estimate': egress_manager.confirmed_copy(src_cloud, dst_cloud, data.get('egress_estimate')),
+        'egress_estimate': egress_estimate,
+        'schedule_id': schedule.id if schedule is not None else None,
 
         'progress_current': 0,
         'progress_total': 100,

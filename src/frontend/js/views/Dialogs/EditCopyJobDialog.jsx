@@ -174,6 +174,18 @@ class EditCopyJobDialog extends React.Component {
                                 </div>
                             )}
 
+                            {data.schedule_id ? (
+                                <div className="row mb-3">
+                                    <div className="col-4 text-end">
+                                        <b>Schedule</b>
+                                    </div>
+                                    <div className="col-7 text-start job-schedule">
+                                        A run of schedule #{data.schedule_id} (only new files are copied)
+                                    </div>
+                                    <div className="col-1"></div>
+                                </div>
+                            ) : null}
+
                             {this.outputErrorText(data)}
 
                             {this.outputText(data)}

@@ -44,6 +44,8 @@ job_dto = api.model('copy-job', {
     'skipped_existing': fields.Integer(readonly=True, example=2),
     'skipped_existing_sample': fields.List(fields.String, readonly=True, example=['data/a.txt', 'data/b.txt']),
     'egress_estimate': EgressEstimate(required=False),
+    # The schedule (/copy-schedules/) this job is a run of, else null
+    'schedule_id': fields.Integer(readonly=True, example=7),
 
     'owner': fields.String(required=False, example='owner'),
 

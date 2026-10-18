@@ -1,4 +1,5 @@
-# The job worker (copy and integrity-check jobs, rclone as the logged-in user via sudo).
+# The job worker (copy and integrity-check jobs, rclone as the logged-in user via sudo)
+# and, next to it, the runner of the scheduled copies (bin/systemd/celery_worker.sh).
 # Stopping it is a warm shutdown, like `docker stop`: SIGTERM to the main process only,
 # which waits for running jobs; after TimeoutStopSec everything is killed.
 [Unit]
@@ -22,7 +23,7 @@ UnsetEnvironment=MOTUZ_ONEDRIVE_CLIENT_SECRET MOTUZ_GDRIVE_CLIENT_SECRET
 # MOTUZ_REQUIRED_PATHS is missing (api/utils/node_check.py; jobs check them too).
 # Retried every RestartSec, so the worker comes up once the mounts are there.
 ExecStartPre=%h/motuz/venv/bin/python -I %h/motuz/src/backend/api/utils/node_check.py start
-ExecStart=%h/motuz/venv/bin/celery -A api.tasks worker -l info
+ExecStart=%h/motuz/bin/systemd/celery_worker.sh
 KillMode=mixed
 TimeoutStopSec=300
 Restart=on-failure

@@ -229,6 +229,7 @@ stops with a message naming the missing piece (it says when to run `install.sh` 
     - [File viewer](#file-viewer)
     - [Uploads from the desktop](#uploads-from-the-desktop)
     - [Free space limit](#free-space-limit)
+    - [Scheduled copies](#scheduled-copies)
     - [Remote workers (HTTPS only)](#remote-workers-https-only)
     - [Temporary EC2 workers](#temporary-ec2-workers)
 - [Alternative: Docker](#alternative-docker)
@@ -1783,6 +1784,57 @@ and the job details say how many existing files were kept, with the first 20 nam
   before. Without Docker: `bin/systemd/config.sh set MOTUZ_ALLOW_GENERAL_OVERWRITES true`,
   then `deploy.sh`; with Docker in `.env`.
 - Integrity checks only read, so they are unaffected.
+
+### Scheduled copies
+
+A copy can repeat on a schedule, like a cron job: in the New Copy Job dialog, open
+**Scheduled repeat**, turn on **Repeat this copy** and pick **every hour** (at a minute),
+**every day** (at a time), **every week** (on a weekday, at a time) or **every month** (on
+day 1-28, so that every month has it, at a time). The submit button then reads **Create
+schedule**; **Run once now** (on by default) also starts the first copy at once, otherwise
+it starts at the next scheduled time. The **Schedules** tab next to Transfers and
+Verifications lists the schedules with their next run, the last job and why a run was
+skipped or refused, and pauses, resumes or deletes them (deleting keeps the jobs).
+
+- **Only new files are copied.** Every run is an ordinary copy job (it shows up under
+  Transfers, "a run of schedule #N") that never deletes anything in the destination
+  (rclone `copyto`, never `sync`) and never overwrites existing files, also within a
+  destination that Motuz wrote before (see [Overwriting existing files](#overwriting-existing-files)):
+  it runs with `--ignore-existing`, and the job reports the files it kept. Only
+  `MOTUZ_ALLOW_GENERAL_OVERWRITES=true` lets scheduled runs overwrite changed files.
+- **Times.** The dialog takes times in the browser's time zone and says which
+  ("times in your time zone (America/Los_Angeles)"); the server stores and runs them in
+  UTC. After a change to or from daylight saving time a schedule runs an hour earlier or
+  later in local time. A monthly day that is not day 1-28 in UTC at the chosen time (e.g.
+  day 28 at 20:00 in California is day 29 in UTC) is refused with a hint.
+- **One run at a time.** A run whose previous job is still running is skipped (not
+  stacked) and counted; the schedule continues at its next time. A server that was down
+  runs a due schedule once, then continues at the next time (no catch-up). Each run gets
+  the same checks as a copy job created by hand: the connections must still be the
+  owner's (deleting a connection deletes its schedules), the free space limit, the
+  performance settings; a refused run is shown in the Schedules tab and the schedule
+  stays on.
+- **AWS egress.** A schedule whose copies read out of AWS (as in [AWS egress cost](#aws-egress-cost),
+  depending on where the jobs run) shows the first run's estimate and the monthly cost of
+  the repeats: later runs only copy new files, so the dialog asks for the expected new
+  data per run (default 10% of the current size) and says "If 34 GB of new data appears
+  per run, this schedule costs about $A–$B per month" (runs per month: 730.5 hourly, 30.44
+  daily, 4.35 weekly, 1 monthly). Both confirmations are required (the server refuses the
+  schedule otherwise, 400) and stored on the schedule; each run's job stores that
+  estimate with the schedule id, without asking again. If a run would cost where nothing
+  was confirmed (e.g. jobs now run elsewhere), the schedule is paused.
+- **The runner** is `manage.py schedules run --loop`, which starts the due copy jobs every
+  minute. It runs next to the Celery worker: in the Docker `celery` container
+  (`celery-entrypoint.sh`) and in the systemd install's `motuz-celery.service`
+  (`bin/systemd/celery_worker.sh`), so each installation has exactly one; a due schedule
+  is claimed with `SELECT ... FOR UPDATE SKIP LOCKED` and a compare-and-set of its next
+  run, so even two runners start it only once. Not Celery beat: copy jobs occupy the
+  Celery worker's processes for hours. Remote workers are unaffected: the runs are normal
+  jobs that are routed to pools as usual.
+- Commands (as for `manage.py ec2`): `manage.py schedules tick` (one pass now),
+  `manage.py schedules list` (all users' schedules). API: `GET/POST /api/copy-schedules/`,
+  `GET/PATCH/DELETE /api/copy-schedules/<id>` (`{"enabled": false}` pauses), the logged-in
+  user's schedules only (404 for others').
 
 ### Remote workers (HTTPS only)
 
