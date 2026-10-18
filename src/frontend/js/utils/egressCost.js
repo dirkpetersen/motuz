@@ -71,16 +71,22 @@ export function needsConfirmation(estimate) {
 /**
  * {text, confirmLabel} for an estimate (null if it does not apply). `action` is 'copy'
  * (New Copy Job) or 'check' (an integrity check with download). confirmLabel is null
- * when nothing has to be confirmed (same region).
+ * when nothing has to be confirmed (same region). The server's `reason` says where the
+ * job runs and why that costs ("runs on this server, which is not in AWS, so the data
+ * leaves AWS"): rclone moves the data through that machine.
  */
 export function describeEgress(estimate, action = 'copy') {
     if (!estimate || !estimate.applies) {
         return null;
     }
-    if (!needsConfirmation(estimate)) {
-        return {text: 'No AWS egress fee within the same region.', confirmLabel: null};
-    }
     const job = action === 'check' ? 'this check' : 'this copy';
+    const why = estimate.reason ? `${job} ${estimate.reason}` : '';
+    if (!needsConfirmation(estimate)) {
+        return {
+            text: why ? `No AWS egress fee: ${why}.` : 'No AWS egress fee within the same region.',
+            confirmLabel: null,
+        };
+    }
     const known = finite(estimate.bytes) && finite(estimate.low_usd) && finite(estimate.high_usd);
     const perTb = formatRange(estimate.rate_low_per_gb * TB, estimate.rate_high_per_gb * TB) + ' per TB';
     const amount = known ? formatRange(estimate.low_usd, estimate.high_usd) : perTb;
@@ -94,13 +100,13 @@ export function describeEgress(estimate, action = 'copy') {
         detail = `AWS charges ${rateRange(estimate.rate_low_per_gb, estimate.rate_high_per_gb)} per GB ` +
             `depending on the account's monthly volume${free}; discounts or an egress waiver may lower it`;
     } else {
-        lead = 'Copying between AWS regions';
-        detail = `AWS charges about ${formatRate(estimate.rate_high_per_gb)} per GB between regions` +
-            (estimate.region_known === false ? '; the region of a connection is not known' : '');
+        lead = action === 'check' ? 'Reading between AWS regions for the integrity check' : 'Copying between AWS regions';
+        detail = `AWS charges about ${formatRate(estimate.rate_high_per_gb)} per GB between regions for ${job}`;
     }
+    const where = why ? `; ${why}` : '';
     const text = known
-        ? `${lead}: about ${amount} in data transfer fees for ${formatDecimalSize(estimate.bytes)} (${detail}).`
-        : `${lead}: the size could not be measured; the data transfer fees are about ${perTb} (${detail}).`;
+        ? `${lead}: about ${amount} in data transfer fees for ${formatDecimalSize(estimate.bytes)}${where} (${detail}).`
+        : `${lead}: the size could not be measured; the data transfer fees are about ${perTb}${where} (${detail}).`;
     return {text, confirmLabel: `I understand ${job} costs about ${amount}`};
 }
 
@@ -130,7 +136,8 @@ export function describeConfirmed(stored) {
     if (!stored || !stored.confirmed) {
         return null;
     }
-    const where = stored.kind === 'inter-region' ? 'between AWS regions' : 'out of AWS';
+    const where = (stored.kind === 'inter-region' ? 'between AWS regions' : 'out of AWS') +
+        (stored.runs_on ? `; on ${stored.runs_on}` : '');
     if (finite(stored.bytes) && finite(stored.low_usd) && finite(stored.high_usd)) {
         return `About ${formatRange(stored.low_usd, stored.high_usd)} for ${formatDecimalSize(stored.bytes)} ` +
             `(${where}), confirmed`;

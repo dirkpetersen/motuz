@@ -10,15 +10,18 @@ import {
 // What GET /api/copy-jobs/egress-estimate/ returns (src/backend/api/utils/egress_cost.py)
 const INTERNET = {
     applies: true, kind: 'internet', bytes: 3.4e12, files: 1200, low_usd: 170, high_usd: 306,
-    rate_low_per_gb: 0.05, rate_high_per_gb: 0.09, free_gb_per_month: 100, region_known: true,
-    pricing_date: '2026-10', note: '...',
+    rate_low_per_gb: 0.05, rate_high_per_gb: 0.09, free_gb_per_month: 100,
+    pricing_date: '2026-10', note: '...', runs_on: 'this server, which is not in AWS',
+    reason: 'runs on this server, which is not in AWS, so the data leaves AWS',
 };
 const UNKNOWN = {...INTERNET, bytes: null, files: null, low_usd: null, high_usd: null};
 const INTER_REGION = {
     applies: true, kind: 'inter-region', bytes: 1e12, files: 3, low_usd: 20, high_usd: 20,
-    rate_low_per_gb: 0.02, rate_high_per_gb: 0.02, free_gb_per_month: 0, region_known: true,
+    rate_low_per_gb: 0.02, rate_high_per_gb: 0.02, free_gb_per_month: 0, runs_on: 'an EC2 worker in us-east-1',
+    reason: 'runs on an EC2 worker in us-east-1, so the data is read out of us-west-2',
 };
-const SAME_REGION = {...INTER_REGION, kind: 'same-region', low_usd: 0, high_usd: 0, rate_low_per_gb: 0, rate_high_per_gb: 0};
+const SAME_REGION = {...INTER_REGION, kind: 'same-region', low_usd: 0, high_usd: 0, rate_low_per_gb: 0, rate_high_per_gb: 0,
+    runs_on: 'this server (AWS us-west-2)', reason: 'runs on this server (AWS us-west-2), in the region of the data'};
 
 test('money: cents below $100 unless whole, whole dollars with separators above', () => {
     assert.equal(formatUsd(0), '$0');
@@ -52,7 +55,8 @@ test('ranges collapse when both ends are the same', () => {
 test('internet egress with a measured size', () => {
     assert.ok(needsConfirmation(INTERNET));
     const {text, confirmLabel} = describeEgress(INTERNET);
-    assert.equal(text, 'Copying out of AWS: about $170–$306 in data transfer fees for 3.4 TB ' +
+    assert.equal(text, 'Copying out of AWS: about $170–$306 in data transfer fees for 3.4 TB; ' +
+        'this copy runs on this server, which is not in AWS, so the data leaves AWS ' +
         "(AWS charges $0.05–$0.09 per GB depending on the account's monthly volume; the first 100 GB " +
         'per month are free; discounts or an egress waiver may lower it).');
     assert.equal(confirmLabel, 'I understand this copy costs about $170–$306');
@@ -66,12 +70,16 @@ test('size not measured: the per-TB range', () => {
 
 test('another region: one rate, still a confirmation; same region: a note only', () => {
     const inter = describeEgress(INTER_REGION);
-    assert.equal(inter.text, 'Copying between AWS regions: about $20 in data transfer fees for 1 TB ' +
-        '(AWS charges about $0.02 per GB between regions).');
+    assert.equal(inter.text, 'Copying between AWS regions: about $20 in data transfer fees for 1 TB; ' +
+        'this copy runs on an EC2 worker in us-east-1, so the data is read out of us-west-2 ' +
+        '(AWS charges about $0.02 per GB between regions for this copy).');
     assert.equal(inter.confirmLabel, 'I understand this copy costs about $20');
-    assert.match(describeEgress({...INTER_REGION, region_known: false}).text, /region of a connection is not known/);
+    assert.match(describeEgress({...INTER_REGION, rate_high_per_gb: 0.04, high_usd: 40}).text, /about \$0\.04 per GB/);
     assert.ok(!needsConfirmation(SAME_REGION));
-    assert.deepEqual(describeEgress(SAME_REGION), {text: 'No AWS egress fee within the same region.', confirmLabel: null});
+    assert.deepEqual(describeEgress(SAME_REGION), {
+        text: 'No AWS egress fee: this copy runs on this server (AWS us-west-2), in the region of the data.',
+        confirmLabel: null});
+    assert.equal(describeEgress({...SAME_REGION, reason: undefined}).text, 'No AWS egress fee within the same region.');
     assert.equal(describeEgress({applies: false}), null);
     assert.equal(describeEgress(null), null);
 });
@@ -93,9 +101,11 @@ test('the request carries the confirmation only once checked', () => {
 });
 
 test('job details show what was confirmed', () => {
-    assert.equal(describeConfirmed({...INTERNET, confirmed: true}), 'About $170–$306 for 3.4 TB (out of AWS), confirmed');
-    assert.equal(describeConfirmed({...UNKNOWN, confirmed: true}),
+    assert.equal(describeConfirmed({...INTERNET, confirmed: true}),
+        'About $170–$306 for 3.4 TB (out of AWS; on this server, which is not in AWS), confirmed');
+    assert.equal(describeConfirmed({...UNKNOWN, runs_on: null, confirmed: true}),
         'About $50–$90 per TB (out of AWS, size not measured), confirmed');
-    assert.equal(describeConfirmed({...INTER_REGION, confirmed: true}), 'About $20 for 1 TB (between AWS regions), confirmed');
+    assert.equal(describeConfirmed({...INTER_REGION, confirmed: true}),
+        'About $20 for 1 TB (between AWS regions; on an EC2 worker in us-east-1), confirmed');
     assert.equal(describeConfirmed(null), null);
 });

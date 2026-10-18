@@ -378,8 +378,12 @@ export const retrieveHashsumJob = (id) => ({
 
 export const createHashsumJob = (data) => {
     return async (dispatch, getState) => {
-        await dispatch(_createHashsumJob(data));
+        const result = await dispatch(_createHashsumJob(data));
+        if (result && result.error) {
+            return result; // the dialog stays open and shows why (e.g. the AWS egress cost)
+        }
         await dispatch(dialog.hideNewHashsumJobDialog())
+        return result;
     }
 }
 

@@ -1,7 +1,7 @@
 import datetime
 import os
 
-from .utils import document_view, ec2_config, image_view, rclone_tuning
+from .utils import document_view, ec2_config, egress_cost, image_view, rclone_tuning
 
 basedir = os.path.abspath(os.path.dirname(__file__))
 
@@ -139,6 +139,11 @@ class Config:
     # The AWS egress cost estimate of the New Copy Job dialog (managers/egress_manager.py)
     # measures the source with `rclone size` for at most this many seconds
     EGRESS_SIZE_TIMEOUT = int(_optional_env('MOTUZ_EGRESS_SIZE_TIMEOUT', '120'))
+    # The AWS region this node runs in (unset: not in AWS), for the egress estimate: rclone
+    # copies through the machine that runs the job. Not MOTUZ_AWS_REGION, which is where
+    # the temporary EC2 workers start (an on-prem node may launch them).
+    CENTRAL_AWS_REGION = egress_cost.parse_region(
+        'MOTUZ_CENTRAL_AWS_REGION', _optional_env('MOTUZ_CENTRAL_AWS_REGION'))
     # A claimed job fails when its worker has not reported for this long
     WORKER_LEASE_SECONDS = int(_optional_env('MOTUZ_WORKER_LEASE_SECONDS', '120'))
     # Lifetime of a worker's access token (it signs in again with its credential)

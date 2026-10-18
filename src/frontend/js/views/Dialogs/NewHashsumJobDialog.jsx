@@ -5,6 +5,15 @@ import Toggle from 'react-toggle'
 import serializeForm from 'utils/serializeForm.jsx'
 import ToggleInfo from 'components/ToggleInfo.jsx'
 import CopyJobEgress from 'views/Dialogs/CopyJobEgress.jsx'
+import { DialogError } from 'views/Dialogs/CloudConnection/VerifyStatusButton.jsx'
+
+function apiErrorMessage(payload) {
+    const response = (payload && payload.response) || {};
+    if (typeof response.message === 'string' && response.message) {
+        return response.message;
+    }
+    return (payload && payload.message) || 'The integrity check could not be created';
+}
 
 
 class NewHashsumJobDialog extends React.Component {
@@ -15,6 +24,7 @@ class NewHashsumJobDialog extends React.Component {
             download: false,
             // AWS egress cost of a check with download (CopyJobEgress)
             egress: {ready: true, payload: null},
+            submitError: null,
         }
     }
 
@@ -167,6 +177,7 @@ class NewHashsumJobDialog extends React.Component {
                             </div>
                         </Modal.Body>
                         <Modal.Footer>
+                            <DialogError message={this.state.submitError} />
                             <Button variant="secondary" onClick={() => this.handleClose()}>
                                 Close
                             </Button>
@@ -184,8 +195,9 @@ class NewHashsumJobDialog extends React.Component {
         this.props.onClose();
     }
 
-    handleSubmit(event) {
+    async handleSubmit(event) {
         event.preventDefault();
+        this.setState({submitError: null});
 
         const propsData = this.props.data;
         const formData = serializeForm(event.target);
@@ -216,14 +228,17 @@ class NewHashsumJobDialog extends React.Component {
                 delete data['dst_cloud_id'];
             }
 
-            this.onSubmit(data);
+            const result = await this.props.onSubmit(data);
+            if (result && result.error && !this.unmounted) {
+                this.setState({submitError: apiErrorMessage(result.payload)});
+            }
 
             break // TODO - allow multiple selection as well
         }
     }
 
-    onSubmit(data) {
-        this.props.onSubmit(data)
+    componentWillUnmount() {
+        this.unmounted = true;
     }
 }
 
@@ -238,7 +253,7 @@ NewHashsumJobDialog.defaultProps = {
     emailAddressDefault: "",
 
     onClose: () => {},
-    onSubmit: (data) => {},
+    onSubmit: async (data) => {},
 }
 
 

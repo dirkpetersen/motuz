@@ -10,6 +10,8 @@ egress cost" has the same table; update both together.
 Stdlib only: it reads connection objects (models/cloud_connection.py) by attribute.
 """
 import math
+import re
+from collections import namedtuple
 
 from . import s3_providers
 
@@ -32,6 +34,7 @@ RATE_LOW_PER_GB = min(rate for _, rate in INTERNET_TIERS)
 
 # rclone's region of an AWS connection without one
 DEFAULT_REGION = 'us-east-1'
+REGION_RE = re.compile(r'^[a-z]{2}(-[a-z]+)+-\d$')  # as utils/ec2_config.py
 
 INTERNET = 'internet'
 INTER_REGION = 'inter-region'
@@ -68,20 +71,57 @@ def region(connection):
     return None if getattr(connection, 'subtype', None) == 'profile' else DEFAULT_REGION
 
 
-def kind(src, dst):
+# The AWS charge of a job: kind, how many transfers between regions it makes (the read
+# out of the source's region, the write into another destination region) and why, a
+# phrase after "this copy" ("runs on this server, which is not in AWS, so ...")
+Assessment = namedtuple('Assessment', 'kind legs reason')
+
+RANK = {SAME_REGION: 0, INTER_REGION: 1, INTERNET: 2}
+
+
+def parse_region(name, value):
+    """A region setting (e.g. MOTUZ_CENTRAL_AWS_REGION): None if empty; ValueError if invalid"""
+    value = (value or '').strip()
+    if not value:
+        return None
+    if not REGION_RE.match(value):
+        raise ValueError('{}={!r} is not an AWS region like us-west-2'.format(name, value))
+    return value
+
+
+def assess(src, dst, runner_region, runs_on):
     """
-    Which AWS charge a copy from `src` to `dst` (None: the local filesystem) causes:
-    None (the source is not on AWS), SAME_REGION, INTER_REGION or INTERNET. Two AWS
-    connections whose regions are not both known count as INTER_REGION.
+    The AWS charge of a copy from `src` to `dst` (None: the local filesystem of the
+    machine that runs it), run by a machine in the AWS region `runner_region` (None: not
+    in AWS or not known; `runs_on` describes it). rclone moves the data through that
+    machine, so the source's region, the runner's and the destination's matter. None if
+    the source is not on AWS.
     """
     if not is_aws(src):
         return None
-    if not is_aws(dst):
-        return INTERNET
-    src_region, dst_region = region(src), region(dst)
-    if src_region is not None and src_region == dst_region:
-        return SAME_REGION
-    return INTER_REGION
+    src_region = region(src)
+    if runner_region is None:
+        return Assessment(INTERNET, 0, 'runs on {}, so the data leaves AWS'.format(runs_on))
+    if dst is not None and not is_aws(dst):
+        return Assessment(INTERNET, 0, 'runs on {} and writes outside AWS, so the data leaves AWS'.format(runs_on))
+    parts = []
+    if src_region != runner_region:
+        parts.append('the data is read out of {}'.format(src_region or "the source's region (not known)"))
+    if dst is not None:
+        dst_region = region(dst)
+        if dst_region != runner_region:
+            parts.append('written to {}'.format(dst_region or "the destination's region (not known)"))
+    if not parts:
+        return Assessment(SAME_REGION, 0, 'runs on {}, in the region of the data'.format(runs_on))
+    return Assessment(INTER_REGION, len(parts), 'runs on {}, so {}'.format(runs_on, ' and '.join(parts)))
+
+
+def worst(assessments):
+    """The most expensive of several assessments (None for none)"""
+    assessments = [a for a in assessments if a is not None]
+    if not assessments:
+        return None
+    return max(assessments, key=lambda a: (RANK[a.kind], a.legs))
 
 
 def tiered_usd(size_bytes):
@@ -101,25 +141,24 @@ def tiered_usd(size_bytes):
     return total
 
 
-def _rates(job_kind):
+def _rates(job_kind, legs):
     if job_kind == INTERNET:
         return RATE_LOW_PER_GB, RATE_HIGH_PER_GB
     if job_kind == INTER_REGION:
-        return INTER_REGION_PER_GB, INTER_REGION_PER_GB
+        rate = round(INTER_REGION_PER_GB * max(1, legs), 4)
+        return rate, rate
     return SAME_REGION_PER_GB, SAME_REGION_PER_GB
 
 
-def _note(job_kind, region_known):
+def _note(job_kind):
     if job_kind == INTERNET:
         return ('AWS charges ${:.2f}-${:.2f} per GB for data leaving AWS, depending on the '
                 "account's monthly volume; the first {} GB per month are free; discounts or "
                 'an egress waiver may lower it. Prices as of {}.'.format(
                     RATE_LOW_PER_GB, RATE_HIGH_PER_GB, FREE_GB_PER_MONTH, PRICING_DATE))
     if job_kind == INTER_REGION:
-        text = 'AWS charges about ${:.2f} per GB between AWS regions'.format(INTER_REGION_PER_GB)
-        if not region_known:
-            text += ' (the region of a connection is not known; within the same region it is free)'
-        return text + '. Prices as of {}.'.format(PRICING_DATE)
+        return 'AWS charges about ${:.2f} per GB for each transfer between AWS regions. Prices as of {}.'.format(
+            INTER_REGION_PER_GB, PRICING_DATE)
     return 'No AWS egress fee within the same region.'
 
 
@@ -132,14 +171,15 @@ def _number(value):
     return value
 
 
-def estimate(job_kind, size_bytes=None, files=None, region_known=True):
+def estimate(assessment, size_bytes=None, files=None, runs_on=None):
     """
-    The estimate the API returns for a job of this kind (None: not from AWS) and size
-    (None: not measured): low_usd/high_usd are None when the size is unknown
+    The estimate the API returns for a job with this Assessment (None: not from AWS) and
+    size (None: not measured): low_usd/high_usd are None when the size is unknown
     """
-    if job_kind is None:
+    if assessment is None:
         return {'applies': False}
-    low_rate, high_rate = _rates(job_kind)
+    job_kind = assessment.kind
+    low_rate, high_rate = _rates(job_kind, assessment.legs)
     size_bytes = _number(size_bytes)
     files = _number(files)
     result = {
@@ -153,8 +193,9 @@ def estimate(job_kind, size_bytes=None, files=None, region_known=True):
         'rate_high_per_gb': high_rate,
         'free_gb_per_month': FREE_GB_PER_MONTH if job_kind == INTERNET else 0,
         'pricing_date': PRICING_DATE,
-        'region_known': bool(region_known),
-        'note': _note(job_kind, region_known),
+        'runs_on': runs_on,
+        'reason': assessment.reason,
+        'note': _note(job_kind),
     }
     if size_bytes is not None:
         result['low_usd'] = round(size_bytes / GB * low_rate, 2)
@@ -162,21 +203,20 @@ def estimate(job_kind, size_bytes=None, files=None, region_known=True):
     return result
 
 
-def needs_confirmation(job_kind):
-    return job_kind in CONFIRM_KINDS
+def needs_confirmation(assessment):
+    return assessment is not None and assessment.kind in CONFIRM_KINDS
 
 
-def confirmed(job_kind, raw):
+def confirmed(assessment, raw, runs_on=None):
     """
     The estimate stored on a job whose user confirmed `raw` (the dialog's estimate with
-    confirmed: true): kind and rates from the server, only the measured size from the
-    request, the prices computed again. None if `raw` is not a confirmation.
+    confirmed: true): kind, rates and reason from the server, only the measured size
+    from the request, the prices computed again. None if `raw` is not a confirmation.
     """
     if not isinstance(raw, dict) or raw.get('confirmed') is not True:
         return None
-    result = estimate(job_kind, raw.get('bytes'), raw.get('files'))
+    result = estimate(assessment, raw.get('bytes'), raw.get('files'), runs_on)
     result.pop('applies', None)
     result.pop('note', None)
-    result.pop('region_known', None)
     result['confirmed'] = True
     return result
