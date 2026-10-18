@@ -184,7 +184,8 @@ owners = worker_sh('stat -c %U /home/alice/wdst/f1.txt /home/alice/wdst/sub/d.tx
 check('copied files owned by alice (rclone ran as the owner via sudo)', owners == ['alice', 'alice'], owners)
 # A fresh destination: existing files are kept (overwrite policy, flags from the ticket)
 check('rclone ran on the worker, not by celery, with the job\'s performance flags from the ticket',
-      '--transfers=7 --checkers=9 --buffer-size=0B --ignore-existing --combined=- copyto /home/alice/wsrc /home/alice/wdst' in logs('worker')
+      re.search(r'--transfers=7 --checkers=9 --buffer-size=0B --ignore-existing --combined=/tmp/motuz-kept-\d+-[0-9a-f]{32} '
+                r'copyto /home/alice/wsrc /home/alice/wdst', logs('worker'))
       and '/home/alice/wdst' not in logs('celery'), [l for l in logs('worker').splitlines() if 'copyto' in l][-1:])
 
 status, bad = req('POST', '/api/copy-jobs/', A, {'description': 'relative', 'src_resource_path': '--config=/etc/shadow',

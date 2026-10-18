@@ -509,12 +509,11 @@ def copy_flags(overrides, dst_type, tuning=None, *, src_local=False, overwrite=T
 
 
 # Existing destination files are never modified, new ones are copied: a copy job whose
-# destination was not written by Motuz before (managers/overwrite_policy.py). rclone
-# logs the files it keeps only at DEBUG level, so it also reports every file on stdout
-# (--combined: '= name' for an existing file, which --ignore-existing keeps; '+ name'
-# new); CopyJobQueue collects the kept ones (copy_kept)
+# destination was not written by Motuz before (managers/overwrite_policy.py). With it,
+# RcloneConnection.copy_with_credentials also writes rclone's report of the kept files
+# to a file of its own (utils/kept_files.py), where rclone runs
 KEEP_EXISTING_FLAG = '--ignore-existing'
-KEEP_EXISTING_FLAGS = (KEEP_EXISTING_FLAG, '--combined=-')
+KEEP_EXISTING_FLAGS = (KEEP_EXISTING_FLAG,)
 
 
 def hashsum_flags(overrides, tuning=None):

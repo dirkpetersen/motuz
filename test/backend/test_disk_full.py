@@ -223,7 +223,7 @@ class DiskFullCopyTest(unittest.TestCase):
         connection = RcloneConnection()
         pushed = {}
         with mock.patch.object(connection._copy_job_queue, 'push',
-                               side_effect=lambda command, env, job_id, local_dst=None: pushed.update(env=env, local_dst=local_dst)), \
+                               side_effect=lambda command, env, job_id, local_dst=None, **kept: pushed.update(env=env, local_dst=local_dst)), \
                 mock.patch.object(rclone_connection.RcloneConnection, '_log_command'):
             connection.copy_with_credentials({}, src_resource_path='/a', src_local=True, dst_resource_path='bucket/b',
                                              dst_local=False, user='alice', copy_links=False, job_id=5)
