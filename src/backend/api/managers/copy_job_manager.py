@@ -10,7 +10,7 @@ from ..models import CopyJob
 from ..managers.auth_manager import token_required, get_logged_in_user
 from ..managers import cloud_connection_manager
 from ..utils import rclone_tuning
-from ..managers import job_routing, worker_manager
+from ..managers import job_routing, worker_manager, upload_manager
 from ..utils.email_utils import Email
 
 
@@ -18,6 +18,7 @@ from ..utils.email_utils import Email
 def list(page_size=50, page=1):
     owner = get_logged_in_user(request)
     worker_manager.expire_leases()
+    upload_manager.expire(owner)
     try:
         query = (CopyJob.query
                  .filter_by(owner=owner)
@@ -134,6 +135,11 @@ def retrieve(id):
         raise HTTP_404_NOT_FOUND('Copy Job with id {} not found'.format(id))
 
     worker_manager.expire_leases()
+    if copy_job.upload:
+        upload_manager.expire(owner)
+        copy_job.progress_text, copy_job.progress_error_text = upload_manager.describe(copy_job)
+        worker_manager.annotate_location('copy', [copy_job])
+        return copy_job
     if worker_manager.apply_remote_progress('copy', copy_job):
         worker_manager.annotate_location('copy', [copy_job])
         return copy_job
@@ -157,7 +163,12 @@ def retrieve(id):
 def stop(id):
     copy_job = retrieve(id)
 
-    if not worker_manager.request_stop('copy', copy_job.id):
+    if copy_job.upload:
+        if copy_job.progress_state == 'PROGRESS':
+            copy_job.progress_state = 'STOPPED' # first: a chunk that arrives now is refused
+            db.session.commit()
+        upload_manager.stop(copy_job)
+    elif not worker_manager.request_stop('copy', copy_job.id):
         task = _async_result(copy_job.id)
         task.revoke(terminate=True)
 

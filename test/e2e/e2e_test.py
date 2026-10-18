@@ -8,8 +8,8 @@ import time
 import urllib.error
 import urllib.request
 
-from common import (BASE, CTX, DOCUMENT_FIXTURES_CODE, NUMBERED_LOG_CODE, VIEWER_FIXTURES_CODE, check, check_chunked_reads,
-                    check_document_view, check_image_view, finish,
+from common import (BASE, CTX, DOCUMENT_FIXTURES_CODE, NUMBERED_LOG_CODE, VIEWER_FIXTURES_CODE, check, check_browser_upload,
+                    check_chunked_reads, put_chunk, check_document_view, check_image_view, finish,
                     numbered_log, psql, service_logs, sh)
 
 
@@ -452,6 +452,24 @@ check('job stays STOPPED', after['progress_state'] == 'STOPPED', after['progress
 status, hc, _ = req('POST', '/api/copy-jobs/', A, {'description': 'after stop', 'src_resource_path': '/home/alice/src', 'dst_resource_path': '/home/alice/dst2', 'copy_links': True})
 hc = wait_job('copy-jobs', hc['id'], A)
 check('worker still processes jobs after stop', hc['progress_state'] == 'SUCCESS', hc)
+
+# --- uploads from the browser: rclone rcat as alice into her home
+def local_sha256(path):
+    out = sh('app', f"sudo -u alice sha256sum -- '/home/alice/uploads/{path}'")
+    return out.stdout.split()[0] if out.returncode == 0 else None
+
+
+check_browser_upload(req, A, B, 0, '/home/alice/uploads', 'upload to the local filesystem', local_sha256)
+owner = sh('app', "stat -c %U /home/alice/uploads/up/sub/big.bin").stdout.strip()
+check('uploaded files belong to the user', owner == 'alice', owner)
+status, created, _ = req('POST', '/api/copy-jobs/uploads/', B, {'dst_cloud_id': 0, 'dst_resource_path': '/home/alice/uploads',
+                                                                 'mode': 'overwrite', 'files': [{'path': 'from-bob.txt', 'size': 3}]})
+status, body = put_chunk(B, created['job']['id'], 0, 0, b'bob')
+check("bob cannot upload into alice's home: the file fails", status == 200 and body['file_state'] == 'failed'
+      and body['job_state'] == 'FAILED' and local_sha256('from-bob.txt') is None, (status, body))
+left = sh('app', "grep -lx rclone /proc/[0-9]*/comm 2>/dev/null").stdout.strip()
+check('no rclone left after the uploads', left == '', left)
+check('upload contents never logged', 'hello upload' not in service_logs('app'), 'contents in the app log')
 
 # --- refresh and logout
 status, r, _ = req('POST', '/api/auth/refresh/', a['refresh'])

@@ -7,6 +7,7 @@ import PaneFile from 'views/App/Pane/PaneFile.jsx'
 import {isCopyableFile} from 'managers/paneManager.jsx'
 import {parentDirectory} from 'utils/parentDirectory.js'
 import {normalizeSort} from 'utils/fileSort.js'
+import {droppedItems} from 'utils/desktopDrop.js'
 
 // Drag and drop between panes. The payload ({side}) is only readable on drop,
 // so the source side is also encoded in a second type, which dragover can see.
@@ -226,8 +227,8 @@ class Pane extends React.Component {
             event.preventDefault()
             event.dataTransfer.dropEffect = 'copy'
         } else if (types.includes('Files')) {
-            // Accept the drop so it can explain that uploads are not supported,
-            // instead of the browser navigating away to the dropped file
+            // From the desktop: an upload into the pane's folder or a folder row
+            this.setDropTarget(this.getDropTarget(event, null))
             event.preventDefault()
             event.dataTransfer.dropEffect = 'copy'
         }
@@ -265,7 +266,10 @@ class Pane extends React.Component {
             this.props.onDropFiles(srcSide, this.props.side, dstSubdir)
         } else if (types.includes('Files')) {
             event.preventDefault()
-            this.props.onDropDesktopFiles()
+            const dropTarget = this.getDropTarget(event, null)
+            const dstSubdir = dropTarget === DROP_ON_PANE || dropTarget === null ? null : this.props.files[dropTarget].name
+            // Read the DataTransfer now: the browser empties it when this handler returns
+            this.props.onDropDesktopFiles(dstSubdir, droppedItems(event.dataTransfer))
         }
     }
 
@@ -337,7 +341,7 @@ Pane.defaultProps = {
     onMultiSelect: (side, index) => {},
     onRangeSelect: (side, index) => {},
     onDropFiles: (srcSide, dstSide, dstSubdir) => {},
-    onDropDesktopFiles: () => {},
+    onDropDesktopFiles: (dstSubdir, dropped) => {},
 }
 
 import {connect} from 'react-redux';
@@ -349,7 +353,7 @@ import {
     sortChange,
 } from 'actions/paneActions.jsx';
 import {showDropCopyJobDialog} from 'actions/dialogActions.jsx';
-import {showAlert} from 'actions/alertActions.jsx';
+import {uploadDroppedFiles} from 'actions/uploadActions.jsx';
 import {viewFile} from 'actions/apiActions.jsx';
 
 const mapStateToProps = (state, ownProps) => ({
@@ -357,7 +361,7 @@ const mapStateToProps = (state, ownProps) => ({
     sort: state.pane.sort[ownProps.side || 'left'],
 });
 
-const mapDispatchToProps = dispatch => ({
+const mapDispatchToProps = (dispatch, ownProps) => ({
     onSort: (side, column) => dispatch(sortChange(side, column)),
     onViewFile: (side, index) => dispatch(viewFile(side, index)),
     onSelect: (side, index) => dispatch(fileFocusIndex(side, index)),
@@ -365,12 +369,7 @@ const mapDispatchToProps = dispatch => ({
     onRangeSelect: (side, index) => dispatch(fileRangeFocusIndex(side, index)),
     onDirectoryChange: (side, path) => dispatch(directoryChange(side, path)),
     onDropFiles: (srcSide, dstSide, dstSubdir) => dispatch(showDropCopyJobDialog(srcSide, dstSide, dstSubdir)),
-    onDropDesktopFiles: () => dispatch(showAlert(
-        'Uploading from your computer is not supported',
-        'Motuz copies data between servers and cloud storage; it cannot upload files from your computer. '
-        + 'Put the files on a filesystem or cloud storage that Motuz can reach, then copy them from '
-        + 'there with Motuz. To copy between the two panes, drag files from one pane to the other.',
-    )),
+    onDropDesktopFiles: (dstSubdir, dropped) => dispatch(uploadDroppedFiles(ownProps.side || 'left', dstSubdir, dropped)),
 });
 
 export default connect(mapStateToProps, mapDispatchToProps)(Pane);

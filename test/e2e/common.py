@@ -413,3 +413,82 @@ def check_chunked_reads(req, token, path, connection_id, data, label):
         backward.insert(0, c)
     check(f'{label}: read backward from the tail to the beginning: contiguous, no line split, together the file',
           whole(backward, data), summary(backward, error))
+
+
+# ---------------------------------------------------------------- uploads from the browser
+def put_chunk(token, job_id, index, offset, data):
+    """(status, JSON) of one chunk of an upload (PUT application/octet-stream)"""
+    import json
+    import urllib.error
+    import urllib.request
+    r = urllib.request.Request(f'{BASE}/api/copy-jobs/{job_id}/uploads/{index}?offset={offset}', data=data, method='PUT')
+    r.add_header('Content-Type', 'application/octet-stream')
+    r.add_header('Authorization', 'Bearer ' + token)
+    try:
+        with urllib.request.urlopen(r, context=CTX, timeout=180) as resp:
+            return resp.status, json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        raw = e.read()
+        try:
+            return e.code, json.loads(raw)
+        except ValueError:
+            return e.code, raw
+
+
+def send_upload(token, job_id, index, data, chunk_bytes):
+    """Sends one file of an upload in chunks, like the browser; the last answer"""
+    status, body = None, None
+    for offset in range(0, max(len(data), 1), chunk_bytes):
+        status, body = put_chunk(token, job_id, index, offset, data[offset:offset + chunk_bytes])
+        if status != 200:
+            break
+    return status, body
+
+
+def check_browser_upload(req, token, other_token, connection_id, folder, label, sha256_of):
+    """
+    An upload from the browser into `folder` of `connection_id` (managers/upload_manager.py):
+    conflicts, overwrite, skip, stop, the user's scope. `sha256_of(path)` returns the
+    SHA-256 (hex) of a file below `folder`, read as the user, or None if it does not exist.
+    """
+    import hashlib
+    big = os.urandom(20 << 20 | 12345)  # 3 chunks, the last one short
+    files = {'up/a.txt': b'hello upload\n', 'up/sub/big.bin': big, 'up/empty.txt': b''}
+    names = list(files)
+    destination = {'dst_cloud_id': connection_id, 'dst_resource_path': folder}
+    status, conflicts, _ = req('POST', '/api/copy-jobs/uploads/conflicts/', token, dict(destination, names=['up']))
+    check(f'{label}: no conflicts before the upload', status == 200 and conflicts == {'existing': []}, (status, conflicts))
+    status, created, _ = req('POST', '/api/copy-jobs/uploads/', token, dict(
+        destination, mode='overwrite', files=[{'path': n, 'size': len(files[n])} for n in names]))
+    check(f'{label}: upload created', status == 201 and created['pending'] == [0, 1, 2]
+          and created['job']['progress_state'] == 'PROGRESS', (status, created))
+    job_id, chunk_bytes = created['job']['id'], created['chunk_bytes']
+    status, body = put_chunk(other_token, job_id, 0, 0, files[names[0]])
+    check(f"{label}: another user cannot send to the upload (404)", status == 404, (status, body))
+    results = [send_upload(token, job_id, i, files[n], chunk_bytes) for i, n in enumerate(names)]
+    check(f'{label}: all chunks accepted', all(s == 200 and b['file_state'] == 'done' for s, b in results), results)
+    status, job, _ = req('GET', f'/api/copy-jobs/{job_id}', token)
+    check(f'{label}: upload job SUCCESS at 100%', job['progress_state'] == 'SUCCESS' and job['progress_current'] == 100
+          and job['upload']['files'] == 3 and job['src_resource_path'] == 'up/', job)
+    check(f'{label}: upload output', '3 of 3 done, 0 skipped, 0 failed' in (job.get('progress_text') or ''), job.get('progress_text'))
+    for n in names:
+        got = sha256_of(n)
+        check(f'{label}: {n} arrived intact', got == hashlib.sha256(files[n]).hexdigest(), got)
+    status, conflicts, _ = req('POST', '/api/copy-jobs/uploads/conflicts/', token, dict(destination, names=['up', 'new']))
+    check(f'{label}: the uploaded folder is a conflict now', conflicts == {'existing': ['up']}, conflicts)
+    status, skipped, _ = req('POST', '/api/copy-jobs/uploads/', token, dict(
+        destination, mode='skip', files=[{'path': n, 'size': len(files[n])} for n in names] + [{'path': 'up/new.txt', 'size': 3}]))
+    check(f'{label}: skip mode sends only the new file', status == 201 and skipped['pending'] == [3], (status, skipped))
+    status, body = send_upload(token, skipped['job']['id'], 3, b'new', chunk_bytes)
+    check(f'{label}: skip mode job SUCCESS', status == 200 and body['job_state'] == 'SUCCESS' and sha256_of('up/new.txt') == hashlib.sha256(b'new').hexdigest(), (status, body))
+
+    # Stop: rcat gets end of file early and removes what it wrote
+    status, stop_job, _ = req('POST', '/api/copy-jobs/uploads/', token, dict(
+        destination, mode='overwrite', files=[{'path': 'stopped.bin', 'size': len(big)}]))
+    status, body = put_chunk(token, stop_job['job']['id'], 0, 0, big[:chunk_bytes])
+    check(f'{label}: first chunk of the upload to stop', status == 200 and body['written'] == chunk_bytes, (status, body))
+    status, stopped, _ = req('PUT', f"/api/copy-jobs/{stop_job['job']['id']}/stop/", token)
+    check(f'{label}: stopped upload is STOPPED', status == 202 and stopped['progress_state'] == 'STOPPED', (status, stopped))
+    status, body = put_chunk(token, stop_job['job']['id'], 0, chunk_bytes, big[chunk_bytes:2 * chunk_bytes])
+    check(f'{label}: a stopped upload takes no chunks (409)', status == 409 and body.get('job_state') == 'STOPPED', (status, body))
+    check(f'{label}: the stopped file was removed', sha256_of('stopped.bin') is None, 'stopped.bin exists')

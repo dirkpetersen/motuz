@@ -20,7 +20,7 @@ import time
 import urllib.error
 import urllib.request
 
-from common import (BASE, CTX, DOCUMENT_FIXTURES_CODE, NUMBERED_LOG_CODE, VIEWER_FIXTURES_CODE, check, check_chunked_reads,
+from common import (BASE, CTX, DOCUMENT_FIXTURES_CODE, NUMBERED_LOG_CODE, VIEWER_FIXTURES_CODE, check, check_browser_upload, check_chunked_reads,
                     check_document_view, check_image_view, finish, numbered_log, pg_dump, psql,
                     RCLONE, service_logs, sh, skip, SSO_CONFIG_DIR)
 
@@ -366,6 +366,14 @@ status, hj, raw = req('POST', '/api/hashsum-jobs/', A, {'src_resource_path': '/h
                                                        'dst_resource_path': '/motuztest/copy', 'option_download': False})
 hj = wait_job('hashsum-jobs', hj['id'], A)
 check_r('hashsum local vs Azure identical', hj['progress_state'] == 'SUCCESS' and json.loads(hj['progress_src_tree']) == [] and json.loads(hj['progress_dst_tree']) == [], hj)
+# Upload from the browser into Azure: rclone rcat as alice with the connection's credentials
+def azure_sha256(path):
+    out = sh('app', f"sudo -u alice {RCLONE} --config /home/alice/.config/rclone/rclone.conf cat 'azurite:motuztest/upload/{path}' > /tmp/upload-check "
+                    "&& sha256sum < /tmp/upload-check; status=$?; rm -f /tmp/upload-check; exit $status")
+    return out.stdout.split()[0] if out.returncode == 0 and out.stdout.strip() else None
+
+
+check_browser_upload(req, A, B, c5['id'], '/motuztest/upload', 'upload to Azure', azure_sha256)
 # Cloud listing: rclone's ModTime normalized to ISO 8601 UTC ('Z') in `modified`
 status, azls, raw = req('POST', '/api/system/files/', A, {'path': '/motuztest/copy', 'connection_id': c5['id']})
 entries = {f['Name']: f for f in (azls or {}).get('files', [])} if status == 200 else {}

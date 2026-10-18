@@ -20,6 +20,10 @@ class CopyJob(db.Model, TimestampMixin):
     # rclone performance overrides of this job (utils/rclone_tuning.py), validated;
     # NULL or {} = the installation's defaults
     performance = db.Column(db.JSON, nullable=True)
+    # Upload from the user's browser (managers/upload_manager.py), else NULL:
+    # {"files": count, "bytes": total, "mode": "overwrite"|"skip", "name": shown as the
+    # source}; its files are the job's upload_file rows
+    upload = db.Column(db.JSON, nullable=True)
 
     owner = db.Column(db.String, index=True)
 

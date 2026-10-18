@@ -9,6 +9,7 @@
 import { chromium, request } from 'playwright';
 import { mkdirSync, readFileSync } from 'fs';
 import { execFileSync } from 'child_process';
+import { createHash } from 'crypto';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 
@@ -335,6 +336,56 @@ if (PHASE === 'paste') {
         // Submitting opens the job's progress dialog
         await page.click('.modal-content button:has-text("Close")');
         await page.waitForSelector('.modal-content', { state: 'detached', timeout: 10000 });
+    });
+
+    // Files dropped from the desktop onto a folder of a pane: an upload job that this tab
+    // sends in chunks (actions/uploadActions.jsx). A synthetic DataTransfer has files but no
+    // folder entries, as in browsers without webkitGetAsEntry.
+    await flow('desktop upload', async () => {
+        const dropFiles = () => page.evaluate(() => {
+            const dt = new DataTransfer();
+            dt.items.add(new File(['hello from the desktop\n'], 'desktop-a.txt', { type: 'text/plain' }));
+            dt.items.add(new File([new Uint8Array(9 << 20).fill(7)], 'desktop-big.bin'));
+            const pane = document.querySelectorAll('.grid-files')[1];
+            const cell = [...pane.querySelectorAll('.grid-file-name')].find(c => c.textContent.trim() === 'ui-dst');
+            const row = cell.closest('[data-file-index]') || cell;
+            for (const type of ['dragenter', 'dragover', 'drop']) {
+                row.dispatchEvent(new DragEvent(type, { dataTransfer: dt, bubbles: true, cancelable: true }));
+            }
+        });
+        const uploadJobs = async () => (await (await api.get('/api/copy-jobs/', { headers: auth })).json())
+            .data.filter(j => j.upload && j.dst_resource_path === '/home/alice/ui-dst');
+        const waitForJob = async count => {
+            let jobs = [];
+            for (let i = 0; i < 60; i++) {
+                jobs = await uploadJobs();
+                if (jobs.length >= count && jobs[0].progress_state !== 'PROGRESS') break;
+                await page.waitForTimeout(500);
+            }
+            return jobs[0];
+        };
+
+        await dropFiles();
+        let job = await waitForJob(1);
+        check('desktop drop: upload job SUCCESS', job && job.progress_state === 'SUCCESS' && job.upload.files === 2, job);
+        const sums = appShell("sudo -u alice sha256sum /home/alice/ui-dst/desktop-a.txt /home/alice/ui-dst/desktop-big.bin");
+        const want = `${createHash('sha256').update('hello from the desktop\n').digest('hex')}`;
+        const wantBig = createHash('sha256').update(Buffer.alloc(9 << 20, 7)).digest('hex');
+        check('desktop drop: both files arrived intact (2 chunks for the big one)', sums.includes(want) && sums.includes(wantBig), sums);
+        await page.waitForFunction(() => document.querySelector('table') && document.querySelector('table').innerText.includes('desktop://'),
+                                   null, { timeout: 15000 });
+        check('job table shows the desktop as the source', true);
+
+        // The same names again: one question for the drop
+        await dropFiles();
+        await page.waitForSelector('.modal-content:has-text("Files already exist")', { timeout: 15000 });
+        const text = await page.textContent('.modal-content');
+        check('conflict dialog lists the existing names', text.includes('desktop-a.txt') && text.includes('desktop-big.bin'), text);
+        await shot('upload-conflict-dialog');
+        await page.click('.modal-content button:has-text("Skip existing")');
+        await page.waitForSelector('.modal-content', { state: 'detached', timeout: 10000 });
+        job = await waitForJob(2);
+        check('skip existing: nothing uploaded, job SUCCESS', job && job.progress_state === 'SUCCESS' && job.upload.mode === 'skip', job);
     });
 
     // The collapsed Performance section of the New Copy Job dialog (utils/copyPerformance.js,

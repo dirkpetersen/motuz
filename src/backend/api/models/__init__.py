@@ -1,5 +1,6 @@
 from .revoked_token import RevokedToken
 from .copy_job import CopyJob
+from .upload_file import UploadFile
 from .hashsum_job import HashsumJob
 from .cloud_connection import CloudConnection
 from .oauth_flow import OauthFlow

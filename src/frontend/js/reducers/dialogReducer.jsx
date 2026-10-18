@@ -1,6 +1,7 @@
 import * as auth from 'actions/authActions.jsx';
 import * as dialog from 'actions/dialogActions.jsx';
 import * as api from 'actions/apiActions.jsx';
+import * as upload from 'actions/uploadActions.jsx';
 
 const initialState = {
     displayNewCopyJobDialog: false,
@@ -46,6 +47,10 @@ const initialState = {
 
     displaySettingsDialog: false,
     settingsDialogData: {},
+
+    displayUploadConflictDialog: false,
+    // {id, existing: [names], host, folder, count} (actions/uploadActions.jsx)
+    uploadConflictDialogData: {existing: [], host: {}, folder: '', count: 0},
 };
 
 export default (state=initialState, action) => {
@@ -196,6 +201,22 @@ export default (state=initialState, action) => {
             ...state,
             displayEditCloudConnectionDialog: false,
             editCloudConnectionDialogData: initialState.editCloudConnectionDialogData,
+        }
+    }
+
+    case upload.SHOW_UPLOAD_CONFLICT_DIALOG: {
+        return {
+            ...state,
+            displayUploadConflictDialog: true,
+            uploadConflictDialogData: action.payload.data,
+        }
+    }
+
+    case upload.HIDE_UPLOAD_CONFLICT_DIALOG: {
+        return {
+            ...state,
+            displayUploadConflictDialog: false,
+            uploadConflictDialogData: initialState.uploadConflictDialogData,
         }
     }
 

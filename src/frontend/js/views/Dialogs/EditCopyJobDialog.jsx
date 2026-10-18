@@ -8,6 +8,7 @@ import serializeForm from 'utils/serializeForm.jsx'
 import {describePerformance} from 'utils/copyPerformance.js'
 import {jobLocationDetail} from 'utils/jobLocation.js'
 import {canCheckIntegrity} from 'utils/s3Providers.js'
+import {UPLOAD_PROTOCOL} from 'utils/desktopDrop.js'
 
 class EditCopyJobDialog extends React.Component {
     constructor(props) {
@@ -30,6 +31,8 @@ class EditCopyJobDialog extends React.Component {
         const isSuccess = data.progress_state === 'SUCCESS'
         const isInProgress = data.progress_state === 'PROGRESS'
         const isIncomplete = data.progress_state === 'FAILED' || data.progress_state === 'STOPPED'
+        // An upload's data was in the browser: no Retry, and no source to check against
+        const isUpload = Boolean(data.upload)
         const dst_cloud = cloudMapping[this.props.data['dst_cloud_id'] || 0]
         // S3 stores chunked (multipart) uploads without an MD5, so they cannot be checked
         const checkIntegrityDisabled = !canCheckIntegrity(dst_cloud)
@@ -80,7 +83,7 @@ class EditCopyJobDialog extends React.Component {
                                 </div>
                                 <div className="col-7 text-start">
                                     <UriResource
-                                        protocol={data.src_cloud_type}
+                                        protocol={isUpload ? UPLOAD_PROTOCOL : data.src_cloud_type}
                                         path={data.src_resource_path}
                                         canCopy={true}
                                     />
@@ -133,7 +136,7 @@ class EditCopyJobDialog extends React.Component {
                                 Stop Job
                             </Button>
                         )}
-                        {!isInProgress && isSuccess && (
+                        {!isInProgress && isSuccess && !isUpload && (
                             <Fragment>
                                 <Button variant="info"
                                         aria-disabled={checkIntegrityDisabled} disabled={checkIntegrityDisabled}
@@ -149,7 +152,7 @@ class EditCopyJobDialog extends React.Component {
                                 )}
                             </Fragment>
                         )}
-                        {!isInProgress && !isSuccess && (
+                        {!isInProgress && !isSuccess && !isUpload && (
                             <Button variant="success" onClick={() => this.showNewCopyJobDialog()}>
                                 Retry
                             </Button>

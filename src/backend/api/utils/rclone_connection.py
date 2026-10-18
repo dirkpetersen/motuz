@@ -348,6 +348,69 @@ class RcloneConnection(AbstractConnection):
             raise RcloneException('Unexpected output of rclone size')
 
 
+    def upload_command(self, dst_data, user, path, size):
+        """
+        (command, environment) of `rclone rcat` that writes `size` bytes from its stdin
+        to `path` of the connection `dst_data` (None: the local filesystem) as `user`:
+        one file of an upload from the browser (utils/upload_pipes.py)
+        """
+        credentials = self._formatCredentials(dst_data, name='dst') if dst_data is not None else {}
+        check_flags, check_env = destination_checks(dst_data)
+        dst = _local_path(path) if dst_data is None else 'dst:{}'.format(path)
+        env = {**credentials, **check_env}
+        command = [
+            *sudo_as(user, env),
+            RCLONE,
+            '--config=/dev/null',
+            *_rate_limit_flags(credentials),
+            '--s3-no-check-bucket',
+            '--s3-acl',
+            'bucket-owner-full-control',
+            '--contimeout=5m',
+            *_checked_flags(check_flags),
+            'rcat',
+            '--size={}'.format(int(size)),
+            dst,
+        ]
+        self._log_command(command, credentials)
+        return command, user_process_env(env)
+
+
+    def rename_local(self, user, src, dst):
+        """Renames the local file `src` to `dst` (replacing it) as `user` (rclone moveto)"""
+        command = [*sudo_as(user), RCLONE, '--config=/dev/null', 'moveto', _local_path(src), _local_path(dst)]
+        self._log_command(command, {})
+        self._execute(command)
+
+
+    def existing_names(self, dst_data, user, path, recursive, timeout):
+        """
+        The names in the folder `path` of a destination (None: the local filesystem),
+        listed as `user`: files and folders (folders end with '/'), or with `recursive`
+        all files below it as paths relative to `path`. Empty if `path` does not exist.
+        Raises file_view.ViewTimeoutError after `timeout` seconds and RcloneException.
+        """
+        credentials = self._formatCredentials(dst_data, name='dst') if dst_data is not None else {}
+        folder = _local_path(path) if dst_data is None else 'dst:{}'.format(path)
+        command = [
+            *sudo_as(user, credentials),
+            RCLONE,
+            '--config=/dev/null',
+            *_rate_limit_flags(credentials),
+            'lsf',
+            *(['--recursive', '--files-only'] if recursive else ['--max-depth=1']),
+            folder,
+        ]
+        self._log_command(command, credentials)
+        returncode, stdout, stderr = file_view.run_limited(command, timeout, env=user_process_env(credentials))
+        if returncode == _RCLONE_DIRECTORY_NOT_FOUND:
+            return []
+        if returncode != 0:
+            raise RcloneException(stderr.decode('utf-8', 'replace').strip()[-1000:]
+                                  or 'rclone failed with exit status {}'.format(returncode))
+        return [line for line in stdout.decode('utf-8', 'replace').split('\n') if line]
+
+
     def copy(self,
             src_data,
             src_resource_path,
@@ -894,6 +957,10 @@ class RcloneConnection(AbstractConnection):
             if len(stderr) == 0:
                 raise
             raise RcloneException(stderr)
+
+
+# rclone's exit status for "directory not found" (docs: rclone.org/docs/#exit-code)
+_RCLONE_DIRECTORY_NOT_FOUND = 3
 
 
 def destination_checks(dst_data):

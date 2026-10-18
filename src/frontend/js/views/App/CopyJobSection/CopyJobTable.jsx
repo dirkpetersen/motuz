@@ -4,6 +4,7 @@ import {Pagination, ProgressBar, Table} from 'react-bootstrap';
 import UriResource from 'components/UriResource.jsx'
 import parseTime from 'utils/parseTime.jsx'
 import {describeJobLocation} from 'utils/jobLocation.js'
+import {UPLOAD_PROTOCOL} from 'utils/desktopDrop.js'
 
 
 class CopyJobTable extends React.Component {
@@ -62,7 +63,9 @@ class CopyJobTable extends React.Component {
             const dst_cloud_id = job['dst_cloud_id'] || 0
             const dst_cloud = cloudMapping[dst_cloud_id]
 
-            if (src_cloud == undefined) {
+            if (job.upload) {
+                job.src_cloud_type = UPLOAD_PROTOCOL
+            } else if (src_cloud == undefined) {
                 job.src_cloud_type = "(unknown)"
             } else {
                 job.src_cloud_type = src_cloud.type;

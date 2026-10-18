@@ -225,6 +225,7 @@ stops with a message naming the missing piece (it says when to run `install.sh` 
     - [Privacy policy and terms](#privacy-policy-and-terms)
     - [Performance tuning](#performance-tuning)
     - [File viewer](#file-viewer)
+    - [Uploads from the desktop](#uploads-from-the-desktop)
     - [Remote workers (HTTPS only)](#remote-workers-https-only)
     - [Temporary EC2 workers](#temporary-ec2-workers)
 - [Alternative: Docker](#alternative-docker)
@@ -1553,6 +1554,29 @@ logged-in user (locally with their permissions, in the cloud with their connecti
   read in small ranges regardless of size. Old binary Office files (`.doc`, `.ppt`, ...)
   and other formats without a browser renderer show "No preview for this file type".
 - anything else: a text pager like `less`, with *Follow* (like `tail -f`).
+
+### Uploads from the desktop
+
+Drag files or folders from the desktop (or a file manager) onto a pane: they are uploaded
+into the folder the pane shows, or into the folder row you drop them on, also on cloud
+connections. The upload is a copy job in the job table, with the progress bar of any
+copy (the source shows as `desktop://`); its details show the files done, skipped and
+failed, with rclone's message for each failed file.
+
+- If some of the dropped names already exist there, one question per drop offers
+  **Overwrite all**, **Skip existing** (only files that do not exist yet are uploaded, also
+  inside existing folders) or **Cancel**.
+- The browser sends each file in chunks of 8 MiB, three files at a time. Each chunk goes
+  to an `rclone rcat` that runs **as the logged-in user** (the same `sudo` rule as every
+  file operation) and writes the file at its destination; nothing is stored on the
+  server. A chunk that is lost on the way is sent again; a file that cannot be continued
+  starts again from its beginning.
+- The data comes from the tab: the page asks before it closes while an upload runs, and a
+  job whose browser sends nothing for 5 minutes fails ("the browser stopped sending the
+  upload"). Stop works like for any job; the file that was being written is removed.
+- Empty folders are not uploaded, at most 100,000 files per drop. Uploads always run on
+  the central node, never on remote workers, and have no Retry or Check Integrity (the
+  source was in the browser).
 
 ### Remote workers (HTTPS only)
 

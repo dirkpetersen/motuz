@@ -4,7 +4,7 @@ from flask import request
 from flask_restx import Resource, Namespace, fields, reqparse
 
 from ..exceptions import HTTP_EXCEPTION
-from ..managers import copy_job_manager
+from ..managers import copy_job_manager, upload_manager
 
 api = Namespace('copy-jobs', description='CopyJob related operations')
 
@@ -43,6 +43,14 @@ job_dto = api.model('copy-job', {
     # node) or a remote pool, and e.g. "starting worker (c7gn.2xlarge)"
     'pool': fields.String(readonly=True, example='aws'),
     'pool_status': fields.String(readonly=True, example='running on c7gn.2xlarge'),
+    # Set for an upload from the browser (managers/upload_manager.py)
+    'upload': fields.Raw(readonly=True, example={'files': 3, 'bytes': 1048576, 'mode': 'skip', 'name': 'photos/'}),
+})
+
+upload_dto = api.model('copy-job-upload', {
+    'job': fields.Nested(job_dto),
+    'pending': fields.List(fields.Integer, description='Indexes of the files to send, in order'),
+    'chunk_bytes': fields.Integer(description='Bytes per chunk', example=8388608),
 })
 
 list_dto = api.model('copy-job-list', {
@@ -145,6 +153,70 @@ class CopyJob(Resource):
             return copy_job_manager.stop(id), 202
         except HTTP_EXCEPTION as e:
             api.abort(e.code, e.payload)
+        except Exception as e:
+            logging.exception(e, exc_info=True)
+            api.abort(500, str(e))
+
+
+def _abort(e):
+    """api.abort with the manager's message, or its fields if it gave a dict"""
+    if isinstance(e.payload, dict):
+        api.abort(e.code, **e.payload)
+    api.abort(e.code, e.payload)
+
+
+@api.route('/uploads/conflicts/')
+class UploadConflicts(Resource):
+    def post(self):
+        """
+        Which of the top-level names of a drop from the desktop exist in the destination
+        folder: {dst_cloud_id, dst_resource_path, names} -> {existing}
+        """
+        try:
+            return upload_manager.conflicts(request.get_json(silent=True) or {})
+        except HTTP_EXCEPTION as e:
+            _abort(e)
+        except Exception as e:
+            logging.exception(e, exc_info=True)
+            api.abort(500, str(e))
+
+
+@api.route('/uploads/')
+class Uploads(Resource):
+    @api.marshal_with(upload_dto, code=201)
+    def post(self):
+        """
+        Create an upload from the browser: {dst_cloud_id, dst_resource_path, mode
+        ('overwrite' or 'skip'), files: [{path, size}]}. The browser then sends the
+        pending files with PUT /copy-jobs/<id>/uploads/<index>.
+        """
+        try:
+            return upload_manager.create(request.get_json(silent=True) or {}), 201
+        except HTTP_EXCEPTION as e:
+            _abort(e)
+        except Exception as e:
+            logging.exception(e, exc_info=True)
+            api.abort(500, str(e))
+
+
+@api.route('/<int:id>/uploads/<int:index>')
+@api.param('id', 'The Copy Job Identifier')
+@api.param('index', 'The index of the file in the upload')
+class UploadChunk(Resource):
+    def put(self, id, index):
+        """
+        One chunk of a file of an upload (the body, application/octet-stream) at
+        ?offset=<bytes>; offset 0 starts the file
+        """
+        offset = request.args.get('offset', '')
+        if not offset.isdigit():
+            api.abort(400, 'offset must be a number of bytes')
+        if request.content_length is None and 'chunked' in request.headers.get('Transfer-Encoding', ''):
+            api.abort(411, 'Content-Length is required')
+        try:
+            return upload_manager.put_chunk(id, index, int(offset), request.content_length or 0, request.stream)
+        except HTTP_EXCEPTION as e:
+            _abort(e)
         except Exception as e:
             logging.exception(e, exc_info=True)
             api.abort(500, str(e))

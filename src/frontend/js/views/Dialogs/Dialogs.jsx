@@ -10,6 +10,7 @@ import EditHashsumJobDialog from 'views/Dialogs/EditHashsumJobDialog.jsx';
 import NewCloudConnectionDialog from 'views/Dialogs/CloudConnection/NewCloudConnectionDialog.jsx';
 import EditCloudConnectionDialog from 'views/Dialogs/CloudConnection/EditCloudConnectionDialog.jsx';
 import MkdirDialog from 'views/Dialogs/MkdirDialog.jsx';
+import UploadConflictDialog from 'views/Dialogs/UploadConflictDialog.jsx';
 import SettingsDialog from 'views/Dialogs/SettingsDialog.jsx';
 import FileViewerDialog from 'views/Dialogs/FileViewerDialog.jsx';
 import ImageViewerDialog from 'views/Dialogs/ImageViewerDialog.jsx';
@@ -70,6 +71,7 @@ class Dialogs extends React.PureComponent {
                 {this.props.dialogs.displayNewCloudConnectionDialog && <NewCloudConnectionDialog />}
                 {this.props.dialogs.displayEditCloudConnectionDialog && <EditCloudConnectionDialog />}
                 {this.props.dialogs.displayMkdirDialog && <MkdirDialog />}
+                {this.props.dialogs.displayUploadConflictDialog && <UploadConflictDialog />}
                 {this.props.dialogs.displaySettingsDialog && <SettingsDialog />}
                 {this.props.dialogs.displayFileViewerDialog && this.renderFileViewer()}
             </React.Fragment>
