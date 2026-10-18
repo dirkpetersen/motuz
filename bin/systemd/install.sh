@@ -275,7 +275,9 @@ if [ "$NETWORK_TUNING" = 1 ]; then
     else
         rm -f /etc/modules-load.d/motuz-bbr.conf
     fi
-    sysctl -q -p /etc/sysctl.d/61-motuz-network.conf
+    # In a container the net.core values belong to the host's kernel (EPERM): not an error
+    sysctl -q -p /etc/sysctl.d/61-motuz-network.conf 2>/dev/null \
+        || warn "some network settings could not be applied (a container? set them on the host): /etc/sysctl.d/61-motuz-network.conf"
 elif [ -e /etc/sysctl.d/61-motuz-network.conf ]; then
     log "--no-network-tuning: removing /etc/sysctl.d/61-motuz-network.conf (its values stay until the next reboot)"
     rm -f /etc/sysctl.d/61-motuz-network.conf /etc/modules-load.d/motuz-bbr.conf
