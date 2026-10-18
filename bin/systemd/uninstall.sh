@@ -9,7 +9,7 @@
 #   --user=NAME  the service account (default motuz)
 #   --purge      also delete the account with its home and all Motuz data (a private
 #                database, secrets, certificates), /var/lib/motuz-aws-config, the login
-#                helper's state, /var/lib/motuz-bin (the pinned rclone) and
+#                helper's state, /var/lib/motuz-runas (the pinned rclone) and
 #                /usr/local/bin/{rclone,traefik,uv} of older installs; needs --yes.
 #                With the distribution's PostgreSQL (MOTUZ_DATABASE_MODE=system) only the
 #                database motuz and the role motuz_user are dropped (and our pg_hba lines

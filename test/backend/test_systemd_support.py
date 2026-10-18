@@ -62,7 +62,7 @@ class TestSudoPrefix(unittest.TestCase):
 
 
 class TestAbsoluteCommands(unittest.TestCase):
-    """The sudoers rule allows /var/lib/motuz-bin/rclone, /usr/bin/ls, /usr/bin/mkdir, /usr/bin/env"""
+    """The sudoers rule allows /var/lib/motuz-runas/rclone, /usr/bin/ls, /usr/bin/mkdir, /usr/bin/env"""
 
     def test_ls_and_mkdir(self):
         with mock.patch.object(local_connection, 'check_output', return_value=b'') as run:
@@ -74,32 +74,32 @@ class TestAbsoluteCommands(unittest.TestCase):
         self.assertEqual(ls[-2:], ['--', '/data'])
 
     def test_every_sudo_command_is_allowed(self):
-        allowed = {'/var/lib/motuz-bin/rclone', '/usr/bin/ls', '/usr/bin/mkdir', '/usr/bin/env'}
+        allowed = {'/var/lib/motuz-runas/rclone', '/usr/bin/ls', '/usr/bin/mkdir', '/usr/bin/env'}
         source = ''
         for name in ('local_connection.py', 'rclone_connection.py', 'local_credentials.py', 'file_view.py'):
             with open(os.path.join(BACKEND, 'api', 'utils', name)) as f:
                 source += f.read()
         self.assertNotIn("'-i'", source) # no login shells
         self.assertNotIn("'-E'", source)
-        self.assertEqual({local_connection.LS, local_connection.MKDIR, local_connection.ENV}, allowed - {'/var/lib/motuz-bin/rclone'})
+        self.assertEqual({local_connection.LS, local_connection.MKDIR, local_connection.ENV}, allowed - {'/var/lib/motuz-runas/rclone'})
         from api.utils import rclone_connection
         # unset (Docker, EC2 workers): root's copy; the systemd units name the account's
         self.assertEqual(rclone_connection.RCLONE, '/usr/local/bin/rclone')
-        self.assertIn('/var/lib/motuz-bin/rclone', rclone_connection.RCLONE_PATHS)
+        self.assertIn('/var/lib/motuz-runas/rclone', rclone_connection.RCLONE_PATHS)
 
     def test_rclone_path(self):
         from api.utils import rclone_connection
         self.assertEqual(rclone_connection.rclone_path({}), '/usr/local/bin/rclone')
         self.assertEqual(rclone_connection.rclone_path({'MOTUZ_RCLONE': ''}), '/usr/local/bin/rclone')
-        self.assertEqual(rclone_connection.rclone_path({'MOTUZ_RCLONE': '/var/lib/motuz-bin/rclone'}), '/var/lib/motuz-bin/rclone')
-        for value in ('/tmp/rclone', 'rclone', '/var/lib/motuz-bin/../motuz-bin/rclone', '/usr/bin/env'):
+        self.assertEqual(rclone_connection.rclone_path({'MOTUZ_RCLONE': '/var/lib/motuz-runas/rclone'}), '/var/lib/motuz-runas/rclone')
+        for value in ('/tmp/rclone', 'rclone', '/var/lib/motuz-runas/../motuz-runas/rclone', '/usr/bin/env'):
             with self.assertRaises(abstract_connection.RcloneException):
                 rclone_connection.rclone_path({'MOTUZ_RCLONE': value})
 
     def test_the_account_tools_are_named_alike_everywhere(self):
         """_lib.sh TOOLS_DIR, the sudoers rule, the units and MOTUZ_RCLONE are one path"""
         out = bash_lib('printf %s "$TOOLS_DIR"')
-        self.assertEqual(out.stdout, '/var/lib/motuz-bin')
+        self.assertEqual(out.stdout, '/var/lib/motuz-runas')
 
         def read(*path):
             with open(os.path.join(REPO, *path)) as f:
@@ -109,11 +109,11 @@ class TestAbsoluteCommands(unittest.TestCase):
         self.assertIn('NOPASSWD:SETENV: $TOOLS_DIR/rclone\n', install_sh)
         self.assertNotIn('/usr/local/bin/rclone,', install_sh)
         for unit in ('motuz-app.service', 'motuz-celery.service'):
-            self.assertIn('\nEnvironment=MOTUZ_RCLONE=/var/lib/motuz-bin/rclone\n', read('deployment', 'systemd', 'user', unit))
+            self.assertIn('\nEnvironment=MOTUZ_RCLONE=/var/lib/motuz-runas/rclone\n', read('deployment', 'systemd', 'user', unit))
         # Traefik and uv: only the account runs them, so they stay in its (closed) home
         self.assertIn('\nExecStart=%h/.local/bin/traefik $TRAEFIK_ARGS\n', read('deployment', 'systemd', 'user', 'motuz-traefik.service'))
         self.assertEqual(bash_lib('motuz_paths /var/lib/motuz; printf %s "$ACCOUNT_BIN"').stdout, '/var/lib/motuz/.local/bin')
-        self.assertIn('\nMOTUZ_RCLONE=/var/lib/motuz-bin/rclone\n', read('src', 'worker', 'worker.env.example'))
+        self.assertIn('\nMOTUZ_RCLONE=/var/lib/motuz-runas/rclone\n', read('src', 'worker', 'worker.env.example'))
         self.assertIn('"$ACCOUNT_BIN/uv" pip install', read('bin', 'systemd', 'deploy.sh'))
 
     def test_root_never_runs_the_account_tools(self):
@@ -124,7 +124,7 @@ class TestAbsoluteCommands(unittest.TestCase):
                 if 'NOPASSWD:SETENV:' in code or 'MOTUZ_RCLONE' in code or 'runuser -u "$ACCOUNT"' in code:
                     continue
                 self.assertNotRegex(code, r'(^|[\s;&|(])"?\$TOOLS_DIR/', '{}: {}'.format(name, line))
-                self.assertNotRegex(code, r'/var/lib/motuz-bin/', '{}: {}'.format(name, line))
+                self.assertNotRegex(code, r'/var/lib/motuz-runas/', '{}: {}'.format(name, line))
                 self.assertNotRegex(code, r'ACCOUNT_BIN|\.local/bin', '{}: {}'.format(name, line))
 
 

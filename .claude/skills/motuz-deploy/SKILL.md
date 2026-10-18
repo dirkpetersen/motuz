@@ -36,7 +36,7 @@ Follow this playbook in order. README sections "Install" and "Deploy with an AI 
 ## Step 0. Check the starting point
 
 Run (read-only): `id`, `pwd`, `git -C ~/motuz status --short`, `git -C ~/motuz log -1 --oneline`,
-`ls /etc/os-release /var/lib/motuz-bin ~/.local/bin`,
+`ls /etc/os-release /var/lib/motuz-runas ~/.local/bin`,
 `systemctl --user status 'motuz*' --no-pager` and `bin/systemd/config.sh show` (if
 `~/.config/motuz` exists). Report: distribution, Motuz version (git commit), whether
 Motuz already runs (update) or not (first deployment), and the database and broker modes

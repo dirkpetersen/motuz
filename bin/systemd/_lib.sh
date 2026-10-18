@@ -11,7 +11,7 @@ die() { printf '\033[0;31mERROR: %s\033[0m\n' "$*" >&2; exit 1; }
 # outside its home, which stays closed to the users, who run rclone through sudo. The
 # sudoers rule, the units and MOTUZ_RCLONE name this path. Traefik and uv, which only the
 # account runs, are in ~/.local/bin of its home.
-TOOLS_DIR=/var/lib/motuz-bin
+TOOLS_DIR=/var/lib/motuz-runas
 
 fetch_checked() { # url sha256 file
     curl -fsSL --retry 3 -o "$3" "$1" || die "download failed: $1"

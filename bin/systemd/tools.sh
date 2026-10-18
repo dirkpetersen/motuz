@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Installs the pinned rclone, Traefik and uv (deployment/systemd/versions.env; rclone from
 # the app Dockerfile), SHA256 checked, if they are not those versions yet: rclone into
-# /var/lib/motuz-bin, which the users can reach (the sudoers rule lets the account run it
+# /var/lib/motuz-runas, which the users can reach (the sudoers rule lets the account run it
 # as them; install.sh makes the directory, owned by the account), Traefik and uv, which
 # only the account runs, into ~/.local/bin of its home. Run as the service account:
 # deploy.sh runs it on every deploy, install.sh --worker-only (rclone only) as the

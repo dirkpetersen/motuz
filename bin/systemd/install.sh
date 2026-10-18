@@ -50,17 +50,17 @@
 #   --run-as=NAME       worker: rclone runs as this unprivileged system account (created,
 #                       no shell) instead of the jobs' owners, i.e. only cloud-to-cloud jobs,
 #                       like the temporary EC2 workers (MOTUZ_WORKER_RUN_AS); the sudoers
-#                       rule then allows only /var/lib/motuz-bin/rclone as NAME
+#                       rule then allows only /var/lib/motuz-runas/rclone as NAME
 #
 # What it does:
 #   - packages (bin/systemd/distro/<ID>.sh): PostgreSQL 18, Redis or Valkey (their own
 #     services are used or masked, see the options), Node.js/npm, build tools, git, curl,
 #     openssl (--worker-only: python3, sudo, curl, unzip)
 #   - the account, `loginctl enable-linger`, its sudoers rule (checked with visudo -c)
-#   - /var/lib/motuz-bin, owned by the account: the account itself puts the pinned rclone
+#   - /var/lib/motuz-runas, owned by the account: the account itself puts the pinned rclone
 #     there (bin/systemd/tools.sh, run by deploy.sh; with --worker-only run by this script
 #     as the account), and Traefik and uv into ~/.local/bin, so updating them needs no
-#     root; the sudoers rule names /var/lib/motuz-bin/rclone (outside the home, which stays
+#     root; the sudoers rule names /var/lib/motuz-runas/rclone (outside the home, which stays
 #     750, because the users run it). Root runs none of them (the HEIC converter below is
 #     installed with a uv of its own, downloaded for that step only).
 #   - sysctl: net.ipv4.ip_unprivileged_port_start=80 (Traefik is a user service on

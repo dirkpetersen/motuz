@@ -40,9 +40,9 @@ check "the login helper only runs as root on demand (socket activated, no daemon
 RULE=$(sudo -l -U "$ACCOUNT" 2>/dev/null | sed -n '/may run the following commands/,$p' | tail -n +2 | sed 's/^ *//')
 echo "    sudo -l -U $ACCOUNT: $RULE"
 check "sudo -l -U $ACCOUNT shows exactly the one rule" \
-    bash -c "[ \"\$(printf '%s\n' \"$RULE\" | grep -c .)\" = 1 ] && printf '%s' \"$RULE\" | grep -qE '^\(ALL, !root, !postgres, !redis, !valkey\) (SETENV: NOPASSWD:|NOPASSWD: ?SETENV:) /var/lib/motuz-bin/rclone, /usr/bin/ls, /usr/bin/mkdir, /usr/bin/env$'"
-check "rclone is the account's (/var/lib/motuz-bin, root's directory entry), runnable by everyone; Traefik and uv in its home" \
-    bash -c "[ \"\$(stat -c %U:%a /var/lib/motuz-bin /var/lib/motuz-bin/rclone | sort -u)\" = $ACCOUNT:755 ] && [ \"\$(stat -c %U /var/lib)\" = root ] && h=\$(getent passwd $ACCOUNT | cut -d: -f6) && [ \"\$(stat -c %U \$h/.local/bin/traefik \$h/.local/bin/uv | sort -u)\" = $ACCOUNT ] && [ ! -e /var/lib/motuz-bin/traefik ]"
+    bash -c "[ \"\$(printf '%s\n' \"$RULE\" | grep -c .)\" = 1 ] && printf '%s' \"$RULE\" | grep -qE '^\(ALL, !root, !postgres, !redis, !valkey\) (SETENV: NOPASSWD:|NOPASSWD: ?SETENV:) /var/lib/motuz-runas/rclone, /usr/bin/ls, /usr/bin/mkdir, /usr/bin/env$'"
+check "rclone is the account's (/var/lib/motuz-runas, root's directory entry), runnable by everyone; Traefik and uv in its home" \
+    bash -c "[ \"\$(stat -c %U:%a /var/lib/motuz-runas /var/lib/motuz-runas/rclone | sort -u)\" = $ACCOUNT:755 ] && [ \"\$(stat -c %U /var/lib)\" = root ] && h=\$(getent passwd $ACCOUNT | cut -d: -f6) && [ \"\$(stat -c %U \$h/.local/bin/traefik \$h/.local/bin/uv | sort -u)\" = $ACCOUNT ] && [ ! -e /var/lib/motuz-runas/traefik ]"
 check "$ACCOUNT cannot sudo -u postgres, redis or valkey (the superusers of the system services)" \
     bash -c "! runuser -u $ACCOUNT -- sudo -n -u postgres /usr/bin/env true && ! runuser -u $ACCOUNT -- sudo -n -u redis /usr/bin/env true && ! runuser -u $ACCOUNT -- sudo -n -u valkey /usr/bin/env true"
 check "$ACCOUNT cannot sudo -u root" bash -c "! runuser -u $ACCOUNT -- sudo -n -u root /usr/bin/ls /root"

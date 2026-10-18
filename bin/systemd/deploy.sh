@@ -6,7 +6,7 @@
 #     sudo -iu motuz ~/motuz/bin/systemd/deploy.sh [--pull]
 #   --pull   git pull --ff-only first
 #
-# Steps: the pinned rclone (/var/lib/motuz-bin), Traefik and uv (~/.local/bin), by
+# Steps: the pinned rclone (/var/lib/motuz-runas), Traefik and uv (~/.local/bin), by
 # bin/systemd/tools.sh as this account: updating them needs no root; the Python venv
 # (~/motuz/venv: Python and requirements.txt by uv), the frontend (npm ci, npm run
 # build), ~/.config/motuz/{motuz.env,secrets.env} on the first deploy (never overwritten; secrets added by an update are generated), a self-signed

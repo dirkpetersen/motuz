@@ -21,7 +21,7 @@ from .hashsum_job_queue import HashsumJobQueue
 # The rclone that runs as the users: root's copy in the Docker image and on the EC2
 # workers, the account's own copy in the systemd install, whose sudoers rule
 # (bin/systemd/install.sh) allows exactly that path. The units set MOTUZ_RCLONE.
-RCLONE_PATHS = ('/usr/local/bin/rclone', '/var/lib/motuz-bin/rclone')
+RCLONE_PATHS = ('/usr/local/bin/rclone', '/var/lib/motuz-runas/rclone')
 
 
 def rclone_path(environ=None):

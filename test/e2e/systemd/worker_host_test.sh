@@ -97,7 +97,7 @@ as_motuz_systemctl='runuser -u motuz -- env XDG_RUNTIME_DIR=/run/user/$(id -u mo
 check "install.sh --worker-only (no credential): installed, not started" \
     '[[ "$out" == *"Worker installed, not started"* ]] && ! worker "$as_motuz_systemctl is-active --quiet motuz-worker"' "$(tail -3 <<<"$out")"
 [ "$INSIDE" = 1 ] || check "no server pieces on the worker host (rclone only: no Traefik, uv, PostgreSQL, Valkey, PAM service)" \
-    'worker "test -x /var/lib/motuz-bin/rclone && ! test -e ~motuz/.local/bin/traefik && ! test -e ~motuz/.local/bin/uv && ! rpm -q postgresql18-server valkey >/dev/null && ! test -e /etc/pam.d/motuz"'
+    'worker "test -x /var/lib/motuz-runas/rclone && ! test -e ~motuz/.local/bin/traefik && ! test -e ~motuz/.local/bin/uv && ! rpm -q postgresql18-server valkey >/dev/null && ! test -e /etc/pam.d/motuz"'
 env_file=$(worker 'cat ~motuz/.config/motuz-worker/worker.env; stat -c MODE=%a:%U ~motuz/.config/motuz-worker/worker.env')
 check "worker.env: MOTUZ_HOME, central URL, pool, no required mounts, mode 600" \
     'grep -qx "MOTUZ_HOME=\"$WORKER_HOME\"" <<<"$env_file" && grep -qx "MOTUZ_CENTRAL_URL=\"https://localhost\"" <<<"$env_file" \
@@ -161,11 +161,11 @@ if [ "$INSIDE" = 0 ]; then
     out=$(worker "$WORKER_HOME/bin/systemd/install.sh --worker-only --central-url=https://localhost --pool=onprem --credential-file=/root/credential --run-as=motuzjob 2>&1")
     check "install.sh --worker-only --run-as=motuzjob restarts motuz-worker" '[[ "$out" == *"starting motuz-worker"* ]]' "$(tail -3 <<<"$out")"
     rule=$(worker "sudo -l -U motuz | sed -n '/may run the following/,\$p' | tail -n +2 | sed 's/^ *//'")
-    check "sudoers: only /var/lib/motuz-bin/rclone as motuzjob" \
-        '[[ "$rule" =~ ^\(motuzjob\)\ (SETENV:\ NOPASSWD:|NOPASSWD:\ ?SETENV:)\ /var/lib/motuz-bin/rclone$ ]]' "$rule"
+    check "sudoers: only /var/lib/motuz-runas/rclone as motuzjob" \
+        '[[ "$rule" =~ ^\(motuzjob\)\ (SETENV:\ NOPASSWD:|NOPASSWD:\ ?SETENV:)\ /var/lib/motuz-runas/rclone$ ]]' "$rule"
     check "motuzjob: a system account without a shell; MOTUZ_WORKER_RUN_AS in worker.env" \
         'worker "getent passwd motuzjob | grep -q :/sbin/nologin\$ && grep -qx MOTUZ_WORKER_RUN_AS=\\\"motuzjob\\\" ~motuz/.config/motuz-worker/worker.env"'
-    check "motuz can no longer run anything as alice" 'worker "! runuser -u motuz -- sudo -n -u alice /var/lib/motuz-bin/rclone version"'
+    check "motuz can no longer run anything as alice" 'worker "! runuser -u motuz -- sudo -n -u alice /var/lib/motuz-runas/rclone version"'
     for _ in $(seq 30); do
         worker "journalctl --no-pager -o cat _SYSTEMD_USER_UNIT=motuz-worker.service --since -2min | grep -q 'signed in as worker $WNAME'" && break
         sleep 2
