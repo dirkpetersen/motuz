@@ -875,7 +875,7 @@ class RcloneConnection(AbstractConnection):
         """
         Calls `rclone obscure password` and returns the result
         """
-        return self._execute(["rclone", "obscure", password])
+        return self._execute([RCLONE, "obscure", password])
 
 
     def _execute(self, command, env=None):

@@ -36,6 +36,7 @@ from ..application import db
 from ..exceptions import *
 from ..models import CloudConnection, OauthFlow
 from ..managers.auth_manager import token_required, get_logged_in_user
+from ..utils.rclone_connection import RCLONE
 
 
 FLOW_TTL = datetime.timedelta(minutes=15)
@@ -591,4 +592,4 @@ def _json(raw):
 
 
 def _reveal(obscured):
-    return subprocess.check_output(['rclone', 'reveal', obscured]).decode().strip()
+    return subprocess.check_output([RCLONE, 'reveal', obscured]).decode().strip()

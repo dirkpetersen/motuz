@@ -48,7 +48,7 @@ from ..exceptions import *
 from ..models import CloudConnection, CopyJob, HashsumJob, RemoteJob, Worker, WorkerBootstrapToken
 from ..models.worker import utcnow
 from ..utils.email_utils import Email
-from ..utils.rclone_connection import RcloneConnection
+from ..utils.rclone_connection import RCLONE, RcloneConnection
 from ..version import VERSION, WORKER_PROTOCOL
 from . import job_routing
 from . import token_broker_manager
@@ -188,7 +188,7 @@ _rclone_version = []
 def rclone_version():
     if not _rclone_version:
         try:
-            output = subprocess.run(['rclone', 'version'], capture_output=True, text=True, timeout=10).stdout
+            output = subprocess.run([RCLONE, 'version'], capture_output=True, text=True, timeout=10).stdout
             _rclone_version.append(output.split('\n')[0].strip() or None)
         except (OSError, subprocess.SubprocessError):
             _rclone_version.append(None)

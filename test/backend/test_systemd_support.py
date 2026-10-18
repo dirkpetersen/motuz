@@ -116,6 +116,17 @@ class TestAbsoluteCommands(unittest.TestCase):
         self.assertIn('\nMOTUZ_RCLONE=/var/lib/motuz-runas/rclone\n', read('src', 'worker', 'worker.env.example'))
         self.assertIn('"$ACCOUNT_BIN/uv" pip install', read('bin', 'systemd', 'deploy.sh'))
 
+    def test_rclone_is_never_looked_up_in_path(self):
+        # The systemd install's rclone is not in PATH: always rclone_connection.RCLONE
+        pattern = re.compile(r'''\[\s*['"]rclone['"]|['"]rclone (--|version|reveal|obscure)''')
+        for root in (os.path.join(BACKEND, 'api'), os.path.join(REPO, 'src', 'worker')):
+            for directory, _, names in os.walk(root):
+                for name in names:
+                    if name.endswith('.py'):
+                        with open(os.path.join(directory, name)) as f:
+                            for number, line in enumerate(f, 1):
+                                self.assertIsNone(pattern.search(line.split('#', 1)[0]), '{}:{}: {}'.format(name, number, line))
+
     def test_root_never_runs_the_account_tools(self):
         # The account can replace them: root running one would hand it root
         for name in ('install.sh', '_system_services.sh', 'uninstall.sh', 'worker_once.sh', 'bootstrap.sh'):

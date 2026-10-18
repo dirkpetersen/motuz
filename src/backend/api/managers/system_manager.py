@@ -12,7 +12,7 @@ from ..exceptions import *
 from ..managers.auth_manager import token_required, get_logged_in_user
 from ..application import db
 from ..managers import cloud_connection_manager
-from ..utils.rclone_connection import RcloneConnection
+from ..utils.rclone_connection import RCLONE, RcloneConnection
 from ..utils.local_connection import LocalConnection
 from ..utils.abstract_connection import RcloneException
 from ..utils import file_view
@@ -35,7 +35,7 @@ def get_info():
 
     try:
         payload['rclone_version'] = (subprocess
-            .check_output("rclone --version", shell=True)
+            .check_output([RCLONE, '--version'])
             .decode('utf-8')
             .strip()
             .replace('\n', ' | ')
