@@ -486,7 +486,8 @@ if runs:
     check('schedule: the run reports the kept file', (rj.get('skipped_existing'), rj.get('skipped_existing_sample')) == (1, ['a.txt']),
           (rj.get('skipped_existing'), rj.get('skipped_existing_sample')))
     check('schedule: rclone ran copyto with --ignore-existing (celery log)',
-          '--ignore-existing --combined=- copyto /home/alice/schsrc /home/alice/schdst' in service_logs('celery'),
+          re.search(r' --ignore-existing --combined=/tmp/motuz-kept-\d+-[0-9a-f]{32} copyto /home/alice/schsrc /home/alice/schdst',
+                    service_logs('celery')),
           [line for line in service_logs('celery').splitlines() if 'schdst' in line][-1:])
     status, sc, _ = req('GET', f'/api/copy-schedules/{sid}', A)
     check('schedule: last job and the next run', status == 200 and sc.get('last_job_id') == rj['id']
