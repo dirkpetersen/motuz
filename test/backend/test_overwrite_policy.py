@@ -234,6 +234,24 @@ class KeptFilesTest(unittest.TestCase):
         self.assertEqual(kept['count'], self.kept_files.KEPT_SAMPLE + 5)
         self.assertEqual(len(kept['sample']), self.kept_files.KEPT_SAMPLE)
 
+    def test_a_stopped_job_removes_its_report(self):
+        # Stop (task revoked): terminate_all kills rclone; the Celery worker process exits
+        # right after, so the report is read and removed there, not by the reader thread
+        from api.utils.copy_job_queue import CopyJobQueue
+        queue = CopyJobQueue()
+        path = self.kept_files.new_path(2)
+        self.addCleanup(lambda: os.path.exists(path) and os.remove(path))
+        slow = FAKE_RCLONE.replace('sys.stdout.write(', 'import time; time.sleep(60); sys.stdout.write(')
+        queue.push([sys.executable, '-c', slow, self.kept_files.combined_flag(path), 'copyto', '= kept.txt\n'],
+                   {}, 2, kept_file=path, user='alice')
+        for _ in range(200):
+            if os.path.exists(path) and os.path.getsize(path):
+                break
+            time.sleep(0.05)
+        queue.terminate_all()
+        self.assertFalse(os.path.exists(path), 'the report is removed after Stop')
+        self.assertEqual(queue.copy_kept(2)['count'], 1)
+
     def test_nothing_kept(self):
         queue = self.run_queue('+ a.txt\n')
         self.assertEqual(queue.copy_kept(1), {'count': 0, 'sample': []})

@@ -24,6 +24,7 @@ class CopyJobQueue:
         self._stop_events = {} # Mapping from id to threading.Event
         self._processes = {} # Mapping from id to subprocess.Popen
         self._error_text_lock = threading.Lock()
+        self._kept_lock = threading.Lock()
         self._latest_job_id = 0
         self._local_dst = {} # Mapping from id to the local destination path (None: a cloud)
         self._disk_full = {} # Mapping from id to (disk_full.FULL or QUOTA, rclone's last such line)
@@ -210,17 +211,28 @@ class CopyJobQueue:
                     os.killpg(process.pid, signal.SIGTERM)
                 except ProcessLookupError:
                     pass
+        # The worker process exits right after this: read (and so remove) each job's
+        # kept-files report now, which the reader thread would do after rclone exits
+        for job_id, process in list(self._processes.items()):
+            try:
+                process.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                pass
+            self._read_kept(job_id)
 
 
     def _read_kept(self, job_id):
         """The kept files from rclone's report (read and removed as the user), into copy_kept and the text"""
-        kept_file, user = self._kept_files.get(job_id) or (None, None)
-        if kept_file is None:
-            return
-        try:
-            self._kept[job_id] = kept_files.read(user, kept_file)
-        except Exception as e: # never fail the job for its report
-            logging.exception(e)
+        # Both the reader thread and terminate_all (Stop) come here: one reads, the other
+        # waits until the report is gone
+        with self._kept_lock:
+            kept_file, user = self._kept_files.pop(job_id, None) or (None, None)
+            if kept_file is None:
+                return # No report, or already read
+            try:
+                self._kept[job_id] = kept_files.read(user, kept_file)
+            except Exception as e: # never fail the job for its report
+                logging.exception(e)
         self.__process_copy_text(job_id)
 
 
