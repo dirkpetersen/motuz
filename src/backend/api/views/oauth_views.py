@@ -4,7 +4,7 @@ from flask import request, redirect
 from flask_restx import Resource, Namespace, fields
 
 from ..managers import oauth_manager
-from ..exceptions import HTTP_EXCEPTION
+from ..exceptions import HTTP_EXCEPTION, public_error
 from .cloud_connection_views import dto as connection_dto
 
 
@@ -47,7 +47,7 @@ def _call(fn, *args):
         api.abort(e.code, e.payload)
     except Exception as e:
         logging.exception(e, exc_info=True)
-        api.abort(500, str(e))
+        api.abort(500, public_error(e))
 
 
 # /api/oauth/<provider>/...: 'onedrive' (Sign in with Microsoft) or 'gdrive' (Sign in

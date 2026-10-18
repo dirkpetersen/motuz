@@ -645,7 +645,7 @@ def _try_claim(worker, job_types):
         ticket = build_ticket(remote_job, job, ticket_token, broker_secret)
     except Exception as e:
         logging.exception(e)
-        notification = _expire(remote_job, 'Could not prepare the job for its worker: {}'.format(e))
+        notification = _expire(remote_job, 'Could not prepare the job for its worker: {}'.format(error_text(e)))
         db.session.commit()
         _send([notification])
         return None

@@ -3,6 +3,7 @@ import functools
 import json
 import logging
 import os
+import re
 import subprocess
 from collections import defaultdict
 
@@ -12,6 +13,7 @@ from .file_times import rfc3339_to_iso_utc
 from . import file_view
 from . import image_view
 from . import document_view
+from . import rclone_obscure
 from . import rclone_tuning
 from . import s3_providers
 from .copy_job_queue import CopyJobQueue
@@ -660,7 +662,7 @@ class RcloneConnection(AbstractConnection):
             if should_never_log_credential(key):
                 sanitized_credentials[key] = '***'
             elif should_log_full_credential(key):
-                sanitized_credentials[key] = value
+                sanitized_credentials[key] = mask_url_secrets(value)
             elif should_log_partial_credential(key):
                 sanitized_credentials[key] = '***' + value[-4:]
             else:
@@ -936,9 +938,10 @@ class RcloneConnection(AbstractConnection):
 
     def _obscure(self, password):
         """
-        Calls `rclone obscure password` and returns the result
+        rclone's obscured form of a password, computed here (utils/rclone_obscure.py): the
+        password must not appear on the command line of a process
         """
-        return self._execute([RCLONE, "obscure", password])
+        return rclone_obscure.obscure(password)
 
 
     def _execute(self, command, env=None):
@@ -1171,6 +1174,20 @@ _LOGGABLE_VARIABLES = frozenset((
     'AWS_EC2_METADATA_DISABLED',
     'AZURE_CONFIG_DIR',
 ))
+
+
+_URL_USERINFO = re.compile(r'(?<=://)[^/?#\s]*@')
+_URL_QUERY = re.compile(r'\?[^#\s]*')
+
+
+def mask_url_secrets(value):
+    """
+    `https://user:pass@host/x?token=y` -> `https://***@host/x?***`: a URL (WebDAV, S3
+    endpoint) may carry credentials in its user info or query; other values are unchanged
+    """
+    if not isinstance(value, str) or '://' not in value:
+        return value
+    return _URL_QUERY.sub('?***', _URL_USERINFO.sub('***@', value))
 
 
 def should_log_full_credential(key):

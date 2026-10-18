@@ -1,6 +1,7 @@
 import datetime
 
 from ..application import db
+from .encrypted import EncryptedString
 
 
 class OauthFlow(db.Model):
@@ -14,12 +15,12 @@ class OauthFlow(db.Model):
     state = db.Column(db.String, nullable=False, unique=True)
     owner = db.Column(db.String, nullable=False, index=True)
     provider = db.Column(db.String, nullable=False)
-    code_verifier = db.Column(db.String, nullable=False)
+    code_verifier = db.Column(EncryptedString("oauth_flow.code_verifier"), nullable=False)
     # App registration the sign-in started with; copied to the connection
     client_id = db.Column(db.String, nullable=True)
 
     # Set once the authorization code was exchanged
-    token = db.Column(db.String, nullable=True)
+    token = db.Column(EncryptedString("oauth_flow.token"), nullable=True)
     drives = db.Column(db.String, nullable=True) # JSON {drives: [...], account} (older flows: the list only)
 
     created_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)

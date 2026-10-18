@@ -6,7 +6,10 @@ import socket
 import time
 import json
 
+from celery.signals import worker_ready
+
 from .. import celery
+from ..exceptions import error_text
 from ..models import CopyJob, HashsumJob
 from ..application import db
 
@@ -56,6 +59,18 @@ def _ensure_node_ready():
         message = 'The worker on {} cannot run jobs: {}'.format(socket.gethostname(), '; '.join(problems))
         logging.error(message)
         raise RuntimeError(message)
+
+
+@worker_ready.connect
+def _purge_oauth_flows(**kwargs):
+    """Abandoned sign-in flows hold refresh tokens: purge them when the worker starts too"""
+    try:
+        from ..application import app
+        from ..managers import oauth_manager
+        with app.app_context():
+            oauth_manager.purge_expired_flows(force=True)
+    except Exception:
+        logging.exception('Could not purge expired sign-in flows')
 
 
 @celery.task(name='motuz.api.tasks.copy_job', bind=True)
@@ -120,7 +135,7 @@ def copy_job(self, task_id=None):
 
         return {
             'text': '',
-            'error_text': str(e),
+            'error_text': error_text(e),
         }
 
 
@@ -256,7 +271,7 @@ def hashsum_job(self, task_id):
             pass
 
         return {
-            'error_text': str(e),
+            'error_text': error_text(e),
         }
 
 

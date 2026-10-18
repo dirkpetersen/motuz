@@ -5,6 +5,9 @@ alembic
 boto3
 # [redis]: the Redis/Valkey broker of the systemd install (MOTUZ_CELERY_BROKER_URL=redis+socket://...)
 celery[redis]
+# AES-256-GCM and HKDF for the encrypted credential columns (api/utils/secret_box.py) and
+# rclone's password obscuring (api/utils/rclone_obscure.py)
+cryptography
 Flask
 Flask-JWT-Extended
 Flask-Migrate

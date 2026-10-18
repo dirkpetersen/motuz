@@ -4,7 +4,7 @@ from flask import Response, request
 from flask_restx import Resource, Namespace, fields
 
 from ..managers import system_manager
-from ..exceptions import HTTP_EXCEPTION
+from ..exceptions import HTTP_EXCEPTION, public_error
 from ..utils import document_view, image_view
 
 
@@ -30,7 +30,7 @@ class SystemFiles(Resource):
             api.abort(e.code, e.payload)
         except Exception as e:
             logging.exception(e, exc_info=True)
-            api.abort(500, str(e))
+            api.abort(500, public_error(e))
 
 
 @api.route('/files/home/')
@@ -45,7 +45,7 @@ class SystemFilesHome(Resource):
             api.abort(e.code, e.payload)
         except Exception as e:
             logging.exception(e, exc_info=True)
-            api.abort(500, str(e))
+            api.abort(500, public_error(e))
 
 
 view_dto = api.model('system-file-view', {
@@ -74,7 +74,7 @@ class SystemFilesView(Resource):
             api.abort(e.code, e.payload)
         except Exception as e:
             logging.exception(e, exc_info=True)
-            api.abort(500, str(e))
+            api.abort(500, public_error(e))
 
 
 chunk_dto = api.model('system-file-view-chunk-request', {
@@ -118,7 +118,7 @@ class SystemFilesViewChunk(Resource):
             api.abort(e.code, e.payload)
         except Exception as e:
             logging.exception(e, exc_info=True)
-            api.abort(500, str(e))
+            api.abort(500, public_error(e))
 
 
 image_dto = api.model('system-file-view-image-request', {
@@ -154,7 +154,7 @@ class SystemFilesViewImage(Resource):
             api.abort(e.code, e.payload)
         except Exception as e:
             logging.exception(e, exc_info=True)
-            api.abort(500, str(e))
+            api.abort(500, public_error(e))
         headers = image_view.response_headers(path, mime)
         if converted_from:
             headers['X-Motuz-Converted-From'] = converted_from
@@ -191,7 +191,7 @@ class SystemFilesViewDocument(Resource):
             api.abort(e.code, e.payload)
         except Exception as e:
             logging.exception(e, exc_info=True)
-            api.abort(500, str(e))
+            api.abort(500, public_error(e))
         return Response(content, status=200, headers=document_view.response_headers(path, container, size, start),
                         direct_passthrough=True)
 
@@ -209,7 +209,7 @@ class SystemFilesMkdir(Resource):
             api.abort(e.code, e.payload)
         except Exception as e:
             logging.exception(e, exc_info=True)
-            api.abort(500, str(e))
+            api.abort(500, public_error(e))
 
 
 
@@ -225,7 +225,7 @@ class SystemUid(Resource):
             api.abort(e.code, e.payload)
         except Exception as e:
             logging.exception(e, exc_info=True)
-            api.abort(500, str(e))
+            api.abort(500, public_error(e))
 
 
 @api.route('/info/')
@@ -240,4 +240,4 @@ class SystemUid(Resource):
             api.abort(e.code, e.payload)
         except Exception as e:
             logging.exception(e, exc_info=True)
-            api.abort(500, str(e))
+            api.abort(500, public_error(e))

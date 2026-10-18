@@ -149,6 +149,57 @@ def ec2_check():
     sys.exit(1 if failed else 0)
 
 
+@cli.group('secrets')
+def secrets_group():
+    """Encryption of the credential columns (README, "Secrets and backups")"""
+
+
+@secrets_group.command('rotate')
+def secrets_rotate():
+    """Re-encrypts every credential column with the active (first) key of MOTUZ_DATA_KEYS"""
+    from api.models.encrypted import rotate
+    from api.utils.secret_box import SecretBoxError
+    try:
+        counts = rotate(db.session)
+    except SecretBoxError as e:
+        db.session.rollback()
+        raise click.ClickException(str(e))
+    for column, count in counts.items():
+        click.echo('{:<48} {} re-encrypted'.format(column, count))
+
+
+def _secret_column(spec):
+    from api.models.encrypted import encrypted_columns
+    table_name, _, column_name = spec.partition('.')
+    if (table_name, column_name) not in encrypted_columns():
+        raise click.ClickException('{} is not an encrypted column: {}'.format(
+            spec, ', '.join('{}.{}'.format(t, c) for t, c in encrypted_columns())))
+    return db.metadata.tables[table_name], column_name
+
+
+@secrets_group.command('get')
+@click.argument('column')
+@click.argument('row_id', type=int)
+def secrets_get(column, row_id):
+    """Prints the decrypted value of an encrypted column (end-to-end tests, recovery); never log it"""
+    table, column_name = _secret_column(column)
+    click.echo(db.session.execute(db.select(table.c[column_name]).where(table.c.id == row_id)).scalar() or '')
+
+
+@secrets_group.command('set')
+@click.argument('column')
+@click.argument('row_id', type=int)
+def secrets_set(column, row_id):
+    """Encrypts the value read from stdin into an encrypted column (end-to-end tests, recovery)"""
+    table, column_name = _secret_column(column)
+    value = sys.stdin.read()
+    result = db.session.execute(db.update(table).where(table.c.id == row_id).values({column_name: value}))
+    if result.rowcount != 1:
+        db.session.rollback()
+        raise click.ClickException('no row {} in {}'.format(row_id, table.name))
+    db.session.commit()
+
+
 @cli.command('test')
 def test():
     """Runs the unit tests."""

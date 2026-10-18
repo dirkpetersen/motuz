@@ -5,7 +5,7 @@ from flask_restx import Resource, Namespace, fields
 
 from ..managers.auth_manager import token_required
 from ..managers import cloud_connection_manager
-from ..exceptions import HTTP_EXCEPTION
+from ..exceptions import HTTP_EXCEPTION, public_error
 
 class OptionalString(fields.String):
     __schema_type__ = ['string', 'null']
@@ -105,7 +105,7 @@ class ConnectionList(Resource):
             api.abort(e.code, e.payload)
         except Exception as e:
             logging.exception(e, exc_info=True)
-            api.abort(500, str(e))
+            api.abort(500, public_error(e))
 
 
     @api.expect(dto, validate=True)
@@ -120,7 +120,7 @@ class ConnectionList(Resource):
             api.abort(e.code, e.payload)
         except Exception as e:
             logging.exception(e, exc_info=True)
-            api.abort(500, str(e))
+            api.abort(500, public_error(e))
 
 
 
@@ -137,7 +137,7 @@ class ConnectionVerify(Resource):
             api.abort(e.code, e.payload)
         except Exception as e:
             logging.exception(e, exc_info=True)
-            api.abort(500, str(e))
+            api.abort(500, public_error(e))
 
 
 
@@ -175,7 +175,7 @@ class LocalCredentials(Resource):
             api.abort(e.code, e.payload)
         except Exception as e:
             logging.exception(e, exc_info=True)
-            api.abort(500, str(e))
+            api.abort(500, public_error(e))
 
 
 
@@ -195,7 +195,7 @@ class Connection(Resource):
             api.abort(e.code, e.payload)
         except Exception as e:
             logging.exception(e, exc_info=True)
-            api.abort(500, str(e))
+            api.abort(500, public_error(e))
 
 
     @api.expect(dto, validate=True)
@@ -210,7 +210,7 @@ class Connection(Resource):
             api.abort(e.code, e.payload)
         except Exception as e:
             logging.exception(e, exc_info=True)
-            api.abort(500, str(e))
+            api.abort(500, public_error(e))
 
 
     @api.marshal_with(dto, code=200)
@@ -224,4 +224,4 @@ class Connection(Resource):
             api.abort(e.code, e.payload)
         except Exception as e:
             logging.exception(e, exc_info=True)
-            api.abort(500, str(e))
+            api.abort(500, public_error(e))
