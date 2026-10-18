@@ -49,6 +49,14 @@ class TestSecretBox(unittest.TestCase):
         b = secret_box.encrypt(K1, 'c.c', 'same')
         self.assertNotEqual(a, b)
 
+    def test_key_material_is_strict_base64(self):
+        good = base64.b64encode(b'7' * 32).decode()
+        for bad in (good[:10] + '!' + good[11:], good + ' x', good.replace('A', '*')):
+            if bad != good:
+                with self.assertRaises(secret_box.SecretBoxError, msg=bad):
+                    secret_box.parse_keys('k1:' + bad)
+        self.assertEqual(secret_box.parse_keys('k1:' + base64.urlsafe_b64encode(b'7' * 32).decode())[0][0], 'k1')
+
     def test_wrong_key_fails(self):
         other = secret_box.parse_keys('k1:' + base64.b64encode(b'9' * 32).decode())
         sealed = secret_box.encrypt(K1, 'c.c', 'secret')
@@ -269,6 +277,32 @@ class TestEncryptedColumns(DatabaseTest):
             for column, value in self.SECRETS.items():
                 self.assertEqual(getattr(connection, column), value)
             self.assertEqual(db.session.get(OauthFlow, flow.id).code_verifier, 'verifier')
+
+    def test_rotation_keeps_a_value_the_app_changed_meanwhile(self):
+        row_id = self.connection()
+        real_execute = db.session.execute
+        def execute(statement, params=None, **kwargs):
+            # The token broker stores a refreshed token between rotate's read and write
+            if params and params.get('old') is not None and str(statement).startswith('UPDATE cloud_connection SET azure_key'):
+                connection = db.session.get(CloudConnection, row_id)
+                connection.azure_key = 'refreshed'
+                db.session.flush()
+            return real_execute(statement, params, **kwargs)
+        with mock.patch.object(encrypted, 'DATA_KEYS', K2_K1), mock.patch.object(db.session, 'execute', side_effect=execute):
+            counts = encrypted.rotate(db.session)
+        self.assertEqual(counts['cloud_connection.azure_key'], 0, 'not overwritten')
+        with mock.patch.object(encrypted, 'DATA_KEYS', K2_K1):
+            db.session.expire_all()
+            self.assertEqual(db.session.get(CloudConnection, row_id).azure_key, 'refreshed')
+
+    def test_check_finds_values_the_keys_cannot_decrypt(self):
+        row_id = self.connection()
+        self.assertEqual(encrypted.check(db.session), {})
+        with mock.patch.object(encrypted, 'DATA_KEYS', K2):
+            self.assertEqual(encrypted.check(db.session)['cloud_connection.azure_key'], 1, 'a lost key')
+        db.session.execute(text("UPDATE cloud_connection SET sftp_pass = 'plaintext' WHERE id = :id"), {'id': row_id})
+        self.assertEqual(encrypted.check(db.session), {'cloud_connection.sftp_pass': 1}, 'from before encryption')
+        db.session.rollback()
 
     def test_rotation_stops_on_a_value_no_key_decrypts(self):
         self.connection()

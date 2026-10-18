@@ -23,6 +23,7 @@ def list(page_size=50, page=1):
         oauth_manager.purge_expired_flows() # abandoned sign-ins keep refresh tokens (rate limited)
     except Exception:
         logging.exception('Could not purge expired sign-in flows')
+        db.session.rollback() # Else the next query fails with PendingRollbackError
     try:
         query = (CopyJob.query
                  .filter_by(owner=owner)

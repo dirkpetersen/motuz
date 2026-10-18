@@ -36,7 +36,9 @@ class SecretBoxError(Exception):
 
 def _b64d(text):
     try:
-        return base64.urlsafe_b64decode(text + '=' * (-len(text) % 4))
+        # Strict: a mistyped key or a changed value must not decode to something
+        standard = text.replace('-', '+').replace('_', '/')
+        return base64.b64decode(standard + '=' * (-len(standard) % 4), validate=True)
     except (binascii.Error, ValueError):
         raise SecretBoxError('not valid base64') from None
 

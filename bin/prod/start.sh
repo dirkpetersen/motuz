@@ -10,6 +10,14 @@ cd ../..
 # secret), otherwise docker-compose refuses to start
 ./bin/_utils/optional_secrets.sh
 
+# Encrypted credentials need the data key; check before the running stack goes down
+MOTUZ_DOCKER_ROOT=${MOTUZ_DOCKER_ROOT:-/docker}
+if [ ! -s "$MOTUZ_DOCKER_ROOT/secrets/MOTUZ_DATA_KEYS" ]; then
+    echo "No $MOTUZ_DOCKER_ROOT/secrets/MOTUZ_DATA_KEYS: create it with bin/_utils/generate_secrets.sh" >&2
+    echo "(README, \"Secrets and backups\"); nothing was stopped." >&2
+    exit 1
+fi
+
 # Shut down anything that might still be running. --remove-orphans also removes the
 # motuz_nginx container of installs from before Traefik, which would hold ports 80/443.
 docker-compose down --remove-orphans

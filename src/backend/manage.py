@@ -168,6 +168,25 @@ def secrets_rotate():
         click.echo('{:<48} {} re-encrypted'.format(column, count))
 
 
+@secrets_group.command('check')
+def secrets_check():
+    """
+    Fails (exit status 1) if a stored secret cannot be decrypted with MOTUZ_DATA_KEYS: the
+    app runs it before it starts (motuz-app.service, app-entrypoint.sh), so a lost or
+    wrong key stops it with this message instead of failing every connection list
+    """
+    from api.models.encrypted import check
+    unreadable = check(db.session)
+    if unreadable:
+        raise click.ClickException(
+            'stored credentials that MOTUZ_DATA_KEYS cannot decrypt: {}. Restore the key from '
+            'secrets.env of your backup (the old key may stay in the list after the new one), '
+            'or, for a database from before encryption, start with an empty database '
+            '(README, "Secrets and backups").'.format(
+                ', '.join('{} ({})'.format(column, count) for column, count in sorted(unreadable.items()))))
+    click.echo('All stored credentials decrypt with MOTUZ_DATA_KEYS')
+
+
 def _secret_column(spec):
     from api.models.encrypted import encrypted_columns
     table_name, _, column_name = spec.partition('.')

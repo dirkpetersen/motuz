@@ -42,12 +42,35 @@ def encrypted_columns():
             if isinstance(column.type, EncryptedString)]
 
 
+def check(session, keys=None):
+    """
+    {'table.column': number of values that MOTUZ_DATA_KEYS (or `keys`) cannot decrypt}, only
+    the columns with such values: plaintext from before encryption, a value of another
+    key, or a changed value. Empty if every stored secret is readable.
+    """
+    keys = keys or DATA_KEYS
+    quote = session.get_bind().dialect.identifier_preparer.quote
+    unreadable = {}
+    for table_name, column_name in encrypted_columns():
+        context = '{}.{}'.format(table_name, column_name)
+        select = text('SELECT {c} FROM {t} WHERE {c} IS NOT NULL'.format(c=quote(column_name), t=quote(table_name)))
+        for (value,) in session.execute(select):
+            try:
+                secret_box.decrypt(keys, context, value)
+            except secret_box.SecretBoxError:
+                unreadable[context] = unreadable.get(context, 0) + 1
+    return unreadable
+
+
 def rotate(session, keys=None):
     """
     Re-encrypts every value that is not encrypted with the active key (the first of
     `keys`, default MOTUZ_DATA_KEYS) and returns {'table.column': values re-encrypted}.
     Reads and writes the raw column values, so a value of a retired key decrypts with
-    the old key. Raises SecretBoxError on a value no key decrypts (nothing is saved).
+    the old key. Each write only replaces the value it read: a value the app changed
+    meanwhile (e.g. the token broker storing a refreshed OAuth token) is kept, and the
+    app writes it with the active key anyway. Raises SecretBoxError on a value no key
+    decrypts (nothing is saved).
     """
     keys = keys or DATA_KEYS
     active = keys[0][0]
@@ -56,12 +79,13 @@ def rotate(session, keys=None):
     for table_name, column_name in encrypted_columns():
         context = '{}.{}'.format(table_name, column_name)
         select = text('SELECT id, {c} FROM {t} WHERE {c} IS NOT NULL'.format(c=quote(column_name), t=quote(table_name)))
-        update = text('UPDATE {t} SET {c} = :value WHERE id = :id'.format(c=quote(column_name), t=quote(table_name)))
+        update = text('UPDATE {t} SET {c} = :value WHERE id = :id AND {c} = :old'.format(c=quote(column_name), t=quote(table_name)))
         counts[context] = 0
         for row_id, value in session.execute(select).fetchall():
             if secret_box.key_id_of(value) == active:
                 continue
-            session.execute(update, {'id': row_id, 'value': secret_box.encrypt(keys, context, secret_box.decrypt(keys, context, value))})
-            counts[context] += 1
+            result = session.execute(update, {'id': row_id, 'old': value,
+                                              'value': secret_box.encrypt(keys, context, secret_box.decrypt(keys, context, value))})
+            counts[context] += result.rowcount
     session.commit()
     return counts

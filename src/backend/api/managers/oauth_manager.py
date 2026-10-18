@@ -24,7 +24,6 @@ import hashlib
 import json
 import logging
 import secrets
-import subprocess
 import threading
 import time
 import typing
@@ -38,7 +37,7 @@ from ..application import db
 from ..exceptions import *
 from ..models import CloudConnection, OauthFlow
 from ..managers.auth_manager import token_required, get_logged_in_user
-from ..utils.rclone_connection import RCLONE
+from ..utils import rclone_obscure
 
 
 FLOW_TTL = datetime.timedelta(minutes=15)
@@ -617,4 +616,4 @@ def _json(raw):
 
 
 def _reveal(obscured):
-    return subprocess.check_output([RCLONE, 'reveal', obscured]).decode().strip()
+    return rclone_obscure.reveal(obscured)

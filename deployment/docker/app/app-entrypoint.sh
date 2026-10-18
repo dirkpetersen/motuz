@@ -8,4 +8,5 @@ set -e
 source ./load-secrets.sh
 
 python3 manage.py db upgrade
+python3 manage.py secrets check # every stored credential decrypts with MOTUZ_DATA_KEYS
 exec uwsgi --ini wsgi.ini
