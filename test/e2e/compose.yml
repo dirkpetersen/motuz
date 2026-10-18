@@ -47,6 +47,8 @@ secrets:
         file: ${MOTUZ_DOCKER_ROOT:?run test/e2e/run.sh}/secrets/MOTUZ_DATABASE_PASSWORD
     MOTUZ_FLASK_SECRET_KEY:
         file: ${MOTUZ_DOCKER_ROOT:?run test/e2e/run.sh}/secrets/MOTUZ_FLASK_SECRET_KEY
+    MOTUZ_DATA_KEYS:
+        file: ${MOTUZ_DOCKER_ROOT:?run test/e2e/run.sh}/secrets/MOTUZ_DATA_KEYS
     MOTUZ_SMTP_PASSWORD:
         file: ${MOTUZ_DOCKER_ROOT:?run test/e2e/run.sh}/secrets/MOTUZ_SMTP_PASSWORD
     MOTUZ_ONEDRIVE_CLIENT_SECRET:
@@ -93,7 +95,7 @@ services:
         image: fredhutch/motuz_app:latest
         network_mode: host
         environment: *env
-        secrets: [MOTUZ_DATABASE_PASSWORD, MOTUZ_FLASK_SECRET_KEY, MOTUZ_SMTP_PASSWORD, MOTUZ_ONEDRIVE_CLIENT_SECRET]
+        secrets: [MOTUZ_DATABASE_PASSWORD, MOTUZ_FLASK_SECRET_KEY, MOTUZ_DATA_KEYS, MOTUZ_SMTP_PASSWORD, MOTUZ_ONEDRIVE_CLIENT_SECRET]
         volumes: [./users.sh:/users.sh:ro, homes:/home]
         command: ["/users.sh", "/app/src/backend/app-entrypoint.sh"]
 
@@ -101,7 +103,7 @@ services:
         image: fredhutch/motuz_celery:latest
         network_mode: host
         environment: *env
-        secrets: [MOTUZ_DATABASE_PASSWORD, MOTUZ_FLASK_SECRET_KEY, MOTUZ_SMTP_PASSWORD]
+        secrets: [MOTUZ_DATABASE_PASSWORD, MOTUZ_FLASK_SECRET_KEY, MOTUZ_DATA_KEYS, MOTUZ_SMTP_PASSWORD]
         volumes: [./users.sh:/users.sh:ro, homes:/home]
         command: ["/users.sh", "./celery-entrypoint.sh"]
 

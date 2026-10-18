@@ -9,7 +9,9 @@ database, its logs); everything else goes through https://localhost.
 Every suite records checks with check()/skip() and ends with finish(), which prints
 "<passed>/<total> passed[, <n> skipped]" (parsed by run.sh) and sets the exit code."""
 import os
+import pwd
 import re
+import shlex
 import shutil
 import ssl
 import subprocess
@@ -74,6 +76,16 @@ def db_password():
         return f.read()
 
 
+def data_key_material():
+    """The base64 key material of the active entry of MOTUZ_DATA_KEYS (never to appear in a log)"""
+    if TARGET == 'systemd':
+        value = _systemd_setting('secrets.env', 'MOTUZ_DATA_KEYS')
+    else:
+        with open(os.path.join(WORK, 'secrets', 'MOTUZ_DATA_KEYS')) as f:
+            value = f.read()
+    return value.split(',')[0].split(':', 1)[1].strip()
+
+
 def _db_url():
     return f'postgresql://motuz_user:{db_password()}@127.0.0.1:5432/motuz'
 
@@ -88,6 +100,40 @@ def pg_dump():
     if TARGET == 'systemd':
         return subprocess.run(['pg_dump', _db_url()], capture_output=True, text=True).stdout
     return compose('exec', '-T', 'database', 'pg_dump', _db_url()).stdout
+
+
+def manage(*args, stdin=None):
+    """manage.py in the app's environment (settings and secrets loaded): (returncode, stdout, stderr)"""
+    if TARGET == 'systemd':
+        home = os.path.dirname(os.path.dirname(SYSTEMD_CONFIG))
+        account = os.path.basename(home)
+        uid = pwd.getpwnam(account).pw_uid
+        cmd = ['runuser', '-u', account, '--', 'env', f'XDG_RUNTIME_DIR=/run/user/{uid}',
+               'systemd-run', '--user', '--wait', '--pipe', '--quiet',
+               '-p', f'WorkingDirectory={home}/motuz/src/backend', '-E', 'PYTHON_ENVIRONMENT=prod',
+               *[x for name in ('motuz.env', 'secrets.env', 'broker.env')
+                 for x in ('-p', f'EnvironmentFile={SYSTEMD_CONFIG}/{name}')],
+               f'{home}/motuz/venv/bin/python', 'manage.py', *args]
+        result = subprocess.run(cmd, input=stdin, capture_output=True, text=True)
+    else:
+        command = 'cd /app/src/backend && . ./load-secrets.sh >/dev/null && python3 manage.py ' + ' '.join(shlex.quote(a) for a in args)
+        result = compose('exec', '-T', 'app', 'bash', '-c', command, input=stdin)
+    return result.returncode, result.stdout.strip(), result.stderr
+
+
+def stored_secret(column, row_id):
+    """The decrypted value of an encrypted column (cloud_connection.onedrive_token): the
+    database holds only ciphertext (`mzc1.<key id>.<...>`), so psql() cannot read it"""
+    rc, out, err = manage('secrets', 'get', column, str(row_id))
+    if rc != 0:
+        raise RuntimeError(f'manage.py secrets get {column} {row_id} failed: {err[-300:]}')
+    return out
+
+
+def set_stored_secret(column, row_id, value):
+    rc, out, err = manage('secrets', 'set', column, str(row_id), stdin=value)
+    if rc != 0:
+        raise RuntimeError(f'manage.py secrets set {column} {row_id} failed: {err[-300:]}')
 
 
 def service_logs(*services):

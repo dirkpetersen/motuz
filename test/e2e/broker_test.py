@@ -8,7 +8,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from common import BASE, CTX, FAKE_LOG, check, finish, psql, service_logs, set_fake_mode
+from common import BASE, CTX, FAKE_LOG, check, finish, psql, service_logs, set_fake_mode, set_stored_secret, stored_secret
 
 BROKER = 'http://127.0.0.1:5001/internal/oauth/token'
 LOG = FAKE_LOG
@@ -44,7 +44,7 @@ def broker(form, url=BROKER, context=None):
 
 
 def stored_token(cid):
-    return json.loads(psql(f"select onedrive_token from cloud_connection where id={cid}"))
+    return json.loads(stored_secret('cloud_connection.onedrive_token', cid))
 
 
 def upstream_calls():
@@ -104,7 +104,7 @@ check('no upstream calls for rejected requests', upstream_calls() == [], upstrea
 
 # --- concurrent refreshes collapse into one upstream refresh (single-use refresh tokens stay safe)
 tok['expiry'] = '2020-01-01T00:00:00Z'
-psql("update cloud_connection set onedrive_token='{}' where id={}".format(json.dumps(tok), cid))
+set_stored_secret('cloud_connection.onedrive_token', cid, json.dumps(tok))
 reset_upstream_log()
 with concurrent.futures.ThreadPoolExecutor(10) as pool:
     answers = list(pool.map(lambda _: broker({'grant_type': 'refresh_token', 'refresh_token': handle,
@@ -117,7 +117,7 @@ check('refresh token rotated once', stored_token(cid)['refresh_token'] == 'REAL-
 # --- upstream failure is passed through and nothing is stored
 tok = stored_token(cid)
 tok['expiry'] = '2020-01-01T00:00:00Z'
-psql("update cloud_connection set onedrive_token='{}' where id={}".format(json.dumps(tok), cid))
+set_stored_secret('cloud_connection.onedrive_token', cid, json.dumps(tok))
 set_fake_mode('fail')
 status, body = broker({'grant_type': 'refresh_token', 'refresh_token': handle})
 check('upstream invalid_grant passed to rclone', status == 400 and body.get('error') == 'invalid_grant', (status, body))

@@ -7,6 +7,8 @@ cd ${THIS_DIR}
 cd ../..
 
 
+echo "Creating random secrets (database password, Flask key, data encryption key)..."
+./bin/_utils/generate_secrets.sh
 echo "Setting up the database..."
 ./bin/_utils/database_install.sh
 echo "DONE - Setting up the database"

@@ -158,7 +158,7 @@ else
         || warn "this account is not in the group of $(env_get "$SETTINGS" MOTUZ_REDIS_SOCKET): run bin/systemd/install.sh --system-redis as root, then log in again"
 fi
 for key in $REQUIRED_SECRETS; do # generated once (also when an update adds one)
-    [ -n "$(env_get "$SECRETS" "$key")" ] || env_set "$SECRETS" "$key" "$(openssl rand -hex 32)"
+    [ -n "$(env_get "$SECRETS" "$key")" ] || env_set "$SECRETS" "$key" "$(new_secret "$key")"
 done
 for key in $OPTIONAL_SECRETS; do
     grep -q "^$key=" "$SECRETS" || env_set "$SECRETS" "$key" ""
