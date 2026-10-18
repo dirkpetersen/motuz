@@ -434,9 +434,10 @@ class CloudConnectionDialogFields extends React.Component {
                                 <div className='form-text'>
                                     Files from 32 MiB on are uploaded in parts, in parallel. S3
                                     stores no MD5 for such files, so "Check Integrity" is not
-                                    available for copies to this connection. Off: files up to
-                                    5 GiB are uploaded in one piece and keep their MD5; larger
-                                    files are still uploaded in parts.
+                                    available for copies to this connection, unless the parts carry
+                                    CRC32C (Checksum checks below). Off: files up to 5 GiB are
+                                    uploaded in one piece and keep their MD5; larger files are
+                                    still uploaded in parts.
                                 </div>
                             </div>
                         </CloudConnectionField>

@@ -34,6 +34,13 @@ dto = api.model('hashsum-job', {
     'pool_status': fields.String(readonly=True, example='running on c7gn.2xlarge'),
     'progress_error': fields.String(readonly=True),
 
+    # The hash compared (md5, sha256, crc32c; null for older checks), for CRC32C the
+    # files compared by MD5 instead and those that could not be checked (first 100)
+    'hash_type': fields.String(readonly=True, example='crc32c'),
+    'md5_fallback': fields.Integer(readonly=True, example=3),
+    'not_checkable': fields.Integer(readonly=True, example=1),
+    'not_checkable_sample': fields.List(fields.String, readonly=True, example=['data/big.bin']),
+
     'progress_src_tree': fields.String(readonly=True, example='[{title, children}]'),
     'progress_dst_tree': fields.String(readonly=True, example='[{title, children}]'),
 

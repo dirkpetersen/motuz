@@ -525,8 +525,8 @@ class TestRcloneCommand(unittest.TestCase):
         self.assertFalse([a for a in command if 'hashes' in a], 'never a flag')
         _, env = self.command(PLAIN, dst=_s3_connection())
         self.assertNotIn('RCLONE_LOCAL_HASHES', env, 'S3 has no SHA-256 to compare with')
-        self.assertEqual(job_runner.hashsum_type(True, True), 'sha256')
-        for sides in ((True, False), (False, True), (False, False)):
+        self.assertEqual(job_runner.hashsum_type('local', 'local'), 'sha256')
+        for sides in (('local', 'other'), ('other', 'local'), ('other', 'other')):
             self.assertEqual(job_runner.hashsum_type(*sides), 'md5', sides)
 
     def test_hashsum_command_of_each_hash(self):
@@ -546,16 +546,19 @@ class TestRcloneCommand(unittest.TestCase):
         from api.utils.hashsum_job_queue import HashsumJobQueue
         import os, sys, time
         sha = 'a' * 64
-        out = '{}  dir/x.bin\n{}  y.txt\n{}  no-hash.bin\n'.format(sha, 'b' * 32, ' ' * 64)
-        queue = HashsumJobQueue()
-        queue.push([sys.executable, '-c', 'import sys; sys.stdout.write({!r})'.format(out)], dict(os.environ), 'p')
-        for _ in range(100):
-            if queue.hashsum_finished('p'):
-                break
-            time.sleep(0.05)
-        self.assertEqual(queue.hashsum_text('p'), [
-            {'Name': 'dir/x.bin', 'md5chksum': sha}, {'Name': 'y.txt', 'md5chksum': 'b' * 32},
-            {'Name': 'no-hash.bin', 'md5chksum': None}])
+        for hash_type, out, expected in (
+                ('sha256', '{}  dir/x.bin\n{}  no-hash.bin\n'.format(sha, ' ' * 64),
+                 [{'Name': 'dir/x.bin', 'md5chksum': sha}, {'Name': 'no-hash.bin', 'md5chksum': None}]),
+                ('md5', '{}  y.txt\n{}  no-hash.bin\n'.format('b' * 32, ' ' * 32),
+                 [{'Name': 'y.txt', 'md5chksum': 'b' * 32}, {'Name': 'no-hash.bin', 'md5chksum': None}])):
+            queue = HashsumJobQueue()
+            queue.push([sys.executable, '-c', 'import sys; sys.stdout.write({!r})'.format(out)], dict(os.environ), 'p',
+                       hash_type=hash_type)
+            for _ in range(100):
+                if queue.hashsum_finished('p'):
+                    break
+                time.sleep(0.05)
+            self.assertEqual(queue.hashsum_text('p'), expected, hash_type)
 
     def test_installation_defaults_and_hashsum_checkers(self):
         s = settings(checkers='64', extra_flags='--fast-list')

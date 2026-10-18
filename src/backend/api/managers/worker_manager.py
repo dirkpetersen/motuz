@@ -48,6 +48,7 @@ from ..exceptions import *
 from ..models import CloudConnection, CopyJob, HashsumJob, RemoteJob, Worker, WorkerBootstrapToken
 from ..models.worker import utcnow
 from ..utils.email_utils import Email
+from ..utils import job_runner
 from ..utils.rclone_connection import RCLONE, RcloneConnection
 from ..version import VERSION, WORKER_PROTOCOL
 from . import job_routing, overwrite_policy
@@ -780,6 +781,8 @@ def progress(worker, ticket_id, ticket_token, body):
     if remote_job.job_type == 'hashsum':
         if body.get('side') in SIDES:
             remote_job.progress_text = body['side']
+        if job is not None and body.get('hash_type') in job_runner.HASH_TYPES: # chosen on the worker
+            job.hash_type = body['hash_type']
     elif body.get('text') is not None:
         remote_job.progress_text = _text(body.get('text'), MAX_TEXT)
     if remote_job.job_type == 'copy' and job is not None:
@@ -838,6 +841,8 @@ def finish(worker, ticket_id, ticket_token, body):
                     setattr(job, 'progress_{}_error'.format(side), error_text or None)
                 if final == 'SUCCESS' and trees[side] is not None:
                     setattr(job, 'progress_{}_tree'.format(side), json.dumps(trees[side]))
+            if final == 'SUCCESS':
+                job_runner.record_hash_result(job, body)
             if body.get('error_text') and not body.get('src_error_text') and not body.get('dst_error_text'):
                 job.progress_error = _text(body['error_text'], MAX_ERROR_TEXT, tail=True)
         if final != 'STOPPED':
@@ -907,8 +912,10 @@ def _notification(job_type, job, state, trees=None):
         outcome = 'COMPLETED successfully' if state == 'SUCCESS' else 'FAILED'
         return job.notification_email, 'Motuz Copy Job with ID {} {}!'.format(job.id, outcome)
     if state == 'SUCCESS':
-        identical = trees is not None and not trees.get('src') and not trees.get('dst')
-        outcome = 'Files are IDENTICAL!' if identical else 'Files are DIFFERENT!'
+        if trees is None:
+            outcome = 'Files are DIFFERENT!'
+        else:
+            outcome = job_runner.hashsum_outcome(trees.get('src'), trees.get('dst'), job.not_checkable or 0)
         return job.notification_email, 'Motuz Integrity Check Job with ID {} completed! {}'.format(job.id, outcome)
     return job.notification_email, 'Motuz Integrity Check Job with ID {} FAILED!'.format(job.id)
 

@@ -9,6 +9,7 @@ import { sortComparator } from 'utils/arrayUtils.jsx'
 import UriResource from 'components/UriResource.jsx'
 import {jobLocationDetail} from 'utils/jobLocation.js'
 import {describeConfirmed} from 'utils/egressCost.js'
+import {describeHashCheck, notCheckableCount, identicalStatus} from 'utils/hashCheck.js'
 
 class EditHashsumJobDialog extends React.Component {
     constructor(props) {
@@ -93,8 +94,8 @@ class EditHashsumJobDialog extends React.Component {
             statusText = 'DIFFERENT';
             statusColor = 'warning'
         } else if (data.progress_state === 'SUCCESS' && diff === NodeType.IDENTICAL) {
-            statusText = 'IDENTICAL';
-            statusColor = 'success'
+            statusText = identicalStatus(data);
+            statusColor = notCheckableCount(data) > 0 ? 'warning' : 'success'
         } else if (data.progress_state === 'SUCCESS' && diff === NodeType.LOADING) {
             statusText = 'LOADING';
             statusColor = 'primary'
@@ -129,6 +130,11 @@ class EditHashsumJobDialog extends React.Component {
                                     <div className="text-center small text-muted mt-1 job-location">
                                         Runs on: {jobLocationDetail(data)}
                                     </div>
+                                    {describeHashCheck(data) && (
+                                        <div className="text-center small text-muted mt-1 job-hash">
+                                            Compared: {describeHashCheck(data)}
+                                        </div>
+                                    )}
                                     {describeConfirmed(data.egress_estimate) && (
                                         <div className="text-center small text-muted mt-1 job-egress">
                                             AWS egress cost: {describeConfirmed(data.egress_estimate)}
@@ -173,6 +179,18 @@ class EditHashsumJobDialog extends React.Component {
                                         />
                                     </div>
                                 </div>
+                                {notCheckableCount(data) > 0 && (
+                                    <div className="alert alert-warning py-2 mt-3 mb-0 job-not-checkable">
+                                        {notCheckableCount(data)} {notCheckableCount(data) === 1 ? 'file' : 'files'} could
+                                        not be checked (neither side has a comparable checksum: S3 stored no CRC32C and
+                                        no MD5), so {notCheckableCount(data) === 1 ? 'it is' : 'they are'} not in the
+                                        lists above:
+                                        <ul className="mb-0 font-monospace small">
+                                            {(data.not_checkable_sample || []).map(path => <li key={path}>{path}</li>)}
+                                            {notCheckableCount(data) > (data.not_checkable_sample || []).length && <li>...</li>}
+                                        </ul>
+                                    </div>
+                                )}
                                 <div className="row mt-5">
                                     <div className="col-12">
                                         <b>Legend:</b>

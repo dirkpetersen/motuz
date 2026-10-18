@@ -84,12 +84,14 @@ export function canUseCrc32c(provider) {
 
 /**
  * Whether a copy to this destination connection can be checked afterwards (Check
- * Integrity): not for S3 with chunked uploads, whose objects S3 stores without an MD5.
+ * Integrity): not for S3 with chunked uploads, whose objects S3 stores without an MD5,
+ * unless their parts carry CRC32C: S3 then stores a CRC32C of the whole object, which
+ * Check Integrity compares (README "Check Integrity").
  * `connection` is the connection object of the list (null/undefined: local filesystem).
  */
 export function canCheckIntegrity(connection) {
     if (!connection || connection.type !== 's3') {
         return true;
     }
-    return connection.s3_chunked === false;
+    return connection.s3_chunked === false || connection.s3_skip_checks === 'crc32c';
 }

@@ -37,6 +37,7 @@ class EditCopyJobDialog extends React.Component {
         const isUpload = Boolean(data.upload)
         const dst_cloud = cloudMapping[this.props.data['dst_cloud_id'] || 0]
         // S3 stores chunked (multipart) uploads without an MD5, so they cannot be checked
+        // (unless their parts carry CRC32C: canCheckIntegrity)
         const checkIntegrityDisabled = !canCheckIntegrity(dst_cloud)
 
         let color = 'default';
@@ -208,8 +209,9 @@ class EditCopyJobDialog extends React.Component {
                                 {checkIntegrityDisabled && (
                                     <div className="text-start ps-1 check-integrity-note">
                                         Not available: the destination uses chunked uploads, which
-                                        S3 stores without an MD5. Turn off "Chunked uploads" in the
-                                        connection's advanced options for copies you want to check.
+                                        S3 stores without an MD5. Turn off "Chunked uploads", or choose
+                                        CRC32C checksum checks, in the connection's advanced options for
+                                        copies you want to check.
                                     </div>
                                 )}
                             </Fragment>
