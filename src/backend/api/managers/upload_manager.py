@@ -141,14 +141,17 @@ def put_chunk(job_id, index, offset, length, stream):
         except upload_pipes.PipeBusy as e:
             raise HTTP_503_SERVICE_UNAVAILABLE(str(e))
     try:
-        written = upload_pipes.write(key, offset, stream, length)
-    except upload_pipes.RcloneExited:
-        written = None
+        pipe = upload_pipes.write(key, offset, stream, length)
+        exited = False
+    except upload_pipes.RcloneExited as e:
+        pipe, exited = e.pipe, True
     except upload_pipes.PipeError as e:
         raise HTTP_409_CONFLICT({'message': str(e), 'written': e.written})
 
-    if written is None or written == upload_file.size:
-        returncode, error = upload_pipes.finish(key)
+    if exited or pipe.written == upload_file.size:
+        returncode, error = upload_pipes.finish(key, pipe)
+        if returncode is None: # Aborted, or the file was started again meanwhile
+            raise HTTP_409_CONFLICT({'message': error, 'written': upload_pipes.written(key)})
         if returncode == 0 and local:
             try:
                 RcloneConnection().rename_local(owner, _temporary(path, key), path)
@@ -162,7 +165,7 @@ def put_chunk(job_id, index, offset, length, stream):
             upload_file.error = error or 'rclone failed with exit status {}'.format(returncode)
             logging.info('Copy job %s: upload of %r failed: %s', job.id, upload_file.path, upload_file.error)
     else:
-        upload_file.bytes_done = written
+        upload_file.bytes_done = pipe.written
     _update_progress(job)
     db.session.commit()
 

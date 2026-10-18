@@ -44,7 +44,10 @@ class PipeError(Exception):
 
 
 class RcloneExited(PipeError):
-    """rcat exited before the end of the file: finish() returns its error text"""
+    """rcat exited before the end of the file: finish(key, pipe) returns its error text"""
+    def __init__(self, message, pipe):
+        super().__init__(message, pipe.written)
+        self.pipe = pipe
 
 
 class PipeBusy(Exception):
@@ -93,7 +96,8 @@ def written(key):
 def write(key, offset, stream, length):
     """
     Copies `length` bytes of `stream` (the request body) to the pipe of `key`, at
-    `offset` of the file. Returns the bytes written so far. Raises PipeError if there is
+    `offset` of the file. Returns the pipe (its `written`: the bytes so far, for
+    finish()). Raises PipeError if there is
     no pipe, the offset is not where the pipe is, the chunk is too long, the body ends
     early, or RcloneExited if rcat has exited.
     """
@@ -114,22 +118,23 @@ def write(key, offset, stream, length):
             try:
                 pipe.process.stdin.write(data)
             except (BrokenPipeError, ValueError):
-                raise RcloneExited('rclone stopped', pipe.written)
+                raise RcloneExited('rclone stopped', pipe)
             pipe.written += len(data)
             remaining -= len(data)
         pipe.used = time.monotonic()
-        return pipe.written
+        return pipe
 
 
-def finish(key):
+def finish(key, pipe):
     """
-    Closes the pipe of `key` after its last byte and waits for rcat. Returns (exit
-    status, rclone's error text); (None, text) if there is no pipe.
+    Closes `pipe` (of `key`, from write()) after its last byte and waits for rcat.
+    Returns (exit status, rclone's error text); (None, text) if it is no longer the
+    pipe of `key` (aborted, or replaced by a new start of the file).
     """
     with _pipes_lock:
-        pipe = _pipes.pop(key, None)
-    if pipe is None:
-        return None, 'The upload of this file must start again'
+        if _pipes.get(key) is not pipe:
+            return None, 'The upload of this file must start again'
+        del _pipes[key]
     with pipe.lock:
         _close(pipe)
         try:

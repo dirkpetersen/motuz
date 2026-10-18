@@ -5,6 +5,7 @@ stop, the browser going away and the user's scope. rclone rcat is replaced by a 
 that checks the size like rcat does; against SQLite.
 """
 import datetime
+import io
 import os
 import sys
 import tempfile
@@ -291,6 +292,16 @@ class UploadTest(unittest.TestCase):
                          'The browser stopped sending the upload (the tab was closed or the connection was lost). '
                          '1 of 2 files were uploaded.')
         self.assertIsNone(upload_pipes.written((job_id, 0)))
+
+    def test_an_old_pipe_cannot_finish_a_restarted_file(self):
+        # A request still writing when the browser starts the file again
+        key, command = ('test', 1), [sys.executable, '-c', 'import sys; sys.stdin.buffer.read()']
+        upload_pipes.start(key, command, dict(os.environ), 3, by_signal=False)
+        old = upload_pipes.write(key, 0, io.BytesIO(b'ab'), 2)
+        upload_pipes.start(key, command, dict(os.environ), 3, by_signal=False)
+        self.assertIsNone(upload_pipes.finish(key, old)[0])
+        self.assertEqual(upload_pipes.written(key), 0, 'the new pipe is untouched')
+        upload_pipes.abort(key)
 
     def test_idle_pipes_are_aborted(self):
         job_id = self.create([('a.bin', b'0123456789')]).get_json()['job']['id']
