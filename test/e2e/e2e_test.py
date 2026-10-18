@@ -414,15 +414,16 @@ dst_tree = json.loads(hj.get('progress_dst_tree') or '[]')
 dst_names = sorted(n['title'] for n in dst_tree)
 check('hashsum with extra dst files finishes (no infinite loop)', hj['progress_state'] == 'SUCCESS', hj['progress_state'])
 check('hashsum reports differences', dst_names == ['f2.txt', 'zz1.txt', 'zz2.txt'], dst_tree)
-check('hashsum: rclone md5sum got the installation --checkers (celery log)',
-      '--checkers=16 md5sum /home/alice/src' in service_logs('celery'))
+check('hashsum: local to local is rclone hashsum sha256 with the installation --checkers (celery log)',
+      '--checkers=16 hashsum sha256 /home/alice/src' in service_logs('celery'))
 
 status, hj, _ = req('POST', '/api/hashsum-jobs/', A, {'src_resource_path': '/home/alice/src', 'dst_resource_path': '/home/alice/dst-perf',
                                                       'option_download': False, 'performance': {'checkers': 24}})
 check('hashsum with checkers accepted', status == 201 and hj.get('performance') == {'checkers': 24}, (status, hj))
 hj = wait_job('hashsum-jobs', hj['id'], A)
 check('hashsum with checkers SUCCESS and identical', hj['progress_state'] == 'SUCCESS' and json.loads(hj['progress_dst_tree']) == [], hj)
-check("hashsum: rclone md5sum got the job's --checkers (celery log)", '--checkers=24 md5sum /home/alice/dst-perf' in service_logs('celery'))
+# Both sides local: SHA-256 (job_runner.hashsum_type)
+check("hashsum: rclone hashsum sha256 got the job's --checkers (celery log)", '--checkers=24 hashsum sha256 /home/alice/dst-perf' in service_logs('celery'))
 for performance in ({'transfers': 4}, {'checkers': '8 --rc'}, {'checkers': 1000}):
     status, body, _ = req('POST', '/api/hashsum-jobs/', A, {'src_resource_path': '/home/alice/src', 'dst_resource_path': '/home/alice/dst',
                                                             'option_download': False, 'performance': performance})
