@@ -612,7 +612,7 @@ check('worker still processes jobs after stop', hc['progress_state'] == 'SUCCESS
 # privileged AL2027 container); the Docker stack's containers may not mount. The limit is
 # checked where the job is created (the app), the full disk where it runs (celery).
 FULL = '/home/alice/full'
-FILL_REFUSED = re.compile(r'^Copying 234\.4 MiB to /home/alice/full/many would fill its filesystem to \d+% \(limit 90%\): '
+FILL_REFUSED = re.compile(r'^Copying 781\.2 MiB to /home/alice/full/many would fill its filesystem to \d+% \(limit 90%\): '
                           r'[\d.]+ (B|KiB|MiB) of 8\.0 MiB free\. Free space or choose another destination\.$')
 mounted = sh('celery', f"mkdir -p {FULL} && mount -t tmpfs -o size=8m,mode=0755,uid=$(id -u alice),gid=$(id -g alice) "
                        f"motuz-e2e-full {FULL} && test \"$(stat -f -c %T {FULL})\" = tmpfs")
