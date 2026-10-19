@@ -1283,11 +1283,11 @@ Whenever a cloud is involved, both stay MD5: clouds record MD5 (the S3 ETag), no
 "Amazon S3", the only one known to store a CRC32C; other S3 providers keep MD5) and the other a
 local path or Amazon S3, the check is not "Double Check" (download), and rclone knows the hash
 `crc32c` (Motuz asks `rclone hashsum` once per process; the pinned release
-v1.76.0-md5simd.3 does not, a newer build of github.com/dirkpetersen/rclone does), Check
+v1.76.0-md5simd.4 of github.com/dirkpetersen/rclone does, a stock rclone does not), Check
 Integrity runs `rclone hashsum crc32c` on both sides: local files are hashed, S3 returns the
 CRC32C it stored (one HEAD request per object, nothing downloaded, no egress). S3 has a
 full-object CRC32C for uploads with CRC32C parts (Checksum checks "CRC32C instead of MD5 for
-parts" with that build); objects without one (older uploads, MD5 parts, composite multipart
+parts"); objects without one (older uploads, MD5 parts, composite multipart
 checksums) are compared by MD5 instead, both sides, only those files (`rclone md5sum
 --files-from-raw -`, the list on rclone's standard input). A file that has no comparable MD5
 either (e.g. a chunked upload without CRC32C) is **not checkable**: neither identical nor
