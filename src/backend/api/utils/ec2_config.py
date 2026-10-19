@@ -19,10 +19,10 @@ class Ec2ConfigError(ValueError):
 # The rclone release the workers install, the one pinned in
 # deployment/docker/app/Dockerfile (test_ec2_launcher checks that they are the same)
 RCLONE_RELEASES = 'https://github.com/dirkpetersen/rclone/releases/download'
-RCLONE_VERSION = '1.76.0-md5simd.4'
+RCLONE_VERSION = '1.76.0-md5simd.5'
 RCLONE_SHA256 = {
-    'amd64': 'b5b8346aa5ac2c6d473c3ae7703a011b34f4210c5765ebafae0844888bb03e09',
-    'arm64': 'd5e8fd662e68ac4938f2509fb6fad3237d6e9064f9edaa7e93ea42c4bd613f72',
+    'amd64': '64198c0481090896c4626a0c8862d5b3cdb52fe5a5fccec4f60d32b25d0fee28',
+    'arm64': '66af534b569479999a501bfec3f1aca91506c08d74af2cc5660d6eef88a51eb2',
 }
 
 DEFAULT_INSTANCE_TYPES = '1T:c7gn.large,10T:c7gn.2xlarge,*:c7gn.4xlarge'
