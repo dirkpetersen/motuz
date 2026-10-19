@@ -37,6 +37,11 @@ test('Check Integrity: not for chunked uploads to S3', () => {
     assert.equal(canCheckIntegrity({type: 's3', s3_chunked: true}), false);
     assert.equal(canCheckIntegrity({type: 's3'}), false); // the default is chunked
     assert.equal(canCheckIntegrity({type: 's3', s3_chunked: false}), true);
+    // CRC32C parts: S3 stores a CRC32C of the whole object, which the check compares
+    assert.equal(canCheckIntegrity({type: 's3', s3_chunked: true, s3_skip_checks: 'crc32c'}), true);
+    assert.equal(canCheckIntegrity({type: 's3', s3_provider: 'AWS', s3_skip_checks: 'crc32c'}), true);
+    assert.equal(canCheckIntegrity({type: 's3', s3_provider: 'Ceph', s3_skip_checks: 'crc32c'}), false);
+    assert.equal(canCheckIntegrity({type: 's3', s3_skip_checks: 'post_copy'}), false);
     assert.equal(canCheckIntegrity({type: 'azureblob'}), true);
     assert.equal(canCheckIntegrity({type: 'file'}), true);
     assert.equal(canCheckIntegrity(undefined), true);

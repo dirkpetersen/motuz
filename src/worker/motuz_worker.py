@@ -57,7 +57,7 @@ sys.path.insert(0, os.environ.get('MOTUZ_BACKEND_DIR') or os.path.join(HERE, '..
 
 from api.utils import job_runner, space_check  # noqa: E402  (Flask-free, see api/__init__.py)
 from api.utils.abstract_connection import RcloneException  # noqa: E402
-from api.utils.rclone_connection import RCLONE, RcloneConnection, checked_job_env  # noqa: E402
+from api.utils.rclone_connection import RCLONE, RcloneConnection, checked_job_env, crc32c_supported  # noqa: E402
 from api.version import VERSION, WORKER_PROTOCOL  # noqa: E402
 
 EXIT_ERROR = 1
@@ -474,9 +474,13 @@ class JobRun:
 
     def hashsum(self):
         job, options = self.job, self.job.get('options') or {}
-        hash_type = job_runner.hashsum_type(bool(job['src'].get('local')), bool(job['dst'].get('local')))
+        # Decided here, by this worker's rclone (an older one has no CRC32C: MD5)
+        hash_type = job_runner.hashsum_type(
+            *(job_runner.side_kind(bool(job[side].get('local')), job[side].get('type'), job[side].get('s3_provider'))
+              for side in job_runner.HASHSUM_SIDES),
+            download=bool(options.get('download')), crc32c_supported=crc32c_supported)
 
-        def start_side(side, run_id):
+        def start(side, run_id, side_hash, files=None):
             entry = job[side]
             self.connection.md5sum_with_credentials(
                 side_credentials(entry),
@@ -487,20 +491,26 @@ class JobRun:
                 download=bool(options.get('download')),
                 extra_flags=self.ticket.get('rclone_flags') or [],
                 extra_env={**self.config.rclone_env, **checked_job_env(self.ticket.get('rclone_job_env'))},
-                hash_type=hash_type,
+                hash_type=side_hash,
+                files=files,
             )
 
         def tick(side, percent, tree, error_text):
             self.check_shutdown()
-            self.report({'percent': percent, 'side': side, 'error_text': error_text})
+            self.report({'percent': percent, 'side': side, 'error_text': error_text, 'hash_type': hash_type})
 
-        result = job_runner.run_hashsum(self.connection, job['id'], start_side, tick,
-                                        should_stop=lambda: self.stop_requested or self.abandoned or self.shutdown())
-        body = {'state': result['state']}
+        result = job_runner.run_hashsum(self.connection, job['id'], lambda side, run_id: start(side, run_id, hash_type), tick,
+                                        should_stop=lambda: self.stop_requested or self.abandoned or self.shutdown(),
+                                        hash_type=hash_type,
+                                        start_fallback=lambda side, run_id, names: start(side, run_id, 'md5', names))
+        body = {'state': result['state'], 'hash_type': hash_type}
         for side in job_runner.HASHSUM_SIDES:
             for key in ('{}_tree'.format(side), '{}_error_text'.format(side)):
                 if key in result:
                     body[key] = result[key]
+        for key in ('md5_fallback', 'not_checkable'):
+            if key in result:
+                body[key] = result[key]
         return body
 
 

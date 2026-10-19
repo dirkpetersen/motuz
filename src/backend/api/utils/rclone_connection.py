@@ -627,6 +627,7 @@ class RcloneConnection(AbstractConnection):
             download=False,
             performance=None,
             hash_type='md5',
+            files=None,
     ):
         if data is None:
             _local_path(resource_path) # before reading any credentials
@@ -641,6 +642,7 @@ class RcloneConnection(AbstractConnection):
             extra_flags=rclone_tuning.hashsum_flags(performance), # --checkers
             extra_env=rclone_tuning.md5_env(),
             hash_type=hash_type,
+            files=files,
         )
 
 
@@ -655,13 +657,20 @@ class RcloneConnection(AbstractConnection):
             extra_flags=(),
             extra_env=None,
             hash_type='md5',
+            files=None,
     ):
         """
-        Starts `rclone md5sum` (or `rclone hashsum sha256`, `hash_type`, see
+        Starts `rclone md5sum` (or `rclone hashsum sha256|crc32c`, `hash_type`, see
         job_runner.hashsum_type) as `user`; the remote, if any, is `src` in `credentials`
-        (RCLONE_CONFIG_SRC_*) for either side of an integrity check. See
-        copy_with_credentials for the other parameters.
+        (RCLONE_CONFIG_SRC_*) for either side of an integrity check. `files`: only these
+        paths (relative to `resource_path`, a folder), given to rclone on its standard
+        input (--files-from-raw -), never as arguments (job_runner.run_hashsum's MD5
+        fallback). See copy_with_credentials for the other parameters.
         """
+        command_words = _HASHSUM_COMMANDS[hash_type] # KeyError for anything else
+        file_list = None
+        if files is not None:
+            file_list = files_from_list(files)
         credentials = dict(credentials)
         option_exclude_dot_snapshot = '' # HACKHACK: remove once https://github.com/rclone/rclone/issues/2425 is addressed
         option_download = ''
@@ -669,7 +678,9 @@ class RcloneConnection(AbstractConnection):
         if local:
             src = _local_path(resource_path)
             download = False
-            if os.path.isdir(src):
+            # Not with a list of files: rclone refuses other filters with --files-from-raw,
+            # and the list comes from a run that excluded .snapshot already
+            if os.path.isdir(src) and files is None:
                 option_exclude_dot_snapshot = '--exclude=\\.snapshot/'
         else:
             src = 'src:{}'.format(resource_path)
@@ -683,10 +694,11 @@ class RcloneConnection(AbstractConnection):
             '--config=/dev/null',
             *_rate_limit_flags(credentials),
             *_checked_flags(extra_flags),
-            *_HASHSUM_COMMANDS[hash_type],
+            *command_words,
             src,
             option_exclude_dot_snapshot,
-            option_download
+            option_download,
+            *(('--files-from-raw', '-') if file_list is not None else ()),
         ]
 
         command = [cmd for cmd in command if len(cmd) > 0]
@@ -695,7 +707,7 @@ class RcloneConnection(AbstractConnection):
         credentials.update(extra_env or {})
 
         try:
-            self._hashsum_job_queue.push(command, credentials, job_id)
+            self._hashsum_job_queue.push(command, credentials, job_id, stdin=file_list, hash_type=hash_type)
         except RcloneException as e:
             raise RcloneException(str(e))
 
@@ -1036,7 +1048,66 @@ class RcloneConnection(AbstractConnection):
 
 
 # The rclone command of each hash of an integrity check (job_runner.hashsum_type)
-_HASHSUM_COMMANDS = {'md5': ('md5sum',), 'sha256': ('hashsum', 'sha256')}
+_HASHSUM_COMMANDS = {'md5': ('md5sum',), 'sha256': ('hashsum', 'sha256'), 'crc32c': ('hashsum', 'crc32c')}
+
+
+def files_from_list(names):
+    """
+    The --files-from-raw list of `names` (paths relative to the checked folder, as
+    rclone printed them): one per line, no "./" prefix; a name that cannot be one line
+    is an error (job_runner.run_hashsum never passes one: rclone prints them on one line)
+    """
+    lines = []
+    for name in names:
+        if not isinstance(name, str) or not name or any(c in name for c in '\n\r\0'):
+            raise RcloneException('Invalid file name for the MD5 check')
+        lines.append(name)
+    return ''.join(line + '\n' for line in lines).encode('utf-8', errors='surrogateescape')
+
+
+_supported_hashes = {} # rclone path -> frozenset, see supported_hashes
+
+
+def supported_hashes(rclone=None, timeout=30):
+    """
+    The hashes this node's rclone knows (`rclone hashsum` without arguments lists them),
+    cached per rclone path once it answered; an empty set if it could not be asked. Run
+    as this account (no user data, no configuration), like node_check.rclone_version.
+    """
+    rclone = rclone or RCLONE
+    if rclone in _supported_hashes:
+        return _supported_hashes[rclone]
+    try:
+        result = subprocess.run([rclone, '--config=/dev/null', 'hashsum'], stdin=subprocess.DEVNULL,
+                                capture_output=True, text=True, timeout=timeout, env=user_process_env())
+    except (OSError, subprocess.SubprocessError) as e:
+        logging.warning('Could not ask rclone for its hashes: %s', e)
+        return frozenset()
+    hashes = parse_supported_hashes(result.stdout)
+    if result.returncode == 0 and hashes:
+        _supported_hashes[rclone] = hashes
+    return hashes
+
+
+def parse_supported_hashes(output):
+    """The hashes listed in the output of `rclone hashsum` ("Supported hashes are:", "- md5", ...)"""
+    lines = (output or '').splitlines()
+    try:
+        start = next(i for i, line in enumerate(lines) if line.strip() == 'Supported hashes are:')
+    except StopIteration:
+        return frozenset()
+    hashes = set()
+    for line in lines[start + 1:]:
+        match = re.match(r'^\s*-\s*([a-z0-9]+)\s*$', line)
+        if match is None:
+            break
+        hashes.add(match[1])
+    return frozenset(hashes)
+
+
+def crc32c_supported(rclone=None):
+    """rclone can hash CRC32C (and then reads the CRC32C S3 stored, job_runner.hashsum_type)"""
+    return 'crc32c' in supported_hashes(rclone)
 
 # A copy between two local paths (copy_with_credentials)
 LOCAL_TO_LOCAL_ENV = {'RCLONE_LOCAL_HASHES': 'sha256'}

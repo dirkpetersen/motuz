@@ -108,7 +108,7 @@ class NewHashsumJobDialog extends React.Component {
                                                     <b className='form-label'>Double Check</b>
                                                     <ToggleInfo
                                                         className='form-label ms-2'
-                                                        off="Quick check. This option relies on the MD5 sums that clouds record for files at the time of transfer. This check is sufficient for most users, but it is not guaranteed to be correct."
+                                                        off="Quick check. This option relies on the checksums that clouds record for files at the time of transfer: for Amazon S3 the CRC32C (one HEAD request per object, nothing downloaded, no egress), else the MD5. This check is sufficient for most users, but it is not guaranteed to be correct."
                                                         on="Slow check. This option downloads all files from the cloud to ensure that the MD5 match. This option is guaranteed to always be correct."
                                                     />
                                                 </div>

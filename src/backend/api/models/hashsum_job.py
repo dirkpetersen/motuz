@@ -22,6 +22,15 @@ class HashsumJob(db.Model, TimestampMixin):
     # (managers/egress_manager.py); NULL when no AWS fee applies
     egress_estimate = db.Column(db.JSON, nullable=True)
 
+    # The hash compared (utils/job_runner.hashsum_type: md5, sha256 or crc32c); NULL
+    # for checks from before it was stored (md5, or sha256 between local paths)
+    hash_type = db.Column(db.String, nullable=True)
+    # A CRC32C check: files compared by MD5 instead (S3 stored no CRC32C), and those
+    # without a comparable MD5 either (neither identical nor different) with the first paths
+    md5_fallback = db.Column(db.Integer, nullable=True)
+    not_checkable = db.Column(db.Integer, nullable=True)
+    not_checkable_sample = db.Column(db.JSON, nullable=True)
+
     owner = db.Column(db.String)
 
     progress_state = db.Column(db.String, nullable=True)

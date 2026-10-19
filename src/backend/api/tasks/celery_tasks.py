@@ -13,10 +13,11 @@ from ..exceptions import error_text
 from ..models import CopyJob, HashsumJob
 from ..application import db
 
-from ..utils.rclone_connection import RcloneConnection
+from ..utils.rclone_connection import RcloneConnection, crc32c_supported
 from ..utils.email_utils import Email
 from ..utils import job_runner
 from ..utils import node_check
+from ..utils import s3_providers
 from ..managers import overwrite_policy
 
 
@@ -222,6 +223,7 @@ def hashsum_job(self, task_id):
         hashsum_job.progress_execution_time = int(time.time() - start_time)
         hashsum_job.progress_src_error = result['src_error_text']
         hashsum_job.progress_dst_error = result['dst_error_text']
+        job_runner.record_hash_result(hashsum_job, result)
 
         try:
             hashsum_job.progress_src_tree = json.dumps(progress_src_tree)
@@ -237,10 +239,8 @@ def hashsum_job(self, task_id):
 
         db.session.commit()
 
-        if len(progress_src_tree) == 0 and len(progress_dst_tree) == 0:
-            integrity_outcome_message = "Files are IDENTICAL!"
-        else:
-            integrity_outcome_message = "Files are DIFFERENT!"
+        integrity_outcome_message = job_runner.hashsum_outcome(
+            progress_src_tree, progress_dst_tree, hashsum_job.not_checkable or 0)
 
         Email.send_notification(
             to=hashsum_job.notification_email,
@@ -299,10 +299,18 @@ def ec2_dispatch():
 
 
 def _hashsum_job_run(self, hashsum_job, connection, start_time):
-    """md5sum of both sides (job_runner.run_hashsum), writing progress once per second"""
-    hash_type = job_runner.hashsum_type(hashsum_job.src_cloud is None, hashsum_job.dst_cloud is None)
+    """md5sum (or hashsum_type's hash) of both sides (job_runner.run_hashsum), writing progress once per second"""
+    def kind(side):
+        cloud = getattr(hashsum_job, f'{side}_cloud')
+        provider = s3_providers.effective_provider(cloud) if getattr(cloud, 'type', None) == 's3' else None
+        return job_runner.side_kind(cloud is None, getattr(cloud, 'type', None), provider)
 
-    def start_side(side, run_id):
+    hash_type = job_runner.hashsum_type(kind('src'), kind('dst'), download=bool(hashsum_job.option_download),
+                                        crc32c_supported=crc32c_supported)
+    hashsum_job.hash_type = hash_type
+    db.session.commit()
+
+    def start(side, run_id, side_hash, files=None):
         connection.md5sum(
             data=getattr(hashsum_job, f'{side}_cloud'),
             resource_path=getattr(hashsum_job, f'{side}_resource_path'),
@@ -310,7 +318,8 @@ def _hashsum_job_run(self, hashsum_job, connection, start_time):
             job_id=run_id,
             download=hashsum_job.option_download,
             performance=hashsum_job.performance,
-            hash_type=hash_type,
+            hash_type=side_hash,
+            files=files,
         )
 
     def tick(side, percent, tree, error_text):
@@ -323,4 +332,8 @@ def _hashsum_job_run(self, hashsum_job, connection, start_time):
             f'progress_{side}_error_text': error_text,
         })
 
-    return job_runner.run_hashsum(connection, hashsum_job.id, start_side, tick)
+    return job_runner.run_hashsum(
+        connection, hashsum_job.id, lambda side, run_id: start(side, run_id, hash_type), tick,
+        hash_type=hash_type,
+        start_fallback=lambda side, run_id, names: start(side, run_id, 'md5', names),
+    )

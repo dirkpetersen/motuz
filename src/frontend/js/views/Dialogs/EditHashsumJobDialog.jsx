@@ -9,6 +9,8 @@ import { sortComparator } from 'utils/arrayUtils.jsx'
 import UriResource from 'components/UriResource.jsx'
 import {jobLocationDetail} from 'utils/jobLocation.js'
 import {describeConfirmed} from 'utils/egressCost.js'
+import {describeHashCheck, notCheckableCount, identicalStatus} from 'utils/hashCheck.js'
+import {compareTrees, NodeType} from 'utils/treeDiff.js'
 
 class EditHashsumJobDialog extends React.Component {
     constructor(props) {
@@ -93,8 +95,8 @@ class EditHashsumJobDialog extends React.Component {
             statusText = 'DIFFERENT';
             statusColor = 'warning'
         } else if (data.progress_state === 'SUCCESS' && diff === NodeType.IDENTICAL) {
-            statusText = 'IDENTICAL';
-            statusColor = 'success'
+            statusText = identicalStatus(data);
+            statusColor = notCheckableCount(data) > 0 ? 'warning' : 'success'
         } else if (data.progress_state === 'SUCCESS' && diff === NodeType.LOADING) {
             statusText = 'LOADING';
             statusColor = 'primary'
@@ -129,6 +131,11 @@ class EditHashsumJobDialog extends React.Component {
                                     <div className="text-center small text-muted mt-1 job-location">
                                         Runs on: {jobLocationDetail(data)}
                                     </div>
+                                    {describeHashCheck(data) && (
+                                        <div className="text-center small text-muted mt-1 job-hash">
+                                            Compared: {describeHashCheck(data)}
+                                        </div>
+                                    )}
                                     {describeConfirmed(data.egress_estimate) && (
                                         <div className="text-center small text-muted mt-1 job-egress">
                                             AWS egress cost: {describeConfirmed(data.egress_estimate)}
@@ -173,6 +180,18 @@ class EditHashsumJobDialog extends React.Component {
                                         />
                                     </div>
                                 </div>
+                                {notCheckableCount(data) > 0 && (
+                                    <div className="alert alert-warning py-2 mt-3 mb-0 job-not-checkable">
+                                        {notCheckableCount(data)} {notCheckableCount(data) === 1 ? 'file' : 'files'} could
+                                        not be checked (neither side has a comparable checksum: S3 stored no CRC32C and
+                                        no MD5), so {notCheckableCount(data) === 1 ? 'it is' : 'they are'} not in the
+                                        lists above:
+                                        <ul className="mb-0 font-monospace small">
+                                            {(data.not_checkable_sample || []).map(path => <li key={path}>{path}</li>)}
+                                            {notCheckableCount(data) > (data.not_checkable_sample || []).length && <li>...</li>}
+                                        </ul>
+                                    </div>
+                                )}
                                 <div className="row mt-5">
                                     <div className="col-12">
                                         <b>Legend:</b>
@@ -297,67 +316,7 @@ class EditHashsumJobDialog extends React.Component {
     }
 
     _compareTrees(treeLeft, treeRight) {
-        treeLeft = treeLeft || []
-        treeRight = treeRight || []
-
-        let diff = NodeType.IDENTICAL;
-
-        let i = 0
-        let j = 0
-        while (i < treeLeft.length && j < treeRight.length) {
-            if (treeLeft[i].title === treeRight[j].title) {
-                if (this._isLeaf(treeLeft[i]) && this._isLeaf(treeRight[j])) {
-                    if (!treeLeft[i].hash || !treeRight[i].hash) {
-                        treeLeft[i].type = treeRight[j].type = 'missing';
-                        diff = Math.max(diff, NodeType.MISSING)
-                    } else if (treeLeft[i].hash !== treeRight[j].hash) {
-                        treeLeft[i].type = treeRight[j].type = 'modify';
-                        diff = Math.max(diff, NodeType.MODIFY)
-                    } else {
-                        // The leafs are the same
-                    }
-                } else if (this._isLeaf(treeLeft[i]) || this._isLeaf(treeRight[j])) {
-                    treeLeft[i].type = treeRight[j].type = 'modify';
-                    diff = Math.max(diff, NodeType.MODIFY)
-                } else { // Both non leafs
-                    const subtreeDiff = this._compareTrees(treeLeft[i].children, treeRight[j].children)
-                    if (subtreeDiff === NodeType.MODIFY) {
-                        treeLeft[i].type = treeRight[j].type = 'modify';
-                    } else if (subtreeDiff === NodeType.MISSING) {
-                        treeLeft[i].type = treeRight[j].type = 'missing';
-                    }
-                    diff = Math.max(diff, subtreeDiff)
-                }
-            } else if (treeLeft[i].title < treeRight[j].title) {
-                treeLeft[i].type = 'insert'
-                treeRight.splice(i, 0, {type: 'hidden'})
-                diff = Math.max(diff, NodeType.MODIFY)
-            } else {
-                treeRight[j].type = 'insert'
-                treeLeft.splice(j, 0, {type: 'hidden'})
-                diff = Math.max(diff, NodeType.MODIFY)
-            }
-            i++; j++;
-        }
-
-        while (i < treeLeft.length) {
-            treeLeft[i].type = 'insert'
-            treeRight.splice(i, 0, {type: 'hidden'})
-            diff = Math.max(diff, NodeType.MODIFY)
-            i++; j++;
-        }
-
-        while (j < treeRight.length) {
-            treeRight[j].type = 'insert'
-            treeLeft.splice(j, 0, {type: 'hidden'})
-            diff = Math.max(diff, NodeType.MODIFY)
-            i++; j++;
-        }
-        return diff;
-    }
-
-    _isLeaf(treeNode) {
-        return treeNode.isLeaf
+        return compareTrees(treeLeft, treeRight) // utils/treeDiff.js, marks the nodes in place
     }
 
     _scheduleRefresh() {
@@ -389,13 +348,6 @@ EditHashsumJobDialog.defaultProps = {
 
 EditHashsumJobDialog.initialState = {
     expandedKeys: [],
-}
-
-const NodeType = {
-    LOADING: -1,
-    IDENTICAL: 0,
-    MODIFY: 1,
-    MISSING: 2,
 }
 
 import {connect} from 'react-redux';
