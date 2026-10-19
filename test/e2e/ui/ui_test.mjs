@@ -342,7 +342,13 @@ if (PHASE === 'paste') {
     // sends in chunks (actions/uploadActions.jsx). A synthetic DataTransfer has files but no
     // folder entries, as in browsers without webkitGetAsEntry.
     await flow('desktop upload', async () => {
-        const dropFiles = () => page.evaluate(() => {
+        // the pane may be reloading after a finished job: wait for the target row first
+        const dropFiles = async () => {
+            await page.locator('.grid-files').nth(1).getByText('ui-dst', { exact: true }).waitFor({ timeout: 15000 });
+            await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => {});
+            return dropOnto();
+        };
+        const dropOnto = () => page.evaluate(() => {
             const dt = new DataTransfer();
             dt.items.add(new File(['hello from the desktop\n'], 'desktop-a.txt', { type: 'text/plain' }));
             dt.items.add(new File([new Uint8Array(9 << 20).fill(7)], 'desktop-big.bin'));
