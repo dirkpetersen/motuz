@@ -576,11 +576,11 @@ class RcloneConnection(AbstractConnection):
             option_exclude_dot_snapshot,
             '--contimeout=5m',
             *_checked_flags(extra_flags),
-            *local_flags,
             'copyto',
             src,
             dst,
             option_copy_links,
+            *local_flags,
             '--progress',
             '--stats', '2s',
         ]

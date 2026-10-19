@@ -539,7 +539,7 @@ class TestRcloneCommand(unittest.TestCase):
             command, _ = self.command(PLAIN, dst=None)
             self.assertIn('--metadata', command)
             self.assertIn('--links', command)
-            self.assertLess(command.index('--metadata'), command.index('copyto'))
+            self.assertGreater(command.index('--metadata'), command.index('copyto') + 2, 'after the paths')
             self.assertNotIn('--local-metadata-restore-special-bits', command)
             self.assertEqual(rclone_connection.local_to_local_flags(copy_links=True), ['--metadata'])
             command, _ = self.command(PLAIN, dst=_s3_connection())
