@@ -476,7 +476,8 @@ class JobRun:
         job, options = self.job, self.job.get('options') or {}
         # Decided here, by this worker's rclone (an older one has no CRC32C: MD5)
         hash_type = job_runner.hashsum_type(
-            *(job_runner.side_kind(bool(job[side].get('local')), job[side].get('type'), job[side].get('s3_provider'))
+            *(job_runner.side_kind(bool(job[side].get('local')), job[side].get('type'), job[side].get('s3_provider'),
+                                   job[side].get('s3_skip_checks'))
               for side in job_runner.HASHSUM_SIDES),
             download=bool(options.get('download')), crc32c_supported=crc32c_supported)
 

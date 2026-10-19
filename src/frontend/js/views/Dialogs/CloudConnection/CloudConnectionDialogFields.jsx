@@ -3,7 +3,7 @@ import GdriveSection from 'views/Dialogs/CloudConnection/GdriveSection.jsx';
 import LocalCredentialPicker, { describeProfile, profileKey } from 'views/Dialogs/CloudConnection/LocalCredentialPicker.jsx';
 import React from 'react';
 import classnames from 'classnames';
-import { S3_PROVIDERS, DEFAULT_S3_PROVIDER, NON_AWS_DEFAULT_REGION, isAws, canSkipChecks, canUseCrc32c } from 'utils/s3Providers.js';
+import { S3_PROVIDERS, DEFAULT_S3_PROVIDER, NON_AWS_DEFAULT_REGION, isAws, canSkipChecks, canUseCrc32c, defaultSkipChecks } from 'utils/s3Providers.js';
 
 // rclone's public OneDrive app (oauth_manager.RCLONE_CLIENT_ID)
 const RCLONE_ONEDRIVE_CLIENT_ID = 'b15665d9-eda6-4092-8539-0eec376afd59';
@@ -298,9 +298,15 @@ class CloudConnectionDialogFields extends React.Component {
     }
 
     _s3SkipChecks() {
+        const provider = this._s3Provider();
+        if (this.state.s3SkipChecks === null && !this.props.isSanitized) {
+            // A new connection that the user has not chosen for: CRC32C on Amazon S3,
+            // rclone's full checks elsewhere (also after switching the provider)
+            return defaultSkipChecks(provider);
+        }
         const value = this.state.s3SkipChecks === null ? (this.props.data.s3_skip_checks || '') : this.state.s3SkipChecks;
         // CRC32C is not offered for this provider: the closest choice that is
-        return value === 'crc32c' && !canUseCrc32c(this._s3Provider()) ? 'post_copy' : value;
+        return value === 'crc32c' && !canUseCrc32c(provider) ? 'post_copy' : value;
     }
 
     // Directly below Type: which S3 implementation (rclone's provider)
@@ -468,6 +474,13 @@ class CloudConnectionDialogFields extends React.Component {
                                         CPU, so uploads are about as fast as without any checks
                                         (needs Motuz's rclone build; otherwise the parts keep their
                                         MD5).
+                                        {provider === 'Ceph' &&
+                                            <span className='s3-crc32c-ceph-note'>
+                                                {' '}Ceph supports it from Tentacle (20.2) on. With an
+                                                older Ceph, chunked uploads fail at their first part
+                                                (files sent in one piece are still checked by MD5).
+                                            </span>
+                                        }
                                     </div>
                                 }
                                 {skipChecks === 'all' &&
@@ -1171,7 +1184,7 @@ CloudConnectionDialogFields.initialState = {
     autoName: null, // the name the sign-in suggested (the chosen drive)
     oauthManual: false, // OneDrive / Google Drive: "Advanced: paste a token" is open
     s3Provider: null, // S3 provider as chosen, null = data.s3_provider or AWS
-    s3SkipChecks: null, // s3_skip_checks as chosen, null = data.s3_skip_checks
+    s3SkipChecks: null, // s3_skip_checks as chosen, null = data.s3_skip_checks (new: defaultSkipChecks)
 }
 
 

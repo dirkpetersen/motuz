@@ -662,6 +662,7 @@ if (PHASE === 'paste') {
         await waitForListed('ui-s3-keys');
         const keys = await connection('ui-s3-keys');
         check('S3 manual: connection created with the keys', keys && keys.subtype === 'key' && keys.s3_access_key_id === 'AKIAIOSFODNN7EXAMPLE', keys);
+        check('S3 manual: a new Amazon S3 connection uses CRC32C part checksums', keys && keys.s3_skip_checks === 'crc32c', keys);
 
         // A profile from the home directory
         await newConnection('s3');

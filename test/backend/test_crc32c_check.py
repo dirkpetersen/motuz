@@ -54,9 +54,13 @@ class TestHashType(unittest.TestCase):
     def test_kinds(self):
         self.assertEqual(job_runner.side_kind(True, 's3', 'AWS'), 'local')
         self.assertEqual(job_runner.side_kind(False, 's3', 'AWS'), 's3')
-        # only Amazon S3 stores a CRC32C: other providers would answer a HEAD per object for nothing
+        # Amazon S3 always, Ceph with CRC32C parts: other providers would answer a HEAD per object for nothing
+        self.assertEqual(job_runner.side_kind(False, 's3', 'Ceph', 'crc32c'), 's3')
+        self.assertEqual(job_runner.side_kind(False, 's3', 'AWS', None), 's3')
         for provider in ('Ceph', 'Minio', 'Other', None):
             self.assertEqual(job_runner.side_kind(False, 's3', provider), 'other', provider)
+            self.assertEqual(job_runner.side_kind(False, 's3', provider, 'post_copy'), 'other', provider)
+        self.assertEqual(job_runner.side_kind(False, 's3', 'Minio', 'crc32c'), 'other')
         self.assertEqual(job_runner.side_kind(False, 'azureblob', 'AWS'), 'other')
         self.assertEqual(job_runner.side_kind(False, None), 'other')
 
@@ -346,7 +350,8 @@ class TestWorkerReports(WorkerTestBase):
         worker, _ = self.worker()
         ticket = self.claim(worker)
         # the worker decides from them (s3_provider: as rclone gets it, AWS for this old-style connection)
-        self.assertEqual((ticket['job']['dst']['type'], ticket['job']['dst']['s3_provider']), ('s3', 'AWS'))
+        self.assertEqual((ticket['job']['dst']['type'], ticket['job']['dst']['s3_provider'],
+                          ticket['job']['dst']['s3_skip_checks']), ('s3', 'AWS', None))
         self.assertNotIn('s3_provider', ticket['job']['src'])
         worker_manager.progress(worker, ticket['ticket_id'], ticket['ticket_token'], {'percent': 3, 'hash_type': 'crc32c'})
         self.assertEqual(db.session.get(HashsumJob, job.id).hash_type, 'crc32c')
@@ -368,13 +373,14 @@ class TestWorkerAgentHashsum(unittest.TestCase):
         import motuz_worker
         cls.agent = motuz_worker
 
-    def run_job(self, supported, provider='AWS'):
+    def run_job(self, supported, provider='AWS', skip_checks=None):
         args = mock.Mock(central_url=None, bootstrap_token='mzb1.1.x', bootstrap_token_file=None, once=False)
         config = self.agent.Config({'MOTUZ_CENTRAL_URL': 'https://motuz.test'}, args)
         ticket = {'ticket_id': 1, 'ticket_token': 't', 'progress_interval': 1, 'job': {
             'type': 'hashsum', 'id': 3, 'owner': 'alice', 'options': {'download': False},
             'src': {'local': True, 'path': '/home/alice/a'},
-            'dst': {'local': False, 'remote': 'src', 'type': 's3', 's3_provider': provider, 'path': 'b/a',
+            'dst': {'local': False, 'remote': 'src', 'type': 's3', 's3_provider': provider,
+                    's3_skip_checks': skip_checks, 'path': 'b/a',
                     'rclone_env': {'RCLONE_CONFIG_SRC_TYPE': 's3'}}}}
         central = mock.Mock()
         central.call.return_value = (200, {'action': 'continue'})
@@ -413,3 +419,8 @@ class TestWorkerAgentHashsum(unittest.TestCase):
         calls, body = self.run_job(True, provider='Ceph')
         self.assertEqual([c[1] for c in calls], ['md5', 'md5'])
         self.assertEqual(body['hash_type'], 'md5')
+
+    def test_ceph_with_crc32c_parts_uses_crc32c(self):
+        calls, body = self.run_job(True, provider='Ceph', skip_checks='crc32c')
+        self.assertEqual([c[1] for c in calls[:2]], ['crc32c', 'crc32c'])
+        self.assertEqual(body['hash_type'], 'crc32c')

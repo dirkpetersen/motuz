@@ -1220,15 +1220,20 @@ Advanced options:
   uploaded in parts and cannot be checked).
 - **Checksum checks** (Amazon S3 and Ceph only, which verify the `Content-MD5` of every upload
   request themselves):
-  - *Full checks* (default): rclone also compares the MD5 of every file after the copy.
+  - *Full checks* (the default for new Ceph connections): rclone also compares the MD5 of every
+    file after the copy.
   - *Skip rclone's check after the copy* (recommended for speed, `--ignore-checksum` for copies to
     this connection): S3 still verifies every request. Measured on 8 vCPUs, AWS us-west-2,
     100 MB files: 1.1 GB/s with rclone's defaults, 2.2 GB/s with chunked uploads and this option,
     because about two thirds of rclone's CPU time went into MD5.
-  - *CRC32C instead of MD5 for parts* (Amazon S3 only): like the previous option, and each part of
-    a chunked upload carries its CRC32C instead of its MD5 (`RCLONE_S3_PART_CHECKSUM=crc32c`). S3
-    verifies it just the same and stores a CRC32C of the object (with Motuz's rclone build a
-    full-object one, which Check Integrity compares); it costs almost no CPU.
+  - *CRC32C instead of MD5 for parts* (the default for new Amazon S3 connections; Amazon S3 and
+    Ceph): like the previous option, and each part of a chunked upload carries its CRC32C instead
+    of its MD5 (`RCLONE_S3_PART_CHECKSUM=crc32c`). S3 verifies it just the same and stores a
+    CRC32C of the object (with Motuz's rclone build a full-object one, which Check Integrity
+    compares); it costs almost no CPU. Ceph verifies it from Tentacle (20.2) on, so new Ceph
+    connections do not start with it: with Reef or Squid a chunked upload fails at its first
+    part (rclone: "UploadPart response ... has no CRC32C"), uploads in one piece are still
+    verified by their `Content-MD5`. Existing connections keep their setting.
   - *Skip all checks* (not recommended): additionally no checksum with the parts
     (`RCLONE_S3_PART_CHECKSUM=none`) and `AWS_REQUEST_CHECKSUM_CALCULATION=when_required`, so S3
     no longer verifies uploads sent in one piece either.
@@ -1280,8 +1285,8 @@ of 100 MB) between two local folders, 16 transfers, median of 3 runs:
 Whenever a cloud is involved, both stay MD5: clouds record MD5 (the S3 ETag), not SHA-256.
 
 **Check Integrity of S3: CRC32C.** When one side of a check is an Amazon S3 connection (provider
-"Amazon S3", the only one known to store a CRC32C; other S3 providers keep MD5) and the other a
-local path or Amazon S3, the check is not "Double Check" (download), and rclone knows the hash
+"Amazon S3") or a Ceph connection with "CRC32C instead of MD5 for parts" (other S3 providers keep
+MD5) and the other a local path or such S3, the check is not "Double Check" (download), and rclone knows the hash
 `crc32c` (Motuz asks `rclone hashsum` once per process; the pinned release
 v1.76.0-md5simd.5 of github.com/dirkpetersen/rclone does, a stock rclone does not), Check
 Integrity runs `rclone hashsum crc32c` on both sides: local files are hashed, S3 returns the
@@ -1293,7 +1298,8 @@ checksums) are compared by MD5 instead, both sides, only those files (`rclone md
 either (e.g. a chunked upload without CRC32C) is **not checkable**: neither identical nor
 different, listed separately in the job details and counted in the notification. The job
 details show the hash used (`hash_type`: `crc32c`, `md5`, `sha256`). Remote workers decide by
-their own rclone (`WORKER_PROTOCOL` 5); with an older rclone the check is MD5 as before.
+their own rclone (`WORKER_PROTOCOL` 6: the ticket also has the sides' `s3_skip_checks`); with an
+older rclone the check is MD5 as before.
 Measured against AWS us-west-2 with the exact command lines Motuz builds: objects with
 CRC32C parts (single-part and 3-part multipart) matched their local files by CRC32C, MD5-part
 uploads by MD5, a byte flipped in a local file was reported as different in both cases, and a

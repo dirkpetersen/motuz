@@ -38,9 +38,12 @@ class TestProviderList(unittest.TestCase):
         self.assertEqual(len(values), len(set(values)))
         self.assertIn('Minio', values)
         self.assertEqual(s3_providers.CHECK_SKIPPING_PROVIDERS, {'AWS', 'Ceph'})
-        self.assertEqual(s3_providers.CRC32C_PROVIDERS, {'AWS'})
+        self.assertEqual(s3_providers.CRC32C_PROVIDERS, {'AWS', 'Ceph'})
+        self.assertEqual(s3_providers.CRC32C_DEFAULT_PROVIDERS, {'AWS'})
         with open(os.path.join(REPO, 'src', 'frontend', 'js', 'utils', 's3Providers.js')) as f:
-            self.assertIn("export const CRC32C_PROVIDERS = ['AWS'];", f.read())
+            js = f.read()
+        self.assertIn("export const CRC32C_PROVIDERS = ['AWS', 'Ceph'];", js)
+        self.assertIn("export const CRC32C_DEFAULT_PROVIDERS = ['AWS'];", js)
 
     def test_frontend_has_the_same_list(self):
         with open(os.path.join(REPO, 'src', 'frontend', 'js', 'utils', 's3Providers.js')) as f:
@@ -87,11 +90,12 @@ class TestDestinationChecks(unittest.TestCase):
                          (['--ignore-checksum'], {'AWS_REQUEST_CHECKSUM_CALCULATION': 'when_required',
                                                   'RCLONE_S3_PART_CHECKSUM': 'none'}))
 
-    def test_crc32c_only_on_aws(self):
-        self.assertEqual(destination_checks(s3(s3_provider='AWS', s3_skip_checks='crc32c')),
-                         (['--ignore-checksum'], {'RCLONE_S3_PART_CHECKSUM': 'crc32c'}))
+    def test_crc32c_only_on_aws_and_ceph(self):
+        for provider in ('AWS', 'Ceph'):
+            self.assertEqual(destination_checks(s3(s3_provider=provider, s3_skip_checks='crc32c')),
+                             (['--ignore-checksum'], {'RCLONE_S3_PART_CHECKSUM': 'crc32c'}), provider)
         # stored before the provider changed: full checks, never a silent weaker one
-        self.assertEqual(destination_checks(s3(s3_provider='Ceph', s3_skip_checks='crc32c')), ([], {}))
+        self.assertEqual(destination_checks(s3(s3_provider='Minio', s3_skip_checks='crc32c')), ([], {}))
 
     def test_only_aws_and_ceph(self):
         for provider in ('Minio', 'Other', None):
@@ -162,12 +166,32 @@ class TestValidation(unittest.TestCase):
         self.assertIsNone(self.apply(s3_provider='Minio', s3_skip_checks='all').s3_skip_checks)
         self.assertIsNone(self.apply(s3_provider='AWS', s3_skip_checks='').s3_skip_checks)
 
-    def test_crc32c_only_for_aws(self):
+    def test_crc32c_only_for_aws_and_ceph(self):
         self.assertEqual(self.apply(s3_provider='AWS', s3_skip_checks='crc32c').s3_skip_checks, 'crc32c')
-        with self.assertRaises(HTTP_400_BAD_REQUEST):
-            self.apply(s3_provider='Ceph', s3_skip_checks='crc32c')
+        self.assertEqual(self.apply(s3_provider='Ceph', s3_skip_checks='crc32c').s3_skip_checks, 'crc32c')
         # providers that skip no checks drop it like the others
         self.assertIsNone(self.apply(s3_provider='Minio', s3_skip_checks='crc32c').s3_skip_checks)
+        with mock.patch.object(s3_providers, 'CHECK_SKIPPING_PROVIDERS', frozenset(('AWS', 'Ceph', 'Minio'))):
+            with self.assertRaises(HTTP_400_BAD_REQUEST):
+                self.apply(s3_provider='Minio', s3_skip_checks='crc32c')
+
+    def test_new_connections_default_to_crc32c_on_aws_only(self):
+        def new(**columns):
+            connection = s3(**columns)
+            cloud_connection_manager._apply_s3_rules(connection, new=True)
+            return connection.s3_skip_checks
+        self.assertEqual(new(s3_provider='AWS', s3_skip_checks=None), 'crc32c')
+        self.assertEqual(new(s3_provider=None, s3_skip_checks=None), 'crc32c') # AWS without an endpoint
+        for provider in ('Ceph', 'Minio', 'Other'):
+            self.assertIsNone(new(s3_provider=provider, s3_skip_checks=None), provider)
+        # a choice is kept: '' = rclone's full checks
+        self.assertIsNone(new(s3_provider='AWS', s3_skip_checks=''))
+        self.assertEqual(new(s3_provider='AWS', s3_skip_checks='post_copy'), 'post_copy')
+        self.assertEqual(new(s3_provider='Ceph', s3_skip_checks='crc32c'), 'crc32c')
+        # an update never adds the default
+        self.assertIsNone(self.apply(s3_provider='AWS', s3_skip_checks=None).s3_skip_checks)
+        # other types never get one
+        self.assertIsNone(new(type='azureblob', s3_skip_checks=None))
 
     def test_invalid_values(self):
         with self.assertRaises(HTTP_400_BAD_REQUEST):

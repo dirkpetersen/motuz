@@ -64,8 +64,12 @@ export const DEFAULT_S3_PROVIDER = 'AWS';
 // Providers for which the dialog offers skipping checksum checks
 export const CHECK_SKIPPING_PROVIDERS = ['AWS', 'Ceph'];
 
-// Providers known to verify CRC32C part checksums (s3_providers.CRC32C_PROVIDERS)
-export const CRC32C_PROVIDERS = ['AWS'];
+// Providers known to verify CRC32C part checksums (s3_providers.CRC32C_PROVIDERS):
+// Amazon S3, and Ceph from Tentacle (20.2) on
+export const CRC32C_PROVIDERS = ['AWS', 'Ceph'];
+
+// New connections to these start with CRC32C part checksums (s3_providers.CRC32C_DEFAULT_PROVIDERS)
+export const CRC32C_DEFAULT_PROVIDERS = ['AWS'];
 
 // Region filled in for a new connection to storage that is not AWS
 export const NON_AWS_DEFAULT_REGION = 'us-east-1';
@@ -82,10 +86,15 @@ export function canUseCrc32c(provider) {
     return CRC32C_PROVIDERS.includes(provider || DEFAULT_S3_PROVIDER);
 }
 
+/** The checksum checks a new connection starts with (s3_providers.default_skip_checks) */
+export function defaultSkipChecks(provider) {
+    return CRC32C_DEFAULT_PROVIDERS.includes(provider || DEFAULT_S3_PROVIDER) ? 'crc32c' : '';
+}
+
 /**
  * Whether a copy to this destination connection can be checked afterwards (Check
  * Integrity): not for S3 with chunked uploads, whose objects S3 stores without an MD5,
- * unless their parts carry CRC32C (Amazon S3 only, CRC32C_PROVIDERS): S3 then stores a
+ * unless their parts carry CRC32C (Amazon S3 and Ceph, CRC32C_PROVIDERS): S3 then stores a
  * CRC32C of the whole object, which Check Integrity compares (README "Check Integrity").
  * `connection` is the connection object of the list (null/undefined: local filesystem).
  */

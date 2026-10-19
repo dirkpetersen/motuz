@@ -303,7 +303,8 @@ def _hashsum_job_run(self, hashsum_job, connection, start_time):
     def kind(side):
         cloud = getattr(hashsum_job, f'{side}_cloud')
         provider = s3_providers.effective_provider(cloud) if getattr(cloud, 'type', None) == 's3' else None
-        return job_runner.side_kind(cloud is None, getattr(cloud, 'type', None), provider)
+        return job_runner.side_kind(cloud is None, getattr(cloud, 'type', None), provider,
+                                    getattr(cloud, 's3_skip_checks', None))
 
     hash_type = job_runner.hashsum_type(kind('src'), kind('dst'), download=bool(hashsum_job.option_download),
                                         crc32c_supported=crc32c_supported)

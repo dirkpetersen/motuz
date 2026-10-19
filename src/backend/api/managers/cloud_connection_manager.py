@@ -58,12 +58,15 @@ def _writable(data):
     return {key: value for key, value in data.items() if key in _WRITABLE_FIELDS}
 
 
-def _apply_s3_rules(cloud_connection):
+def _apply_s3_rules(cloud_connection, new=False):
     """
     S3 options: rclone's provider (from the list in utils/s3_providers.py; empty: AWS
     without an endpoint, else Other), chunked uploads (default on) and skipping
     checksum checks, which only AWS and Ceph allow (they verify Content-MD5 on every
-    request themselves). Other types keep none of them.
+    request themselves); CRC32C part checksums only where s3_providers.CRC32C_PROVIDERS.
+    A `new` connection without s3_skip_checks gets s3_providers.default_skip_checks
+    (CRC32C on Amazon S3); an empty value means rclone's full checks. Other types keep
+    none of them.
     """
     if cloud_connection.type != 's3':
         cloud_connection.s3_provider = None
@@ -78,13 +81,15 @@ def _apply_s3_rules(cloud_connection):
     cloud_connection.s3_provider = provider
     if cloud_connection.s3_chunked is None:
         cloud_connection.s3_chunked = True
+    if new and cloud_connection.s3_skip_checks is None:
+        cloud_connection.s3_skip_checks = s3_providers.default_skip_checks(provider)
     skip = (cloud_connection.s3_skip_checks or '').strip() or None
     if skip is not None and skip not in s3_providers.SKIP_CHECKS_VALUES:
         raise HTTP_400_BAD_REQUEST('s3_skip_checks must be empty, post_copy, crc32c or all')
     if provider not in s3_providers.CHECK_SKIPPING_PROVIDERS:
         skip = None
     if skip == s3_providers.SKIP_CRC32C and provider not in s3_providers.CRC32C_PROVIDERS:
-        raise HTTP_400_BAD_REQUEST('CRC32C part checksums are only available for Amazon S3')
+        raise HTTP_400_BAD_REQUEST('CRC32C part checksums are only available for Amazon S3 and Ceph')
     cloud_connection.s3_skip_checks = skip
 
 
@@ -155,7 +160,7 @@ def create(data):
 
     cloud_connection = CloudConnection(**_writable(data))
     cloud_connection.owner = owner
-    _apply_s3_rules(cloud_connection)
+    _apply_s3_rules(cloud_connection, new=True)
     _apply_profile_rules(cloud_connection)
 
     db.session.add(cloud_connection)

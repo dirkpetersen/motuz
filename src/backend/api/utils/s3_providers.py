@@ -76,8 +76,30 @@ SKIP_ALL = 'all'             # also no checksum with the parts and
                              # AWS_REQUEST_CHECKSUM_CALCULATION=when_required
 SKIP_CHECKS_VALUES = frozenset((SKIP_POST_COPY, SKIP_CRC32C, SKIP_ALL))
 
-# Providers known to verify the x-amz-checksum-crc32c of upload parts
-CRC32C_PROVIDERS = frozenset(('AWS',))
+# Providers known to verify the x-amz-checksum-crc32c of upload parts and to store a
+# full-object CRC32C: Amazon S3, and Ceph from Tentacle (20.2) on. Reef and Squid ignore
+# the CRC32C: a chunked upload then fails at its first part (rclone finds no CRC32C in
+# the response), uploads in one piece are still verified by their Content-MD5
+CRC32C_PROVIDERS = frozenset(('AWS', 'Ceph'))
+# New connections to these providers start with SKIP_CRC32C (Ceph's version is unknown)
+CRC32C_DEFAULT_PROVIDERS = frozenset(('AWS',))
+
+
+def default_skip_checks(provider):
+    """s3_skip_checks of a new connection that does not choose one"""
+    return SKIP_CRC32C if provider in CRC32C_DEFAULT_PROVIDERS else None
+
+
+def stores_crc32c(provider, skip_checks):
+    """
+    Whether objects of an S3 connection can have a full-object CRC32C that an integrity
+    check reads (job_runner.side_kind): always on Amazon S3 (also objects uploaded by
+    other tools), on Ceph only for a connection that uploads with CRC32C parts (else a
+    CRC32C check would do one HEAD per object for nothing)
+    """
+    if provider in CRC32C_DEFAULT_PROVIDERS:
+        return True
+    return provider in CRC32C_PROVIDERS and skip_checks == SKIP_CRC32C
 
 # s3_chunked (default true): files from this size on are uploaded in parts (multipart);
 # false: in one piece up to S3's limit of 5 GiB for one upload, so that S3 keeps their
