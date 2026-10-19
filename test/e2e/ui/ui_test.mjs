@@ -391,10 +391,13 @@ if (PHASE === 'paste') {
 
     // Drags a left-pane row onto a right-pane folder until the copy dialog shows `selector`.
     // A job that just finished makes the job table reload both panes (CopyJobTable), which
-    // replaces the rows; a drag in that moment drops nothing, so it is tried again.
+    // replaces the rows; a row replaced while Chromium starts the drag leaves the drag
+    // hanging, and then no later mouse input arrives. So it waits until the page has no
+    // requests in flight, and drags again if no dialog opens.
     async function dragToCopy(from, to, selector) {
         const panes = page.locator('.grid-files');
         for (let attempt = 1; ; attempt++) {
+            await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => {});
             await panes.nth(0).getByText(from, { exact: true }).dragTo(panes.nth(1).getByText(to, { exact: true }));
             try {
                 await page.waitForSelector(selector, { state: 'attached', timeout: 5000 });
@@ -463,6 +466,9 @@ if (PHASE === 'paste') {
         }
         check('performance: job SUCCESS with its settings', job && job.progress_state === 'SUCCESS'
             && JSON.stringify(job.performance) === JSON.stringify({ transfers: 48, checkers: 256 }), job);
+        // The job table notices the end on its next poll and then reloads the panes
+        await page.locator('tr', { hasText: '/home/alice/ui-perf-dst/ui-src' }).filter({ hasText: 'SUCCESS' }).first()
+            .waitFor({ timeout: 10000 });
         page.off('request', listener);
         await page.click('.modal-footer button:has-text("Close")');
         await page.waitForSelector('.modal-content', { state: 'detached', timeout: 10000 });
