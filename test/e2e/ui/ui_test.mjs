@@ -389,17 +389,29 @@ if (PHASE === 'paste') {
         check('skip existing: nothing uploaded, job SUCCESS', job && job.progress_state === 'SUCCESS' && job.upload.mode === 'skip', job);
     });
 
+    // Drags a left-pane row onto a right-pane folder until the copy dialog shows `selector`.
+    // A job that just finished makes the job table reload both panes (CopyJobTable), which
+    // replaces the rows; a drag in that moment drops nothing, so it is tried again.
+    async function dragToCopy(from, to, selector) {
+        const panes = page.locator('.grid-files');
+        for (let attempt = 1; ; attempt++) {
+            await panes.nth(0).getByText(from, { exact: true }).dragTo(panes.nth(1).getByText(to, { exact: true }));
+            try {
+                await page.waitForSelector(selector, { state: 'attached', timeout: 5000 });
+                return;
+            } catch (e) {
+                if (attempt === 3 || await page.locator('.modal-content').count()) throw e;
+            }
+        }
+    }
+
     // The collapsed Performance section of the New Copy Job dialog (utils/copyPerformance.js,
     // GET /api/copy-jobs/performance/). compose.yml: MOTUZ_RCLONE_CHECKERS=16, MAX_TRANSFERS=48
     await flow('copy performance', async () => {
         const posts = [];
         const listener = r => { if (r.url().endsWith('/api/copy-jobs/') && r.method() === 'POST') posts.push(r.postDataJSON()); };
         page.on('request', listener);
-        const panes = page.locator('.grid-files');
-        const openDialog = async () => {
-            await panes.nth(0).getByText('ui-src', { exact: true }).dragTo(panes.nth(1).getByText('ui-perf-dst', { exact: true }));
-            await page.waitForSelector('.modal-content .performance-section #performance-preset', { state: 'attached', timeout: 10000 });
-        };
+        const openDialog = () => dragToCopy('ui-src', 'ui-perf-dst', '.modal-content .performance-section #performance-preset');
         await openDialog();
         // ui-perf-dst/ui-src was never written by Motuz (managers/overwrite_policy.py)
         await page.waitForSelector('.modal-content .copy-job-overwrite', { timeout: 10000 });
@@ -462,9 +474,7 @@ if (PHASE === 'paste') {
         const posts = [];
         const listener = r => { if (r.url().endsWith('/api/copy-schedules/') && r.method() === 'POST') posts.push(r.postDataJSON()); };
         page.on('request', listener);
-        const panes = page.locator('.grid-files');
-        await panes.nth(0).getByText('ui-src', { exact: true }).dragTo(panes.nth(1).getByText('ui-perf-dst', { exact: true }));
-        await page.waitForSelector('.modal-content .copy-job-schedule', { state: 'attached', timeout: 10000 });
+        await dragToCopy('ui-src', 'ui-perf-dst', '.modal-content .copy-job-schedule');
         check('schedule: section collapsed and off',
             !(await page.locator('.copy-job-schedule').evaluate(d => d.open))
             && (await page.textContent('.modal-footer button[type=submit]')).trim() === 'Submit Copy Job');
