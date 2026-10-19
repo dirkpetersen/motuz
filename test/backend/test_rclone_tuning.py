@@ -532,6 +532,43 @@ class TestRcloneCommand(unittest.TestCase):
         for sides in (('local', 'other'), ('other', 'local'), ('other', 'other')):
             self.assertEqual(job_runner.hashsum_type(*sides), 'md5', sides)
 
+    def test_posix_metadata_between_local_paths(self):
+        """--metadata (and --links unless symlinks are followed) only local to local, only with the fork from .6 on"""
+        from api.utils import rclone_connection
+        with mock.patch.object(rclone_connection, 'metadata_copy_supported', return_value=True):
+            command, _ = self.command(PLAIN, dst=None)
+            self.assertIn('--metadata', command)
+            self.assertIn('--links', command)
+            self.assertLess(command.index('--metadata'), command.index('copyto'))
+            self.assertNotIn('--local-metadata-restore-special-bits', command)
+            self.assertEqual(rclone_connection.local_to_local_flags(copy_links=True), ['--metadata'])
+            command, _ = self.command(PLAIN, dst=_s3_connection())
+            self.assertNotIn('--metadata', command)
+            self.assertNotIn('--links', command)
+        with mock.patch.object(rclone_connection, 'metadata_copy_supported', return_value=False):
+            command, _ = self.command(PLAIN, dst=None)
+            self.assertNotIn('--metadata', command)
+            self.assertEqual(rclone_connection.local_to_local_flags(copy_links=False), [])
+
+    def test_metadata_copy_supported_by_version(self):
+        from api.utils import rclone_connection
+        for first, expected in (('rclone v1.76.0-md5simd.6', True), ('rclone v1.76.0-md5simd.12', True),
+                                ('rclone v1.76.0-md5simd.5', False), ('rclone v1.76.0', False),
+                                ('rclone v1.77.0-beta.9000.abc', False)):
+            run = mock.Mock(return_value=mock.Mock(returncode=0, stdout=first + '\n- os/version: x\n'))
+            with mock.patch.dict(rclone_connection._metadata_copy_supported, clear=True), \
+                    mock.patch.object(rclone_connection.subprocess, 'run', run):
+                self.assertEqual(rclone_connection.metadata_copy_supported('/x/rclone'), expected, first)
+                self.assertEqual(rclone_connection.metadata_copy_supported('/x/rclone'), expected, first)
+                self.assertEqual(run.call_count, 1, 'cached')
+        # no answer: not supported, asked again next time
+        run = mock.Mock(side_effect=OSError('missing'))
+        with mock.patch.dict(rclone_connection._metadata_copy_supported, clear=True), \
+                mock.patch.object(rclone_connection.subprocess, 'run', run):
+            self.assertFalse(rclone_connection.metadata_copy_supported('/x/rclone'))
+            self.assertFalse(rclone_connection.metadata_copy_supported('/x/rclone'))
+            self.assertEqual(run.call_count, 2)
+
     def test_hashsum_command_of_each_hash(self):
         connection = RcloneConnection()
         pushed = {}

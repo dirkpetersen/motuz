@@ -367,6 +367,21 @@ check('job runs on the Motuz server (pool central, no worker status)',
 owner = sh('app', "stat -c %U /home/alice/dst/f1.txt /home/alice/dst/sub/d.txt").stdout.split()
 check('copied files owned by alice', owner == ['alice', 'alice'], owner)
 
+# Local to local keeps POSIX metadata (rclone_connection.local_to_local_flags, the pinned rclone)
+sh('app', "sudo -u alice sh -c 'mkdir -p /home/alice/posix-src/shared && echo run > /home/alice/posix-src/run.sh"
+          " && chmod 750 /home/alice/posix-src/run.sh && chmod 2770 /home/alice/posix-src/shared"
+          " && echo x > /home/alice/posix-src/shared/x.txt && ln -s run.sh /home/alice/posix-src/link'"
+          " && cp /etc/hostname /home/alice/posix-src/of-root && chmod 644 /home/alice/posix-src/of-root")
+status, pc, _ = req('POST', '/api/copy-jobs/', A, {'description': 'posix', 'src_resource_path': '/home/alice/posix-src',
+                                                   'dst_resource_path': '/home/alice/posix-dst', 'copy_links': False})
+pc = wait_job('copy-jobs', pc['id'], A) if status == 201 else pc
+check('local copy with POSIX metadata SUCCESS (also a file of root)', pc.get('progress_state') == 'SUCCESS', pc)
+modes = sh('app', "stat -c '%n %a %U %F' /home/alice/posix-dst/run.sh /home/alice/posix-dst/shared"
+                  " /home/alice/posix-dst/link /home/alice/posix-dst/of-root").stdout.replace('/home/alice/posix-dst/', '').splitlines()
+check('local copy keeps the executable bit, the setgid dir, symlinks; files belong to alice',
+      modes == ['run.sh 750 alice regular file', 'shared 2770 alice directory', 'link 777 alice symbolic link',
+                'of-root 644 alice regular file'], modes)
+
 job = {'description': 'forbidden', 'src_resource_path': '/home/bob', 'dst_resource_path': '/home/alice/stolen', 'copy_links': True}
 status, cj2, _ = req('POST', '/api/copy-jobs/', A, job)
 cj2 = wait_job('copy-jobs', cj2['id'], A)

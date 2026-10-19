@@ -652,7 +652,7 @@ class TestUserData(Ec2TestBase):
         self.assertIn("SOURCE_REF={}\n".format('a' * 40), script)
         self.assertIn("MAX_RUNTIME_MINUTES={}\n".format(24 * 60 + ec2_launcher.RUNTIME_GRACE_MINUTES), script)
         self.assertIn("ONCE_WAIT=1200\n", script)
-        self.assertIn("RCLONE_VERSION=1.76.0-md5simd.5\n", script)
+        self.assertIn("RCLONE_VERSION=1.76.0-md5simd.6\n", script)
         self.assertIn("RCLONE_RELEASES={}\n".format(ec2_config.RCLONE_RELEASES), script)
         self.assertIn('MOTUZ_WORKER_RUN_AS=motuzjob', script)
         self.assertIn('motuz ALL=(motuzjob) NOPASSWD:SETENV: /usr/local/bin/rclone', script)

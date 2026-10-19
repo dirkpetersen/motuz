@@ -537,9 +537,11 @@ class RcloneConnection(AbstractConnection):
         else:
             src = 'src:{}'.format(src_resource_path)
 
+        local_flags = []
         if src_local and dst_local:
             # rclone checks a copy with the first hash both sides have, MD5 (local_to_local_env)
             extra_env = {**(extra_env or {}), **local_to_local_env()}
+            local_flags = local_to_local_flags(copy_links)
 
         if dst_local:
             dst = _local_path(dst_resource_path)
@@ -574,6 +576,7 @@ class RcloneConnection(AbstractConnection):
             option_exclude_dot_snapshot,
             '--contimeout=5m',
             *_checked_flags(extra_flags),
+            *local_flags,
             'copyto',
             src,
             dst,
@@ -1107,6 +1110,55 @@ def parse_supported_hashes(output):
 def crc32c_supported(rclone=None):
     """rclone can hash CRC32C (and then reads the CRC32C S3 stored, job_runner.hashsum_type)"""
     return 'crc32c' in supported_hashes(rclone)
+
+_metadata_copy_supported = {}
+
+# The first fork release whose local backend, run as a user other than root, sets only
+# the ownership that user may set (else --metadata fails every file of another user)
+# and keeps the setgid bit of directories
+METADATA_COPY_RELEASE = re.compile(r'^rclone v\S*-md5simd\.(\d+)$')
+METADATA_COPY_MIN = 6
+
+
+def metadata_copy_supported(rclone=None, timeout=30):
+    """
+    Whether this node's rclone can copy POSIX metadata between local paths as a user
+    (local_to_local_flags): the pinned release of github.com/dirkpetersen/rclone from
+    v1.76.0-md5simd.6 on (`rclone version`, cached per rclone path once it answered)
+    """
+    rclone = rclone or RCLONE
+    if rclone in _metadata_copy_supported:
+        return _metadata_copy_supported[rclone]
+    try:
+        result = subprocess.run([rclone, '--config=/dev/null', 'version'], stdin=subprocess.DEVNULL,
+                                capture_output=True, text=True, timeout=timeout, env=user_process_env())
+    except (OSError, subprocess.SubprocessError) as e:
+        logging.warning('Could not ask rclone for its version: %s', e)
+        return False
+    first = (result.stdout or '').split('\n')[0].strip()
+    if result.returncode != 0 or not first.startswith('rclone '):
+        return False
+    match = METADATA_COPY_RELEASE.match(first)
+    _metadata_copy_supported[rclone] = bool(match) and int(match[1]) >= METADATA_COPY_MIN
+    return _metadata_copy_supported[rclone]
+
+
+def local_to_local_flags(copy_links, rclone=None):
+    """
+    rclone flags of a copy between two local paths that keep POSIX metadata, if this
+    rclone can (metadata_copy_supported; else none, as before): --metadata (permission
+    bits including the executable bit, the group if the user is a member, atime/mtime,
+    user.* extended attributes; the setgid bit of directories; never the owner, the copy
+    belongs to the user) and, unless symlinks are followed (--copy-links), --links
+    (symlinks stay symlinks instead of being skipped). Never
+    --local-metadata-restore-special-bits: setuid/setgid files and the sticky bit are
+    stripped, as rclone may run as root (root login helper). Not kept: POSIX ACLs, hard
+    links, sparseness, empty directories (copyto has no --create-empty-src-dirs).
+    """
+    if not metadata_copy_supported(rclone):
+        return []
+    return ['--metadata'] if copy_links else ['--metadata', '--links']
+
 
 def local_to_local_env(rclone=None):
     """

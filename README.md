@@ -1293,11 +1293,31 @@ Check Integrity of the same 3 GB, 16 checkers: SHA-256 1.8 CPU-s, CRC32C 0.2 CPU
 Whenever a cloud is involved, the copy check stays MD5 (clouds record MD5, the S3 ETag) and
 Check Integrity uses MD5, or CRC32C where S3 stores one (below).
 
+**Local to local: POSIX metadata.** A copy between two local paths also keeps the files'
+metadata (`--metadata`, and `--links` unless "follow symlinks" is on), if the node's rclone is the
+pinned release v1.76.0-md5simd.6 or later; with another rclone only contents and modification
+times are copied, as before. Measured as a normal user on ext4 and CephFS:
+
+| Kept | Not kept |
+|---|---|
+| permission bits, including the executable bit | the owner: the copy belongs to the user who runs the job |
+| the group, if the user is a member of it | setuid and setgid files, the sticky bit (stripped) |
+| the setgid bit of directories (shared project directories) | POSIX ACLs |
+| atime and mtime of files and directories | hard links (each becomes a file of its own) |
+| `user.*` extended attributes | sparseness (holes are written out) |
+| symlinks, as symlinks (with "follow symlinks": their targets) | empty directories |
+
+The pinned release adds what a stock rclone lacks for this (three commits on
+`backend/local`; the setgid part is proposed to rclone): as a user other than root it sets only the group it may set instead of
+failing the copy of every file of another user, and it keeps the setgid bit of directories.
+Motuz never passes `--local-metadata-restore-special-bits`, because rclone may run as root (root
+login helper).
+
 **Check Integrity of S3: CRC32C.** When one side of a check is an Amazon S3 connection (provider
 "Amazon S3") or a Ceph connection with "CRC32C instead of MD5 for parts" (other S3 providers keep
 MD5) and the other a local path or such S3, the check is not "Double Check" (download), and rclone knows the hash
 `crc32c` (Motuz asks `rclone hashsum` once per process; the pinned release
-v1.76.0-md5simd.5 of github.com/dirkpetersen/rclone does, a stock rclone does not), Check
+v1.76.0-md5simd.6 of github.com/dirkpetersen/rclone does, a stock rclone does not), Check
 Integrity runs `rclone hashsum crc32c` on both sides: local files are hashed, S3 returns the
 CRC32C it stored (one HEAD request per object, nothing downloaded, no egress). S3 has a
 full-object CRC32C for uploads with CRC32C parts (Checksum checks "CRC32C instead of MD5 for
