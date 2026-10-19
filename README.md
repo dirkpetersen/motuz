@@ -1233,7 +1233,9 @@ Advanced options:
     compares); it costs almost no CPU. Ceph verifies it from Tentacle (20.2) on, so new Ceph
     connections do not start with it: with Reef or Squid a chunked upload fails at its first
     part (rclone: "UploadPart response ... has no CRC32C"), uploads in one piece are still
-    verified by their `Content-MD5`. Existing connections keep their setting.
+    verified by their `Content-MD5`. Existing connections keep their setting, and so does a new
+    connection from an rclone remote of your home directory, whose provider (perhaps not AWS)
+    comes from your `rclone.conf`.
   - *Skip all checks* (not recommended): additionally no checksum with the parts
     (`RCLONE_S3_PART_CHECKSUM=none`) and `AWS_REQUEST_CHECKSUM_CALCULATION=when_required`, so S3
     no longer verifies uploads sent in one piece either.
@@ -1310,8 +1312,10 @@ times are copied, as before. Measured as a normal user on ext4 and CephFS:
 The pinned release adds what a stock rclone lacks for this (three commits on
 `backend/local`; the setgid part is proposed to rclone): as a user other than root it sets only the group it may set instead of
 failing the copy of every file of another user, and it keeps the setgid bit of directories.
-Motuz never passes `--local-metadata-restore-special-bits`, because rclone may run as root (root
-login helper).
+Motuz never passes `--local-metadata-restore-special-bits`. Copies run as root (root login
+helper) keep copying only contents and times, because rclone would then copy the source's owner
+too. Set `MOTUZ_RCLONE_LOCAL_METADATA=false` (also on remote workers) when a local file system
+refuses `chmod` (vfat, exfat, some CIFS, FUSE or NFS mounts): rclone fails each file there.
 
 **Check Integrity of S3: CRC32C.** When one side of a check is an Amazon S3 connection (provider
 "Amazon S3") or a Ceph connection with "CRC32C instead of MD5 for parts" (other S3 providers keep

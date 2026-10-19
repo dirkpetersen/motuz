@@ -301,8 +301,10 @@ class CloudConnectionDialogFields extends React.Component {
         const provider = this._s3Provider();
         if (this.state.s3SkipChecks === null && !this.props.isSanitized) {
             // A new connection that the user has not chosen for: CRC32C on Amazon S3,
-            // rclone's full checks elsewhere (also after switching the provider)
-            return defaultSkipChecks(provider);
+            // rclone's full checks elsewhere (also after switching the provider) and for
+            // an rclone remote, whose provider comes from the user's rclone.conf
+            const fromRcloneRemote = this.state.profile && this.state.profile.source === 'rclone';
+            return fromRcloneRemote ? '' : defaultSkipChecks(provider);
         }
         const value = this.state.s3SkipChecks === null ? (this.props.data.s3_skip_checks || '') : this.state.s3SkipChecks;
         // CRC32C is not offered for this provider: the closest choice that is

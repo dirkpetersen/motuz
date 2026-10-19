@@ -84,6 +84,7 @@ x-variables:
         MOTUZ_RCLONE_MAX_UPLOAD_CONCURRENCY: ${MOTUZ_RCLONE_MAX_UPLOAD_CONCURRENCY:-}
         MOTUZ_RCLONE_MEMORY_BUDGET: ${MOTUZ_RCLONE_MEMORY_BUDGET:-}
         MOTUZ_RCLONE_MD5_SIMD_SERVERS: ${MOTUZ_RCLONE_MD5_SIMD_SERVERS:-}
+        MOTUZ_RCLONE_LOCAL_METADATA: ${MOTUZ_RCLONE_LOCAL_METADATA:-}
         MOTUZ_RCLONE_EXTRA_FLAGS: ${MOTUZ_RCLONE_EXTRA_FLAGS:-}
         # true: copies overwrite changed files everywhere the user may write; unset/false:
         # only within destinations Motuz wrote before (README, "Overwriting existing files")

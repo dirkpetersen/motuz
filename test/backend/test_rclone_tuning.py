@@ -4,6 +4,7 @@ MOTUZ_RCLONE_*, per-job overrides, caps, the memory budget, presets and the argv
 become, including attempts to smuggle other flags into rclone's command line.
 """
 import logging
+import os
 import random
 import types
 import unittest
@@ -541,14 +542,24 @@ class TestRcloneCommand(unittest.TestCase):
             self.assertIn('--links', command)
             self.assertGreater(command.index('--metadata'), command.index('copyto') + 2, 'after the paths')
             self.assertNotIn('--local-metadata-restore-special-bits', command)
-            self.assertEqual(rclone_connection.local_to_local_flags(copy_links=True), ['--metadata'])
+            self.assertEqual(rclone_connection.local_to_local_flags(True, 'alice'), ['--metadata'])
+            # root (root login helper) would copy the source's owner: as before, no metadata
+            self.assertEqual(rclone_connection.local_to_local_flags(False, 'root'), [])
+            with mock.patch.dict(os.environ, {'MOTUZ_RCLONE_LOCAL_METADATA': 'false'}):
+                self.assertEqual(rclone_connection.local_to_local_flags(False, 'alice'), [])
+            with mock.patch.dict(os.environ, {'MOTUZ_RCLONE_LOCAL_METADATA': ' TRUE '}):
+                self.assertEqual(rclone_connection.local_to_local_flags(False, 'alice'), ['--metadata', '--links'])
+            with mock.patch.dict(os.environ, {'MOTUZ_RCLONE_LOCAL_METADATA': 'yes'}), self.assertRaises(TuningConfigError):
+                rclone_connection.local_to_local_flags(False, 'alice')
+            self.assertFalse(tuning.load_settings({'MOTUZ_RCLONE_LOCAL_METADATA': 'false'}).local_metadata)
+            self.assertTrue(tuning.load_settings({}).local_metadata)
             command, _ = self.command(PLAIN, dst=_s3_connection())
             self.assertNotIn('--metadata', command)
             self.assertNotIn('--links', command)
         with mock.patch.object(rclone_connection, 'metadata_copy_supported', return_value=False):
             command, _ = self.command(PLAIN, dst=None)
             self.assertNotIn('--metadata', command)
-            self.assertEqual(rclone_connection.local_to_local_flags(copy_links=False), [])
+            self.assertEqual(rclone_connection.local_to_local_flags(False, 'alice'), [])
 
     def test_metadata_copy_supported_by_version(self):
         from api.utils import rclone_connection

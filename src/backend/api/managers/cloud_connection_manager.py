@@ -65,7 +65,8 @@ def _apply_s3_rules(cloud_connection, new=False):
     checksum checks, which only AWS and Ceph allow (they verify Content-MD5 on every
     request themselves); CRC32C part checksums only where s3_providers.CRC32C_PROVIDERS.
     A `new` connection without s3_skip_checks gets s3_providers.default_skip_checks
-    (CRC32C on Amazon S3); an empty value means rclone's full checks. Other types keep
+    (CRC32C on Amazon S3; not a profile from an rclone remote, whose provider is only
+    known when it runs); an empty value means rclone's full checks. Other types keep
     none of them.
     """
     if cloud_connection.type != 's3':
@@ -81,7 +82,10 @@ def _apply_s3_rules(cloud_connection, new=False):
     cloud_connection.s3_provider = provider
     if cloud_connection.s3_chunked is None:
         cloud_connection.s3_chunked = True
-    if new and cloud_connection.s3_skip_checks is None:
+    # A profile from an rclone remote gets its provider from the user's rclone.conf when
+    # it runs (rclone_connection._formatCredentials), unknown here: no CRC32C default
+    from_rclone_remote = cloud_connection.subtype == 'profile' and cloud_connection.profile_source == 'rclone'
+    if new and cloud_connection.s3_skip_checks is None and not from_rclone_remote:
         cloud_connection.s3_skip_checks = s3_providers.default_skip_checks(provider)
     skip = (cloud_connection.s3_skip_checks or '').strip() or None
     if skip is not None and skip not in s3_providers.SKIP_CHECKS_VALUES:

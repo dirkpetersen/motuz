@@ -277,6 +277,9 @@ class KeptFilesTest(unittest.TestCase):
 
     def test_parse(self):
         self.assertEqual(self.kept_files.parse(b'{"count": 2, "sample": ["a", 3]}'), [2, ['a']])
+        # symlinks kept by a copy with --links: rclone reports "<name>.rclonelink"
+        self.assertEqual(self.kept_files.parse(b'{"count": 2, "sample": ["d/link.rclonelink", ".rclonelink"]}'),
+                         [2, ['d/link', '.rclonelink']])
         for bad in (b'', b'[]', b'{"count": -1, "sample": []}', b'{"count": "x", "sample": []}', b'\xff'):
             self.assertEqual(self.kept_files.parse(bad), [0, []], bad)
 

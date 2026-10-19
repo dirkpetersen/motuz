@@ -205,8 +205,8 @@ def _parse(param, value, error, source):
 
 # --- installation settings --------------------------------------------------------------
 
-Settings = namedtuple('Settings', 'defaults caps memory_budget extra_flags md5_simd_servers',
-                      defaults=(DEFAULT_MD5_SIMD_SERVERS,))
+Settings = namedtuple('Settings', 'defaults caps memory_budget extra_flags md5_simd_servers local_metadata',
+                      defaults=(DEFAULT_MD5_SIMD_SERVERS, True))
 
 
 def env_name(name):
@@ -278,7 +278,8 @@ def load_settings(environ=None):
             raise TuningConfigError('{}={!r} must be a whole number between {} and {} (0: no md5-simd)'.format(
                 name, raw, lo, hi))
 
-    settings = Settings(defaults, caps, memory_budget, extra_flags, md5_simd_servers)
+    local_metadata = local_metadata_enabled(environ)
+    settings = Settings(defaults, caps, memory_budget, extra_flags, md5_simd_servers, local_metadata)
     worst = max(CHUNKED_BACKENDS + (None,), key=lambda backend: estimate_memory(defaults, backend))
     needed = estimate_memory(defaults, worst)
     if needed > memory_budget:
@@ -287,6 +288,22 @@ def load_settings(environ=None):
             'MOTUZ_RCLONE_MEMORY_BUDGET={} (README, "Performance tuning")'.format(
                 _describe_size(needed), worst or 'local', format_size(memory_budget)))
     return settings
+
+
+def local_metadata_enabled(environ=None):
+    """
+    MOTUZ_RCLONE_LOCAL_METADATA (default true): copies between local paths keep POSIX
+    metadata (rclone_connection.local_to_local_flags); false for local file systems that
+    refuse chmod (vfat, exfat, some CIFS/FUSE/NFS mounts), where rclone fails each file.
+    Read on its own too, by the remote worker agent, which builds local copies itself.
+    """
+    name = 'MOTUZ_RCLONE_LOCAL_METADATA'
+    raw = _env(os.environ if environ is None else environ, name)
+    if raw is None:
+        return True
+    if raw.strip().lower() not in ('true', 'false'):
+        raise TuningConfigError('{}={!r} must be true or false'.format(name, raw))
+    return raw.strip().lower() == 'true'
 
 
 def default_memory_budget(meminfo='/proc/meminfo', cgroup='/sys/fs/cgroup/memory.max'):

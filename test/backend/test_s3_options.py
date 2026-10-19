@@ -192,6 +192,9 @@ class TestValidation(unittest.TestCase):
         self.assertIsNone(self.apply(s3_provider='AWS', s3_skip_checks=None).s3_skip_checks)
         # other types never get one
         self.assertIsNone(new(type='azureblob', s3_skip_checks=None))
+        # a profile from an rclone remote: its provider comes from rclone.conf, not known here
+        self.assertIsNone(new(subtype='profile', profile_source='rclone', s3_skip_checks=None))
+        self.assertEqual(new(subtype='profile', profile_source='aws', s3_skip_checks=None), 'crc32c')
 
     def test_invalid_values(self):
         with self.assertRaises(HTTP_400_BAD_REQUEST):

@@ -541,7 +541,7 @@ class RcloneConnection(AbstractConnection):
         if src_local and dst_local:
             # rclone checks a copy with the first hash both sides have, MD5 (local_to_local_env)
             extra_env = {**(extra_env or {}), **local_to_local_env()}
-            local_flags = local_to_local_flags(copy_links)
+            local_flags = local_to_local_flags(copy_links, user)
 
         if dst_local:
             dst = _local_path(dst_resource_path)
@@ -1143,7 +1143,7 @@ def metadata_copy_supported(rclone=None, timeout=30):
     return _metadata_copy_supported[rclone]
 
 
-def local_to_local_flags(copy_links, rclone=None):
+def local_to_local_flags(copy_links, user, rclone=None, tuning=None):
     """
     rclone flags of a copy between two local paths that keep POSIX metadata, if this
     rclone can (metadata_copy_supported; else none, as before): --metadata (permission
@@ -1152,9 +1152,14 @@ def local_to_local_flags(copy_links, rclone=None):
     belongs to the user) and, unless symlinks are followed (--copy-links), --links
     (symlinks stay symlinks instead of being skipped). Never
     --local-metadata-restore-special-bits: setuid/setgid files and the sticky bit are
-    stripped, as rclone may run as root (root login helper). Not kept: POSIX ACLs, hard
-    links, sparseness, empty directories (copyto has no --create-empty-src-dirs).
+    stripped. Not kept: POSIX ACLs, hard links, sparseness, empty directories (copyto has
+    no --create-empty-src-dirs). None for root (root login helper): rclone would then copy
+    the source's owner and recreate its symlinks as root, and as before root copies only
+    contents and times; none with MOTUZ_RCLONE_LOCAL_METADATA=false (rclone_tuning).
     """
+    enabled = tuning.local_metadata if tuning is not None else rclone_tuning.local_metadata_enabled()
+    if user == 'root' or not enabled:
+        return []
     if not metadata_copy_supported(rclone):
         return []
     return ['--metadata'] if copy_links else ['--metadata', '--links']

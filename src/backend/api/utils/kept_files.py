@@ -75,7 +75,16 @@ def parse(stdout):
         return [0, []]
     if count < 0 or not isinstance(sample, list):
         return [0, []]
-    return [count, [path for path in sample[:KEPT_SAMPLE] if isinstance(path, str)]]
+    return [count, [_without_link_suffix(path) for path in sample[:KEPT_SAMPLE] if isinstance(path, str)]]
+
+
+# With --links (local to local, rclone_connection.local_to_local_flags) rclone names a
+# symlink "<name>.rclonelink" in its reports
+LINK_SUFFIX = '.rclonelink'
+
+
+def _without_link_suffix(path):
+    return path[:-len(LINK_SUFFIX)] if path.endswith(LINK_SUFFIX) and len(path) > len(LINK_SUFFIX) else path
 
 
 def read(user, path, timeout=READER_TIMEOUT, run=file_view.run_limited):
