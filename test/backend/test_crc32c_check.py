@@ -52,10 +52,22 @@ NO = lambda: False
 class TestHashType(unittest.TestCase):
 
     def test_kinds(self):
-        self.assertEqual(job_runner.side_kind(True, 's3'), 'local')
-        self.assertEqual(job_runner.side_kind(False, 's3'), 's3')
-        self.assertEqual(job_runner.side_kind(False, 'azureblob'), 'other')
+        self.assertEqual(job_runner.side_kind(True, 's3', 'AWS'), 'local')
+        self.assertEqual(job_runner.side_kind(False, 's3', 'AWS'), 's3')
+        # only Amazon S3 stores a CRC32C: other providers would answer a HEAD per object for nothing
+        for provider in ('Ceph', 'Minio', 'Other', None):
+            self.assertEqual(job_runner.side_kind(False, 's3', provider), 'other', provider)
+        self.assertEqual(job_runner.side_kind(False, 'azureblob', 'AWS'), 'other')
         self.assertEqual(job_runner.side_kind(False, None), 'other')
+
+    def test_effective_provider(self):
+        from api.utils import s3_providers
+        connection = mock.Mock(s3_provider='Wasabi', s3_endpoint='https://s3.wasabisys.com')
+        self.assertEqual(s3_providers.effective_provider(connection), 'Wasabi')
+        # connections from before s3_provider existed: AWS without an endpoint, else Other
+        self.assertEqual(s3_providers.effective_provider(mock.Mock(s3_provider=None, s3_endpoint=None)), 'AWS')
+        self.assertEqual(s3_providers.effective_provider(mock.Mock(s3_provider='', s3_endpoint='https://x')), 'Other')
+        self.assertEqual(s3_providers.effective_provider(mock.Mock(s3_provider='nonsense', s3_endpoint=None)), 'AWS')
 
     def test_crc32c_with_s3_and_local_or_s3(self):
         for sides in (('local', 's3'), ('s3', 'local'), ('s3', 's3')):
@@ -184,6 +196,22 @@ class TestCommands(unittest.TestCase):
                 break
             time.sleep(0.05)
         self.assertEqual([e['Name'] for e in queue.hashsum_text('p')], ['a.txt', 'b/c.txt'])
+
+    def test_a_long_list_neither_blocks_nor_is_cut(self):
+        """The list is written while the output is read (both longer than a pipe buffer):
+        a child that answers every line as it reads it must not deadlock"""
+        queue = HashsumJobQueue()
+        names = ['dir {}/file {:06d}.bin'.format(i % 7, i) for i in range(60000)]
+        script = 'import sys\nfor line in sys.stdin:\n    sys.stdout.write("{}  " + line)'.format('c' * 32)
+        queue.push([sys.executable, '-c', script], dict(os.environ), 'p',
+                   stdin=rclone_connection.files_from_list(names))
+        for _ in range(600):
+            if queue.hashsum_finished('p'):
+                break
+            time.sleep(0.05)
+        self.assertTrue(queue.hashsum_finished('p'), 'the run did not finish: a pipe deadlock?')
+        self.assertEqual(queue.hashsum_exitstatus('p'), 0)
+        self.assertEqual([e['Name'] for e in queue.hashsum_text('p')], names)
 
 
 class ScriptedConnection:
@@ -317,7 +345,9 @@ class TestWorkerReports(WorkerTestBase):
         worker_manager.queue_job('hashsum', job, 'onprem')
         worker, _ = self.worker()
         ticket = self.claim(worker)
-        self.assertEqual(ticket['job']['dst']['type'], 's3') # the worker decides from it
+        # the worker decides from them (s3_provider: as rclone gets it, AWS for this old-style connection)
+        self.assertEqual((ticket['job']['dst']['type'], ticket['job']['dst']['s3_provider']), ('s3', 'AWS'))
+        self.assertNotIn('s3_provider', ticket['job']['src'])
         worker_manager.progress(worker, ticket['ticket_id'], ticket['ticket_token'], {'percent': 3, 'hash_type': 'crc32c'})
         self.assertEqual(db.session.get(HashsumJob, job.id).hash_type, 'crc32c')
         with mock.patch.object(worker_manager, '_send') as send:
@@ -338,13 +368,14 @@ class TestWorkerAgentHashsum(unittest.TestCase):
         import motuz_worker
         cls.agent = motuz_worker
 
-    def run_job(self, supported):
+    def run_job(self, supported, provider='AWS'):
         args = mock.Mock(central_url=None, bootstrap_token='mzb1.1.x', bootstrap_token_file=None, once=False)
         config = self.agent.Config({'MOTUZ_CENTRAL_URL': 'https://motuz.test'}, args)
         ticket = {'ticket_id': 1, 'ticket_token': 't', 'progress_interval': 1, 'job': {
             'type': 'hashsum', 'id': 3, 'owner': 'alice', 'options': {'download': False},
             'src': {'local': True, 'path': '/home/alice/a'},
-            'dst': {'local': False, 'remote': 'src', 'type': 's3', 'path': 'b/a', 'rclone_env': {'RCLONE_CONFIG_SRC_TYPE': 's3'}}}}
+            'dst': {'local': False, 'remote': 'src', 'type': 's3', 's3_provider': provider, 'path': 'b/a',
+                    'rclone_env': {'RCLONE_CONFIG_SRC_TYPE': 's3'}}}}
         central = mock.Mock()
         central.call.return_value = (200, {'action': 'continue'})
         run = self.agent.JobRun(central, config, ticket, lambda: False)
@@ -375,5 +406,10 @@ class TestWorkerAgentHashsum(unittest.TestCase):
 
     def test_an_older_rclone_keeps_md5(self):
         calls, body = self.run_job(False)
+        self.assertEqual([c[1] for c in calls], ['md5', 'md5'])
+        self.assertEqual(body['hash_type'], 'md5')
+
+    def test_another_s3_provider_keeps_md5(self):
+        calls, body = self.run_job(True, provider='Ceph')
         self.assertEqual([c[1] for c in calls], ['md5', 'md5'])
         self.assertEqual(body['hash_type'], 'md5')

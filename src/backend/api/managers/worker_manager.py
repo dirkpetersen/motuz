@@ -48,7 +48,7 @@ from ..exceptions import *
 from ..models import CloudConnection, CopyJob, HashsumJob, RemoteJob, Worker, WorkerBootstrapToken
 from ..models.worker import utcnow
 from ..utils.email_utils import Email
-from ..utils import job_runner
+from ..utils import job_runner, s3_providers
 from ..utils.rclone_connection import RCLONE, RcloneConnection
 from ..version import VERSION, WORKER_PROTOCOL
 from . import job_routing, overwrite_policy
@@ -684,6 +684,8 @@ def build_ticket(remote_job, job, ticket_token, broker_secret):
             remote = REMOTE_NAMES[remote_job.job_type][side]
             entry['remote'] = remote
             entry['type'] = connection.type
+            if connection.type == 's3': # the worker chooses the hash of a check by it
+                entry['s3_provider'] = s3_providers.effective_provider(connection)
             if connection.subtype == 'profile':
                 # No stored credentials: the worker reads them from the owner's home
                 # directory, as the owner, like this node would (local_credentials)

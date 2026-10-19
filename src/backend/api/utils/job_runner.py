@@ -10,6 +10,7 @@ configuration.
 import time
 
 from .file_utils import generate_file_tree, remove_identical_branches
+from .s3_providers import CRC32C_PROVIDERS
 
 
 HASHSUM_SIDES = ('src', 'dst')
@@ -22,11 +23,17 @@ HASH_TYPES = ('md5', 'sha256', 'crc32c')
 NOT_CHECKABLE_SAMPLE = 100
 
 
-def side_kind(local, connection_type=None):
-    """'local', 's3' (any S3 provider) or 'other': what hashes one side of a check has"""
+def side_kind(local, connection_type=None, s3_provider=None):
+    """
+    What hashes one side of a check has: 'local', 's3' (an S3 connection at a provider
+    that stores a CRC32C: s3_providers.CRC32C_PROVIDERS, i.e. Amazon S3; `s3_provider`
+    as rclone gets it, s3_providers.effective_provider) or 'other' (clouds with an MD5
+    only, including the other S3 providers: a CRC32C check would do one HEAD per object
+    for nothing)
+    """
     if local:
         return 'local'
-    return 's3' if connection_type == 's3' else 'other'
+    return 's3' if connection_type == 's3' and s3_provider in CRC32C_PROVIDERS else 'other'
 
 
 def hashsum_type(src_kind, dst_kind, download=False, crc32c_supported=None):
@@ -34,8 +41,8 @@ def hashsum_type(src_kind, dst_kind, download=False, crc32c_supported=None):
     The hash an integrity check compares:
     - SHA-256 if both sides are local (the CPU's SHA instructions make it about twice
       as fast as MD5 per stream);
-    - CRC32C if one side is S3 and the other local or S3, without download, and this
-      node's rclone has the hash (`crc32c_supported`, a function called only then): S3
+    - CRC32C if one side is Amazon S3 (side_kind 's3') and the other local or Amazon
+      S3, without download, and this node's rclone has the hash (`crc32c_supported`, a function called only then): S3
       returns the CRC32C it stored (one HEAD per object, nothing downloaded); objects
       without one are compared by MD5 (run_hashsum);
     - else MD5, the hash that clouds record (S3's ETag, ...)

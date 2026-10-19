@@ -89,3 +89,14 @@ UNCHUNKED_UPLOAD_CUTOFF = '5Gi'
 def legacy_provider(endpoint):
     """The provider of a connection stored before s3_provider existed"""
     return 'Other' if endpoint else 'AWS'
+
+
+def effective_provider(connection):
+    """
+    The provider of an S3 connection as rclone gets it (rclone_connection._formatCredentials):
+    s3_provider, or legacy_provider for connections from before it existed
+    """
+    provider = getattr(connection, 's3_provider', None)
+    if provider in PROVIDER_VALUES:
+        return provider
+    return legacy_provider(getattr(connection, 's3_endpoint', None) or '')

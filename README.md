@@ -1279,9 +1279,10 @@ of 100 MB) between two local folders, 16 transfers, median of 3 runs:
 
 Whenever a cloud is involved, both stay MD5: clouds record MD5 (the S3 ETag), not SHA-256.
 
-**Check Integrity of S3: CRC32C.** When one side of a check is an S3 connection (any provider)
-and the other a local path or S3, the check is not "Double Check" (download), and rclone knows
-the hash `crc32c` (Motuz asks `rclone hashsum` once per process; the pinned release
+**Check Integrity of S3: CRC32C.** When one side of a check is an Amazon S3 connection (provider
+"Amazon S3", the only one known to store a CRC32C; other S3 providers keep MD5) and the other a
+local path or Amazon S3, the check is not "Double Check" (download), and rclone knows the hash
+`crc32c` (Motuz asks `rclone hashsum` once per process; the pinned release
 v1.76.0-md5simd.3 does not, a newer build of github.com/dirkpetersen/rclone does), Check
 Integrity runs `rclone hashsum crc32c` on both sides: local files are hashed, S3 returns the
 CRC32C it stored (one HEAD request per object, nothing downloaded, no egress). S3 has a

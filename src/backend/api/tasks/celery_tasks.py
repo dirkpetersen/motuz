@@ -17,6 +17,7 @@ from ..utils.rclone_connection import RcloneConnection, crc32c_supported
 from ..utils.email_utils import Email
 from ..utils import job_runner
 from ..utils import node_check
+from ..utils import s3_providers
 from ..managers import overwrite_policy
 
 
@@ -301,7 +302,8 @@ def _hashsum_job_run(self, hashsum_job, connection, start_time):
     """md5sum (or hashsum_type's hash) of both sides (job_runner.run_hashsum), writing progress once per second"""
     def kind(side):
         cloud = getattr(hashsum_job, f'{side}_cloud')
-        return job_runner.side_kind(cloud is None, getattr(cloud, 'type', None))
+        provider = s3_providers.effective_provider(cloud) if getattr(cloud, 'type', None) == 's3' else None
+        return job_runner.side_kind(cloud is None, getattr(cloud, 'type', None), provider)
 
     hash_type = job_runner.hashsum_type(kind('src'), kind('dst'), download=bool(hashsum_job.option_download),
                                         crc32c_supported=crc32c_supported)
