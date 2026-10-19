@@ -517,12 +517,15 @@ class TestRcloneCommand(unittest.TestCase):
                 settings(md5_simd_servers=bad)
             self.assertIn('MOTUZ_RCLONE_MD5_SIMD_SERVERS', str(caught.exception))
 
-    def test_sha256_between_local_paths(self):
-        """A local-to-local copy is checked with SHA-256 (RCLONE_LOCAL_HASHES), others with MD5"""
-        command, env = self.command(PLAIN, dst=None)
-        self.assertEqual(env['RCLONE_LOCAL_HASHES'], 'sha256')
-        self.assertIn('RCLONE_LOCAL_HASHES', command[command.index('sudo') + 2])
-        self.assertFalse([a for a in command if 'hashes' in a], 'never a flag')
+    def test_crc32c_or_sha256_between_local_paths(self):
+        """A local-to-local copy is checked with CRC32C if rclone has it, else SHA-256 (RCLONE_LOCAL_HASHES), others with MD5"""
+        for supported, expected in ((True, 'crc32c'), (False, 'sha256')):
+            with mock.patch('api.utils.rclone_connection.crc32c_supported', return_value=supported):
+                command, env = self.command(PLAIN, dst=None)
+            self.assertEqual(env['RCLONE_LOCAL_HASHES'], expected)
+            self.assertIn('RCLONE_LOCAL_HASHES', command[command.index('sudo') + 2])
+            self.assertFalse([a for a in command if 'hashes' in a], 'never a flag')
+            self.assertEqual(job_runner.hashsum_type('local', 'local', crc32c_supported=lambda: supported), expected)
         _, env = self.command(PLAIN, dst=_s3_connection())
         self.assertNotIn('RCLONE_LOCAL_HASHES', env, 'S3 has no SHA-256 to compare with')
         self.assertEqual(job_runner.hashsum_type('local', 'local'), 'sha256')

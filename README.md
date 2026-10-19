@@ -1270,19 +1270,28 @@ file systems, where the read-ahead may help, set e.g. `MOTUZ_RCLONE_BUFFER_SIZE=
 the rest is the kernel's sending and file reading, and TLS. `rclone md5sum` of the same files:
 8.7 instead of 14.2 CPU-seconds with md5-simd.
 
-**Local to local: SHA-256 instead of MD5.** When both sides of a job are local paths, the copy is
-checked with SHA-256 (`RCLONE_LOCAL_HASHES=sha256`) and Check Integrity runs `rclone hashsum
-sha256` instead of `md5sum`. Go's SHA-256 uses the CPU's SHA instructions (x86 SHA-NI, ARMv8
-SHA2): 1.8 GB/s per stream against 0.8 GB/s for MD5 on an AMD EPYC 9534. Copy of 3 GB (30 files
-of 100 MB) between two local folders, 16 transfers, median of 3 runs:
+**Local to local: CRC32C (or SHA-256) instead of MD5.** When both sides of a job are local
+paths, the copy is checked with CRC32C (`RCLONE_LOCAL_HASHES=crc32c`) and Check Integrity runs
+`rclone hashsum crc32c` instead of `md5sum`, if the node's rclone has the hash `crc32c` (the
+pinned release does); with another rclone both use SHA-256 (`sha256`). CRC32C uses the CPU's CRC
+instructions (SSE 4.2, ARMv8 CRC32), SHA-256 its SHA instructions (x86 SHA-NI, ARMv8 SHA2; older
+Intel Xeons such as Skylake and Cascade Lake have none, there SHA-256 is slower than MD5). Both find
+accidental damage (a bad disk, controller, memory or network file system); CRC32C misses a random
+change with a probability of about 1 in 4 billion per file, and it is no protection against
+deliberate changes, which does not matter between two disks of the same site. Copy of 3 GB (30
+files of 100 MB) between two local folders on an AMD EPYC 9534, 16 transfers, 3 runs each:
 
 | Check after the copy | Time | User CPU |
 |---|---|---|
-| MD5 (rclone's default) | 1.68 s | 7.8 s |
-| SHA-256 | 1.07 s | 3.5 s |
+| MD5 (rclone's default) | 1.53 s | 7.8 s |
+| SHA-256 | 1.05 s | 3.5 s |
+| CRC32C | 1.00 s | 0.4 s |
 | none | 0.99 s | 0.1 s |
 
-Whenever a cloud is involved, both stay MD5: clouds record MD5 (the S3 ETag), not SHA-256.
+Check Integrity of the same 3 GB, 16 checkers: SHA-256 1.8 CPU-s, CRC32C 0.2 CPU-s.
+
+Whenever a cloud is involved, the copy check stays MD5 (clouds record MD5, the S3 ETag) and
+Check Integrity uses MD5, or CRC32C where S3 stores one (below).
 
 **Check Integrity of S3: CRC32C.** When one side of a check is an Amazon S3 connection (provider
 "Amazon S3") or a Ceph connection with "CRC32C instead of MD5 for parts" (other S3 providers keep

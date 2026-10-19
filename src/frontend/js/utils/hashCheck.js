@@ -15,7 +15,8 @@ export function describeHashCheck(job) {
     if (!label) {
         return null;
     }
-    if (job.hash_type !== 'crc32c') {
+    // Between two local paths CRC32C is just the hash of both sides (no cloud_id: local)
+    if (job.hash_type !== 'crc32c' || (!job.src_cloud_id && !job.dst_cloud_id)) {
         return label;
     }
     const fallback = Number.isInteger(job.md5_fallback) ? job.md5_fallback : 0;

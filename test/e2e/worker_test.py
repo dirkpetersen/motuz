@@ -201,9 +201,9 @@ hj = wait_job('hashsum-jobs', hj['id'], A)
 check('hashsum job SUCCESS on the worker, identical', hj['progress_state'] == 'SUCCESS'
       and json.loads(hj['progress_src_tree']) == [] and json.loads(hj['progress_dst_tree']) == [], hj)
 check('hashsum job record: worker w1', remote_job('hashsum', hj['id']) == ('DONE', 'w1', 'onprem'), remote_job('hashsum', hj['id']))
-# Both sides local: the worker runs hashsum sha256 (job_runner.hashsum_type)
-check("hashsum sha256 on the worker got the installation's --checkers=16 (MOTUZ_RCLONE_CHECKERS of the central node)",
-      '--checkers=16 hashsum sha256 /home/alice/wsrc' in logs('worker'), [l for l in logs('worker').splitlines() if 'hashsum' in l][-1:])
+# Both sides local: the worker runs hashsum crc32c, its pinned rclone has it (job_runner.hashsum_type)
+check("hashsum crc32c on the worker got the installation's --checkers=16 (MOTUZ_RCLONE_CHECKERS of the central node)",
+      '--checkers=16 hashsum crc32c /home/alice/wsrc' in logs('worker'), [l for l in logs('worker').splitlines() if 'hashsum' in l][-1:])
 sh('app', "sudo -u alice sh -c 'echo changed > /home/alice/wdst/f2.txt; echo extra > /home/alice/wdst/zz.txt'")
 status, hj = req('POST', '/api/hashsum-jobs/', A, {'src_resource_path': '/home/alice/wsrc', 'dst_resource_path': '/home/alice/wdst',
                                                     'option_download': False})

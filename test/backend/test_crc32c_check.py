@@ -81,12 +81,14 @@ class TestHashType(unittest.TestCase):
             # with download, rclone hashes the data: MD5 as before (never --download for CRC32C)
             self.assertEqual(job_runner.hashsum_type(*sides, download=True, crc32c_supported=YES), 'md5', sides)
 
-    def test_others_keep_md5_and_local_keeps_sha256(self):
-        for sides in (('s3', 'other'), ('other', 's3'), ('local', 'other'), ('other', 'other')):
-            self.assertEqual(job_runner.hashsum_type(*sides, crc32c_supported=YES), 'md5', sides)
+    def test_others_keep_md5_and_local_uses_crc32c_or_sha256(self):
         asked = mock.Mock(return_value=True)
-        self.assertEqual(job_runner.hashsum_type('local', 'local', crc32c_supported=asked), 'sha256')
+        for sides in (('s3', 'other'), ('other', 's3'), ('local', 'other'), ('other', 'other')):
+            self.assertEqual(job_runner.hashsum_type(*sides, crc32c_supported=asked), 'md5', sides)
         asked.assert_not_called() # rclone is asked only when CRC32C could be used
+        self.assertEqual(job_runner.hashsum_type('local', 'local', crc32c_supported=YES), 'crc32c')
+        self.assertEqual(job_runner.hashsum_type('local', 'local', crc32c_supported=lambda: False), 'sha256')
+        self.assertEqual(job_runner.hashsum_type('local', 'local'), 'sha256')
 
     def test_outcome(self):
         self.assertEqual(job_runner.hashsum_outcome([], []), 'Files are IDENTICAL!')

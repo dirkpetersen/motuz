@@ -39,8 +39,10 @@ def side_kind(local, connection_type=None, s3_provider=None, s3_skip_checks=None
 def hashsum_type(src_kind, dst_kind, download=False, crc32c_supported=None):
     """
     The hash an integrity check compares:
-    - SHA-256 if both sides are local (the CPU's SHA instructions make it about twice
-      as fast as MD5 per stream);
+    - CRC32C if both sides are local and this node's rclone has it (an eighth of the CPU
+      time of SHA-256), else SHA-256 (the CPU's SHA instructions make it about twice as
+      fast as MD5 per stream), as copies between local paths check
+      (rclone_connection.local_to_local_env);
     - CRC32C if one side is S3 that stores a CRC32C (side_kind 's3') and the other local
       or such S3, without download, and this node's rclone has the hash (`crc32c_supported`, a function called only then): S3
       returns the CRC32C it stored (one HEAD per object, nothing downloaded); objects
@@ -48,7 +50,7 @@ def hashsum_type(src_kind, dst_kind, download=False, crc32c_supported=None):
     - else MD5, the hash that clouds record (S3's ETag, ...)
     """
     if src_kind == 'local' and dst_kind == 'local':
-        return 'sha256'
+        return 'crc32c' if crc32c_supported is not None and crc32c_supported() else 'sha256'
     kinds = {src_kind, dst_kind}
     if ('s3' in kinds and kinds <= {'local', 's3'} and not download
             and crc32c_supported is not None and crc32c_supported()):

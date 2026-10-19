@@ -16,9 +16,10 @@ test('labels', () => {
 test('the compared line', () => {
     assert.equal(describeHashCheck({}), null);
     assert.equal(describeHashCheck({hash_type: 'md5'}), 'MD5');
-    assert.match(describeHashCheck({hash_type: 'crc32c', md5_fallback: 0}), /^CRC32C stored by S3 \(one HEAD/);
-    assert.match(describeHashCheck({hash_type: 'crc32c', md5_fallback: 1}), /MD5 for 1 file without one$/);
-    assert.match(describeHashCheck({hash_type: 'crc32c', md5_fallback: 3}), /MD5 for 3 files without one$/);
+    assert.match(describeHashCheck({hash_type: 'crc32c', md5_fallback: 0, dst_cloud_id: 2}), /^CRC32C stored by S3 \(one HEAD/);
+    assert.equal(describeHashCheck({hash_type: 'crc32c', src_cloud_id: null, dst_cloud_id: 0}), 'CRC32C'); // local to local
+    assert.match(describeHashCheck({hash_type: 'crc32c', md5_fallback: 1, src_cloud_id: 2}), /MD5 for 1 file without one$/);
+    assert.match(describeHashCheck({hash_type: 'crc32c', md5_fallback: 3, dst_cloud_id: 2}), /MD5 for 3 files without one$/);
 });
 
 test('not checkable files', () => {
