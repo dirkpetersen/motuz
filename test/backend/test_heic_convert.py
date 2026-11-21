@@ -399,7 +399,11 @@ class TestInstalls(unittest.TestCase):
         self.assertIn('/usr/bin/python3', install)
         deploy = self.read('bin', 'systemd', 'deploy.sh')
         self.assertIn('MOTUZ_HEIC_SITE /opt/motuz-heic/site', deploy)
-        self.assertIn('MOTUZ_HEIC_PYTHON /usr/bin/python3', deploy)
+        # the venv's Python (DISTRO_PYTHON), which install.sh used; an older install's
+        # /usr/bin/python3 is replaced (3.15 on Amazon Linux 2027, no pi-heif wheels)
+        self.assertIn('heic_python=${DISTRO_PYTHON:-/usr/bin/python3}', install)
+        self.assertIn('HEIC_DEFAULT=${DISTRO_PYTHON:-/usr/bin/python3}', deploy)
+        self.assertIn('\'\'|/usr/bin/python3) env_set "$SETTINGS" MOTUZ_HEIC_PYTHON "$HEIC_DEFAULT"', deploy)
         self.assertNotIn('if [ -d /opt/motuz-heic/site ]', deploy) # always set
         self.assertIn('import pi_heif, PIL', deploy) # and checked with that interpreter
         self.assertIn('MOTUZ_HEIC_SITE', self.read('deployment', 'systemd', 'motuz.env.example'))
