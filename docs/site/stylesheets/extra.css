@@ -1,0 +1,201 @@
+/* Motuz colors: the purple of the logo, with an amber accent */
+:root,
+[data-md-color-scheme="default"] {
+  --md-primary-fg-color: #5c2f85;
+  --md-primary-fg-color--light: #7a4ca5;
+  --md-primary-fg-color--dark: #431f63;
+  --md-accent-fg-color: #e8a317;
+  --mz-hero-from: #f4eefa;
+  --mz-hero-to: #fff8e8;
+  --mz-card-shadow: 0 1px 2px rgb(40 20 60 / 6%), 0 8px 24px rgb(40 20 60 / 8%);
+}
+
+[data-md-color-scheme="slate"] {
+  --md-primary-fg-color: #9a6fd0;
+  --md-primary-fg-color--light: #b896e0;
+  --md-primary-fg-color--dark: #5c2f85;
+  --md-accent-fg-color: #f2b84b;
+  --md-default-bg-color: #16121c;
+  --mz-hero-from: #2a1d3a;
+  --mz-hero-to: #1c1622;
+  --mz-card-shadow: 0 1px 2px rgb(0 0 0 / 30%), 0 8px 24px rgb(0 0 0 / 35%);
+}
+
+/* Hero */
+.mz-hero {
+  display: grid;
+  grid-template-columns: 1.6fr 1fr;
+  align-items: center;
+  gap: 2rem;
+  margin: 0 -0.8rem 2rem;
+  padding: 3rem 2.4rem;
+  border-radius: 1.2rem;
+  background:
+    radial-gradient(circle at 85% 20%, rgb(232 163 23 / 18%), transparent 45%),
+    linear-gradient(135deg, var(--mz-hero-from), var(--mz-hero-to));
+}
+
+.mz-hero .mz-title {
+  margin: 0.4rem 0 1rem;
+  font-size: 2.6rem;
+  font-weight: 800;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+  background: linear-gradient(90deg, var(--md-primary-fg-color), #c2569b 60%, var(--md-accent-fg-color));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.mz-hero .mz-title .headerlink {
+  display: none;
+}
+
+.mz-hero p {
+  font-size: 0.95rem;
+  max-width: 34rem;
+}
+
+.mz-eyebrow {
+  display: inline-block;
+  padding: 0.2rem 0.7rem;
+  border-radius: 999px;
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--md-primary-fg-color);
+  background: color-mix(in srgb, var(--md-primary-fg-color) 12%, transparent);
+}
+
+.mz-hero__art {
+  text-align: center;
+}
+
+.mz-hero__art img {
+  width: min(100%, 15rem);
+  filter: drop-shadow(0 18px 30px rgb(92 47 133 / 35%));
+  animation: mz-float 6s ease-in-out infinite;
+}
+
+@keyframes mz-float {
+  50% { transform: translateY(-10px); }
+}
+
+.md-typeset .md-button {
+  border-radius: 999px;
+  padding: 0.6em 1.6em;
+  margin: 0.3rem 0.4rem 0.3rem 0;
+  transition: transform 0.15s, box-shadow 0.15s;
+}
+
+.md-typeset .md-button:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 20px rgb(92 47 133 / 25%);
+}
+
+/* Numbers under the hero */
+.mz-stats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1rem;
+  margin: 0 0 2.5rem;
+  text-align: center;
+}
+
+.mz-stats > div {
+  padding: 1rem 0.5rem;
+  border-radius: 0.8rem;
+  font-size: 0.75rem;
+  color: var(--md-default-fg-color--light);
+  background: var(--md-code-bg-color);
+}
+
+.mz-stats strong {
+  font-size: 1.8rem;
+  font-weight: 800;
+  color: var(--md-primary-fg-color);
+}
+
+/* Section titles of the landing page */
+.md-typeset h2.mz-center {
+  margin-top: 3rem;
+  text-align: center;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+}
+
+/* Feature cards */
+.md-typeset .mz-cards > ul > li {
+  border: 1px solid var(--md-default-fg-color--lightest);
+  border-radius: 1rem;
+  box-shadow: var(--mz-card-shadow);
+  transition: transform 0.2s, border-color 0.2s;
+}
+
+.md-typeset .mz-cards > ul > li:hover {
+  transform: translateY(-4px);
+  border-color: var(--md-primary-fg-color);
+}
+
+.md-typeset .mz-cards .lucide,
+.md-typeset .mz-cards .twemoji {
+  color: var(--md-primary-fg-color);
+}
+
+/* Screenshots */
+.md-typeset img.mz-shot {
+  display: block;
+  margin: 0 auto;
+  border-radius: 0.8rem;
+  box-shadow: var(--mz-card-shadow);
+}
+
+/* Closing call to action */
+.mz-cta {
+  margin: 3rem 0 1rem;
+  padding: 1.6rem 2rem;
+  border-radius: 1rem;
+  text-align: center;
+  font-size: 0.95rem;
+  color: #fff;
+  background: linear-gradient(135deg, #5c2f85, #8b3f8f 60%, #c27a1e);
+}
+
+.mz-cta a {
+  color: #fff !important;
+  text-decoration: underline;
+}
+
+@media screen and (max-width: 60em) {
+  .mz-hero {
+    grid-template-columns: 1fr;
+    margin: 0 0 2rem;
+    padding: 2rem 1.2rem;
+  }
+
+  .mz-hero__art {
+    order: -1;
+  }
+
+  .mz-hero__art img {
+    width: 8rem;
+  }
+
+  .mz-hero .mz-title {
+    font-size: 1.9rem;
+  }
+
+  .mz-stats {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mz-hero__art img,
+  .md-typeset .md-button,
+  .md-typeset .mz-cards > ul > li {
+    animation: none;
+    transition: none;
+  }
+}

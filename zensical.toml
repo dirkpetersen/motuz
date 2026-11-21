@@ -1,0 +1,124 @@
+# Documentation site. Build: make docs (bin/docs/build_site.py writes .docs/ from README.md
+# and docs/site/, then zensical builds site/). Every page must be listed in nav.
+[project]
+site_name = "Motuz"
+site_description = "Large data transfers between on-premise storage and the cloud, with a web UI"
+site_url = "https://dirkpetersen.github.io/motuz/"
+repo_url = "https://github.com/dirkpetersen/motuz"
+repo_name = "dirkpetersen/motuz"
+edit_uri = ""
+copyright = "Motuz is open source under the MIT license"
+docs_dir = ".docs"
+site_dir = "site"
+extra_css = ["stylesheets/extra.css"]
+nav = [
+  { "Home" = "index.md" },
+  { "Get started" = [
+    { "Quick start" = "quick-start.md" },
+    { "Install (without Docker)" = "install-default-without-docker.md" },
+    { "Amazon Linux and EC2" = "install-on-amazon-linux-2027-default-on-ec2.md" },
+    { "Docker" = "alternative-docker.md" },
+  ] },
+  { "Features" = [
+    "features/index.md",
+    { "S3 connections" = "features/s3-connections.md" },
+    { "OneDrive" = "features/onedrive-own-app-registration.md" },
+    { "Google Drive" = "features/google-drive.md" },
+    { "Performance tuning" = "features/performance-tuning.md" },
+    { "AWS egress cost" = "features/aws-egress-cost.md" },
+    { "File viewer" = "features/file-viewer.md" },
+    { "Uploads from the desktop" = "features/uploads-from-the-desktop.md" },
+    { "Free space limit" = "features/free-space-limit.md" },
+    { "Overwriting existing files" = "features/overwriting-existing-files.md" },
+    { "Scheduled copies" = "features/scheduled-copies.md" },
+    { "Remote workers" = "features/remote-workers-https-only.md" },
+    { "Temporary EC2 workers" = "features/temporary-ec2-workers.md" },
+    { "Privacy policy and terms" = "features/privacy-policy-and-terms.md" },
+  ] },
+  { "Development" = [
+    { "Developer installation" = "developer-installation.md" },
+    { "Development options" = "development-options.md" },
+    { "API examples" = "examples.md" },
+    { "Folder structure" = "folder-structure.md" },
+    { "Other resources" = "other-resources.md" },
+  ] },
+]
+
+[project.theme]
+language = "en"
+logo = "assets/logo.png"
+favicon = "assets/favicon.ico"
+font.text = "Inter"
+font.code = "JetBrains Mono"
+features = [
+  "content.code.annotate",
+  "content.code.copy",
+  "content.code.select",
+  "content.tabs.link",
+  "content.tooltips",
+  "navigation.footer",
+  "navigation.indexes",
+  "navigation.instant",
+  "navigation.instant.prefetch",
+  "navigation.path",
+  "navigation.sections",
+  "navigation.tabs",
+  "navigation.tabs.sticky",
+  "navigation.top",
+  "navigation.tracking",
+  "search.highlight",
+  "toc.follow",
+]
+
+[[project.theme.palette]]
+media = "(prefers-color-scheme)"
+toggle.icon = "lucide/sun-moon"
+toggle.name = "Switch to light mode"
+
+[[project.theme.palette]]
+media = "(prefers-color-scheme: light)"
+scheme = "default"
+primary = "custom"
+accent = "custom"
+toggle.icon = "lucide/sun"
+toggle.name = "Switch to dark mode"
+
+[[project.theme.palette]]
+media = "(prefers-color-scheme: dark)"
+scheme = "slate"
+primary = "custom"
+accent = "custom"
+toggle.icon = "lucide/moon"
+toggle.name = "Switch to system preference"
+
+[project.extra]
+social = [
+  { icon = "fontawesome/brands/github", link = "https://github.com/dirkpetersen/motuz" },
+]
+
+[project.markdown_extensions]
+abbr = {}
+admonition = {}
+attr_list = {}
+def_list = {}
+footnotes = {}
+md_in_html = {}
+tables = {}
+toc.permalink = true
+pymdownx.betterem = {}
+pymdownx.details = {}
+pymdownx.emoji.emoji_generator = "zensical.extensions.emoji.to_svg"
+pymdownx.emoji.emoji_index = "zensical.extensions.emoji.twemoji"
+pymdownx.highlight.anchor_linenums = true
+pymdownx.highlight.line_spans = "__span"
+pymdownx.highlight.pygments_lang_class = true
+pymdownx.inlinehilite = {}
+pymdownx.keys = {}
+pymdownx.magiclink = {}
+pymdownx.mark = {}
+pymdownx.smartsymbols = {}
+pymdownx.superfences.custom_fences = [
+  { name = "mermaid", class = "mermaid", format = "pymdownx.superfences.fence_code_format" },
+]
+pymdownx.tabbed.alternate_style = true
+pymdownx.tasklist.custom_checkbox = true

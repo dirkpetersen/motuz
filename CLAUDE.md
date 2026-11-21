@@ -86,6 +86,8 @@ CI: `.github/workflows/ci.yml` (push and pull_request) runs the backend unit tes
 
 Lint: `pylint` (in `requirements-dev.in`) with `.pylintrc`; no script or CI job runs it and there is no npm lint script / eslint config. Run it by hand from the repository root: `pylint --rcfile=.pylintrc src/backend/api`.
 
+Documentation site (Zensical): `make docs` (strict, also a CI job) or `make docs-serve`. `README.md` is the only source of the text: `bin/docs/build_site.py` splits it into pages in `.docs/` (one per `## `, one per `### ` of "Configuration and features", GitHub anchors kept), plus the landing page and CSS in `docs/site/`; output in `site/`. A new `## `/`### ` section needs its page added to the nav in `zensical.toml`, or the build fails.
+
 Frontend production build: `npm run build` (outputs to `./build/`). The app image builds it in a `node:22` stage and copies it to `/app/build` (`FRONTEND_DIR`).
 
 Migrations (Flask-Migrate/Alembic; filenames are timestamp-prefixed via `alembic.ini` `file_template`):

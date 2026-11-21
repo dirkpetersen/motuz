@@ -12,3 +12,12 @@ build:
 start:
 	./bin/prod/start.sh
 
+
+# Documentation site (zensical.toml): README.md split into pages, built to site/
+.PHONY: docs
+docs:
+	python3 bin/docs/build_site.py && zensical build -f zensical.toml --clean --strict
+
+.PHONY: docs-serve
+docs-serve:
+	python3 bin/docs/build_site.py && zensical serve -f zensical.toml

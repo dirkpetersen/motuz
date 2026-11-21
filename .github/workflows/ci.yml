@@ -41,6 +41,19 @@ jobs:
           MOTUZ_DATABASE_HOST: 127.0.0.1:5432
         run: python manage.py test
 
+  docs-build:
+    name: Documentation build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - run: pip install zensical==0.0.74
+      # --strict: a broken link or anchor, or a page missing from the nav, fails the job
+      - run: make docs
+
   frontend-build:
     name: Frontend build
     runs-on: ubuntu-latest
