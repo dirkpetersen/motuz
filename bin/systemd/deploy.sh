@@ -104,9 +104,14 @@ if [ ! -f "$SETTINGS" ]; then
     echo "    created $SETTINGS (edit it, then run deploy.sh again)"
 fi
 # The HEIC/HEIF converter (api/utils/heic_convert.py) runs as the logged-in user with the
-# distribution's python3 and the packages install.sh put in /opt/motuz-heic. The settings are
-# always set: without them the server would use its own Python, which only motuz can run.
-[ -n "$(env_get "$SETTINGS" MOTUZ_HEIC_PYTHON)" ] || env_set "$SETTINGS" MOTUZ_HEIC_PYTHON /usr/bin/python3
+# distribution's Python (the one install.sh used) and the packages install.sh put in
+# /opt/motuz-heic. The settings are always set: without them the server would use its own
+# Python, which only motuz can run. Older installs have /usr/bin/python3, which is no longer
+# 3.14 on Amazon Linux 2027.
+HEIC_DEFAULT=${DISTRO_PYTHON:-/usr/bin/python3}
+case "$(env_get "$SETTINGS" MOTUZ_HEIC_PYTHON)" in
+    ''|/usr/bin/python3) env_set "$SETTINGS" MOTUZ_HEIC_PYTHON "$HEIC_DEFAULT" ;;
+esac
 [ -n "$(env_get "$SETTINGS" MOTUZ_HEIC_SITE)" ] || env_set "$SETTINGS" MOTUZ_HEIC_SITE /opt/motuz-heic/site
 HEIC_PYTHON=$(env_get "$SETTINGS" MOTUZ_HEIC_PYTHON); HEIC_SITE=$(env_get "$SETTINGS" MOTUZ_HEIC_SITE)
 if "$HEIC_PYTHON" -I -c "import sys; sys.path.insert(0, sys.argv[1]); import pi_heif, PIL" "$HEIC_SITE" 2>/dev/null; then

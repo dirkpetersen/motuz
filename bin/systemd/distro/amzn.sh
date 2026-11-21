@@ -30,7 +30,7 @@ SYSTEM_REDIS_SOCKET=""
 # The venv's interpreter (bin/systemd/deploy.sh): AL2027's own Python 3.14 instead of uv's
 # 3.12 (versions.env; Ubuntu does the same). The backend unit tests and the e2e suites pass on it with the
 # pinned requirements.txt; it gets the distribution's security updates and SELinux's
-# label for system binaries. python3-devel has the headers to build uWSGI.
+# label for system binaries. python3.14-devel has the headers to build uWSGI.
 DISTRO_PYTHON=/usr/bin/python3.14
 
 distro_supported() { # after `. /etc/os-release`
@@ -38,13 +38,14 @@ distro_supported() { # after `. /etc/os-release`
 }
 
 distro_install_packages() {
-    # nodejs24 is Node.js 24 (node/npm via alternatives); python3 (3.14) runs the scripts,
-    # the login helper and the venv (DISTRO_PYTHON). hostname and diffutils (cmp) are
+    # nodejs24 is Node.js 24 (node/npm via alternatives); python3 runs the scripts and the
+    # login helper, python3.14 the venv and the HEIC converter (DISTRO_PYTHON: python3 is
+    # 3.15 now, and pi-heif 1.4 has no wheels for it). hostname and diffutils (cmp) are
     # used by deploy.sh, policycoreutils (restorecon) by install.sh. The distribution's
     # rclone package is never installed: the account puts the pinned rclone into
     # /var/lib/motuz-runas (bin/systemd/tools.sh).
     local pkgs=(postgresql18-server postgresql18 valkey nodejs24 nodejs24-npm
-        gcc make git tar gzip unzip openssl python3 python3-devel sudo iproute procps-ng shadow-utils
+        gcc make git tar gzip unzip openssl python3 python3.14 python3.14-devel sudo iproute procps-ng shadow-utils
         util-linux pam policycoreutils hostname diffutils findutils gawk sed ca-certificates)
     # The AMI has curl-minimal, which conflicts with the full curl package; either works
     command -v curl >/dev/null || pkgs+=(curl)

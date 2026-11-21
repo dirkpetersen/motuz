@@ -166,32 +166,34 @@ fi
 # ---------------------------------------------------------------- HEIC/HEIF converter
 # The image viewer converts HEIC/HEIF to JPEG (api/utils/heic_convert.py) in a child process
 # run as the logged-in user. The server's own Python (the venv in the account's home) is not
-# readable by the users, so the converter runs with the distribution's python3 and
+# readable by the users, so the converter runs with the distribution's Python (DISTRO_PYTHON,
+# the venv's version: pi-heif has wheels for it; else python3) and
 # pi-heif + Pillow (libheif/libde265, LGPL-3.0, decode only) from a directory every user can
 # read, installed with the hashes of requirements-heic.txt (the versions of requirements.txt).
 if [ "$WORKER_ONLY" = 0 ]; then
+    heic_python=${DISTRO_PYTHON:-/usr/bin/python3}
     # What is installed: the hashed requirements, the Python (ABI) and the architecture
     heic_state=$(printf '%s\n%s\n' "$(sha256sum < "$REPO_DIR/requirements-heic.txt" | cut -d' ' -f1)" \
-        "$(/usr/bin/python3 -c 'import platform, sys; print(sys.implementation.cache_tag, platform.machine())')")
+        "$("$heic_python" -c 'import platform, sys; print(sys.implementation.cache_tag, platform.machine())')")
     if [ "$(cat /opt/motuz-heic/STATE 2>/dev/null)" != "$heic_state" ] || [ ! -d /opt/motuz-heic/site ]; then
-        log "HEIC/HEIF converter: pi-heif and Pillow (requirements-heic.txt) for $(/usr/bin/python3 --version)"
+        log "HEIC/HEIF converter: pi-heif and Pillow (requirements-heic.txt) for $("$heic_python" --version)"
         # root's own uv for this step (never the account's, which the account can replace)
         sha="UV_SHA256_${ARCH^^}"
         target=$([ "$ARCH" = arm64 ] && echo aarch64 || echo x86_64)-unknown-linux-gnu
         fetch_checked "https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/uv-${target}.tar.gz" "${!sha}" "$TMP/uv.tar.gz"
         tar -xzf "$TMP/uv.tar.gz" -C "$TMP"
         rm -rf /opt/motuz-heic.new
-        "$TMP/uv-${target}/uv" pip install --quiet --python /usr/bin/python3 --no-deps --only-binary :all: --require-hashes \
+        "$TMP/uv-${target}/uv" pip install --quiet --python "$heic_python" --no-deps --only-binary :all: --require-hashes \
             --target /opt/motuz-heic.new/site -r "$REPO_DIR/requirements-heic.txt" \
-            || die "could not install pi-heif and Pillow for /usr/bin/python3"
+            || die "could not install pi-heif and Pillow for $heic_python"
         printf '%s\n' "$heic_state" > /opt/motuz-heic.new/STATE
         chown -R root:root /opt/motuz-heic.new
         chmod -R a+rX,go-w /opt/motuz-heic.new
         rm -rf /opt/motuz-heic
         mv /opt/motuz-heic.new /opt/motuz-heic
     fi
-    /usr/bin/python3 -I -c "import sys; sys.path.insert(0, '/opt/motuz-heic/site'); import pi_heif, PIL" \
-        || die "pi-heif does not load with /usr/bin/python3"
+    "$heic_python" -I -c "import sys; sys.path.insert(0, '/opt/motuz-heic/site'); import pi_heif, PIL" \
+        || die "pi-heif does not load with $heic_python"
 fi
 
 # ---------------------------------------------------------------- the account

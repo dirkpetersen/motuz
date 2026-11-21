@@ -1035,7 +1035,7 @@ and work with SELinux enforcing. What differs is in `bin/systemd/distro/amzn.sh`
 | --- | --- | --- |
 | PostgreSQL 18 | `postgresql18-server` (binaries in `/usr/bin`) | `postgresql-18` |
 | Celery broker (`motuz-redis`) | **Valkey 9** (`valkey-server`; AL2027 has neither RabbitMQ nor Redis) | Redis 8 |
-| Python of `~/motuz/venv` | the system's **Python 3.14** (`python3`, `python3-devel` for uWSGI) | the system's **Python 3.14** (`python3`, `python3-dev` for uWSGI) |
+| Python of `~/motuz/venv` | the system's **Python 3.14** (`python3.14`, `python3.14-devel` for uWSGI) | the system's **Python 3.14** (`python3`, `python3-dev` for uWSGI) |
 | Node.js (frontend build) | `nodejs24`, `nodejs24-npm` | `nodejs` 22 |
 | `/etc/pam.d/motuz` | `password-auth` (authselect) | `common-auth`, `common-account` |
 | SELinux | enforcing, nothing to change | (AppArmor, nothing to change) |
@@ -1750,7 +1750,7 @@ logged-in user (locally with their permissions, in the cloud with their connecti
   `/opt/motuz-heic` (systemd) or build the image without the `--target` install and
   HEIC/HEIF files then answer "not installed" instead. The docker image installs the
   packages into `/opt/motuz-heic/site`; `install.sh` of the systemd install does the same
-  for the distribution's `python3` (`MOTUZ_HEIC_PYTHON`, `MOTUZ_HEIC_SITE`, set by
+  for the distribution's Python 3.14 (`MOTUZ_HEIC_PYTHON`, `MOTUZ_HEIC_SITE`, set by
   `deploy.sh`). A HEIC file with several images (bursts, live photos) shows its primary
   image only. Markdown files show relative `.heic` pictures the same way (converted).
 - `.md`, `.markdown`: rendered in the browser from the first 1 MiB, without raw HTML

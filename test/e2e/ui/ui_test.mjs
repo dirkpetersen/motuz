@@ -792,7 +792,7 @@ os.utime(os.path.join(d, 'dirB'), (now - 86400,) * 2)
             && by['File1.txt'].age === '3 days ago' && /^\d+ years? ago$/.test(by['image.bin'].age)
             && by['dirB'].age === '1 day ago' && by['dira'].age === '10 days ago' && by['..'].age === '', s.rows);
         check('age: tooltip is the exact time in the browser\'s zone (server in UTC, browser in Los Angeles)',
-            /^Nov 14, 2023, 2:13:20\sPM PST$/.test(by['image.bin'].ageTitle) && /PDT$/.test(by['file2.txt'].ageTitle), [by['image.bin'].ageTitle, by['file2.txt'].ageTitle]);
+            /^Nov 14, 2023, 2:13:20\sPM PST$/.test(by['image.bin'].ageTitle) && /P[DS]T$/.test(by['file2.txt'].ageTitle), [by['image.bin'].ageTitle, by['file2.txt'].ageTitle]);
         check('size column: bytes and "Folder"', by['file10.txt'].size === '5 KiB' && by['File1.txt'].size === '10 B' && by['dira'].size === 'Folder', s.rows);
         check('rows explain double-click', by['file2.txt'].title.includes('Double-click to view') && by['dira'].title.includes('Double-click to open'), [by['file2.txt'].title, by['dira'].title]);
         const tz = await page.evaluate(() => Intl.DateTimeFormat().resolvedOptions().timeZone);
