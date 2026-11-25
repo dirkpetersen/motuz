@@ -60,9 +60,9 @@ ENV DEBIAN_FRONTEND=noninteractive
 # branch s3-md5-simd of github.com/dirkpetersen/rclone; the stock releases are
 # RCLONE_RELEASES=https://downloads.rclone.org (same file names)
 ARG RCLONE_RELEASES=https://github.com/dirkpetersen/rclone/releases/download
-ARG RCLONE_VERSION=1.76.0-md5simd.6
-ARG RCLONE_SHA256_AMD64=cd7721266b69e4068b4fd2ea5bafadb5b007494ac838a7029c965b8c23998d2d
-ARG RCLONE_SHA256_ARM64=a68af9a6dd0263b3f294e3d29526842af7af3e3fbc5752e3393325996344c842
+ARG RCLONE_VERSION=1.76.0-md5simd.7
+ARG RCLONE_SHA256_AMD64=dd910f8c0406eda7de59fe229d162b97ac92d0526d2f944be30dec2db7298c47
+ARG RCLONE_SHA256_ARM64=0de2b17c5618a0526655ae4e814f25ff59f34b1bd953e70412c6e3f25d56f0da
 ARG TARGETARCH=amd64
 
 RUN set -x \
